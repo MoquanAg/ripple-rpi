@@ -1,0 +1,25 @@
+{
+  "data": {
+    "water_metrics": {
+      "measurements": {
+        "name": "water_metrics",
+        "points": [
+          {
+            "tags": {
+              "sensor": "ec",
+              "measurement": "ec",
+              "location": "ec_main"
+            },
+            "fields": {
+              "value": 5323.6,
+              "temperature": 25.427309036254883,
+              "tds": 39700,
+              "salinity": 16547
+            },
+            "timestamp": "2025-04-16T22:05:20+0800"
+          }
+        ]
+      }
+    }
+  }
+}
