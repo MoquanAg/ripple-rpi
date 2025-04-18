@@ -1,8 +1,3 @@
-if __name__ == "__main__":
-    from modbus_helpers import *
-else:
-    from hardware.modbus_helpers import *
-
 import serial
 import time
 import os, sys
