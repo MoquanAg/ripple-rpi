@@ -345,154 +345,6 @@ class Relay:
             logger.exception("Full exception details:")
 
     # Convenience methods for controlling specific devices
-    def set_co2(self, status):
-        if not globals.HAS_CO2:
-            logger.info("No CO2 hardware present, skipping set_co2")
-            return
-
-        """Set CO2 valve status."""
-        logger.info(f"Setting CO2 to {status}")
-        try:
-            # Get the relay assignments from config
-            assignments = globals.DEVICE_CONFIG_FILE['RELAY_ASSIGNMENTS']
-            relay_two_assignments = assignments.get('Relay_TWO_4_to_7', '').split(',')
-            
-            # Find indices for CO2 valves
-            co2_a_index = None
-            co2_b_index = None
-            for i, device in enumerate(relay_two_assignments):
-                device = device.strip()
-                if device == 'CO2A':
-                    co2_a_index = i + 4  # Offset by 4 since this is 4_to_7 group
-                elif device == 'CO2B':
-                    co2_b_index = i + 4  # Offset by 4 since this is 4_to_7 group
-            
-            if co2_a_index is None or co2_b_index is None:
-                raise KeyError("CO2A or CO2B not found in RELAY_TWO_4_to_7 assignments")
-            
-            # Control both CO2 valves together
-            self.set_multiple_relays(
-                "RELAYTWO",
-                min(co2_a_index, co2_b_index),
-                [status, status]  # Both valves get same status
-            )
-        except KeyError as e:
-            logger.warning(f"Missing configuration for CO2: {e}")
-        except Exception as e:
-            logger.error(f"Error controlling CO2: {e}")
-
-    def set_sprinkler(self, status):
-        """Control sprinkler system including both sprinkler and its valve."""
-        if not any(key in self.relay_addresses for key in ['RELAYONE']):
-            logger.info("No sprinkler hardware present in RELAY_ONE")
-            return
-
-        logger.info(f"Setting sprinkler system to {status}")
-        try:
-            # Get the relay assignments from config
-            assignments = globals.DEVICE_CONFIG_FILE['RELAY_ASSIGNMENTS']
-            relay_one_assignments = assignments.get('Relay_ONE_0_to_3', '').split(',')
-            
-            # Find indices for sprinkler and valve
-            sprinkler_index = None
-            valve_index = None
-            for i, device in enumerate(relay_one_assignments):
-                device = device.strip()
-                if device == 'Sprinkler':
-                    sprinkler_index = i
-                elif device == 'ValveSprinkler':
-                    valve_index = i
-            
-            if sprinkler_index is None or valve_index is None:
-                raise KeyError("Sprinkler or ValveSprinkler not found in RELAY_ONE_0_to_3 assignments")
-            
-            # Use set_multiple_relays to control both sprinkler and valve together
-            self.set_multiple_relays(
-                "RELAYONE",
-                min(sprinkler_index, valve_index),  # Start with lower index
-                [status, status]  # Both sprinkler and valve get same status
-            )
-        except KeyError as e:
-            logger.warning(f"Missing configuration for sprinkler system: {e}")
-        except Exception as e:
-            logger.error(f"Error controlling sprinkler system: {e}")
-
-    def set_pump_nutrient_tank_to_gutters(self, status):
-        """Control nutrient tank to gutters system including pump and valve."""
-        if not any(key in self.relay_addresses for key in ['RELAYONE']):
-            logger.info("No pump nutrient tank to gutters hardware present in RELAY_ONE")
-            return
-
-        logger.info(f"Setting nutrient tank to gutters system to {status}")
-        try:
-            # Get the relay assignments from config
-            assignments = globals.DEVICE_CONFIG_FILE['RELAY_ASSIGNMENTS']
-            relay_one_assignments = assignments.get('Relay_ONE_0_to_3', '').split(',')
-            
-            # Find indices for both pump and valve
-            pump_index = None
-            valve_index = None
-            for i, device in enumerate(relay_one_assignments):
-                device = device.strip()
-                if device == 'PumpFromNutrientTankToGutters':
-                    pump_index = i
-                elif device == 'ValveFromNutrientTankToGutters':
-                    valve_index = i
-            
-            if pump_index is None or valve_index is None:
-                raise KeyError("PumpFromNutrientTankToGutters or ValveFromNutrientTankToGutters not found in RELAY_ONE_0_to_3 assignments")
-            
-            # Set both pump and valve together
-            self.set_multiple_relays(
-                "RELAYONE",
-                min(pump_index, valve_index),  # Start with lower index
-                [status, status]  # Both pump and valve get same status
-            )
-        except KeyError as e:
-            logger.warning(f"Missing configuration for nutrient tank system: {e}")
-        except Exception as e:
-            logger.error(f"Error controlling nutrient tank system: {e}")
-
-    def set_laser(self, status):
-        """Control laser system.
-        
-        Args:
-            status (bool): True to turn on laser, False to turn off
-        """
-        if not any(key in self.relay_addresses for key in ['RELAYTWO']):
-            logger.info("No laser hardware present in RELAY_TWO")
-            return
-
-        logger.info(f"Setting laser system to {status}")
-        try:
-            # Get the relay assignments from config
-            assignments = globals.DEVICE_CONFIG_FILE['RELAY_ASSIGNMENTS']
-            relay_two_assignments = assignments.get('Relay_TWO_0_to_3', '').split(',')
-            
-            # Find indices for laser A and B
-            laser_a_index = None
-            laser_b_index = None
-            for i, device in enumerate(relay_two_assignments):
-                device = device.strip()
-                if device == 'LaserA':
-                    laser_a_index = i
-                elif device == 'LaserB':
-                    laser_b_index = i
-            
-            if laser_a_index is None or laser_b_index is None:
-                raise KeyError("LaserA or LaserB not found in RELAY_TWO_0_to_3 assignments")
-            
-            # Control both lasers together
-            self.set_multiple_relays(
-                "RELAYTWO",
-                min(laser_a_index, laser_b_index),
-                [status, status]  # Both lasers get same status
-            )
-        except KeyError as e:
-            logger.warning(f"Missing configuration for laser system: {e}")
-        except Exception as e:
-            logger.error(f"Error controlling laser system: {e}")
-
     def set_nanobubbler(self, status):
         if not globals.HAS_NANOBUBBLER:
             logger.info("No nanobubbler hardware present, skipping set_nanobubbler")
@@ -504,13 +356,6 @@ class Relay:
             self.turn_on(globals.RELAY_NAME, globals.Nanobubbler)
         else:
             self.turn_off(globals.RELAY_NAME, globals.Nanobubbler)
-
-    def get_laser_status(self):
-        if not globals.HAS_LASER:
-            logger.info("No laser hardware present, skipping get_laser_status")
-            return None
-
-        return self.relay_statuses[globals.Laser]
 
     def set_substrate_feed_pump(self, status):
         if not globals.MODEL.lower() == "substrate":
@@ -706,10 +551,23 @@ class Relay:
     # Convenience methods to maintain the original API
     def set_four_relays(self, device_name, starting_relay_index, states):
         """Wrapper for set_multiple_relays with 4 states"""
+        if len(states) != 4:
+            logger.warning("set_four_relays requires exactly 4 states")
+            return
+        return self.set_multiple_relays(device_name, starting_relay_index, states)
+
+    def set_three_relays(self, device_name, starting_relay_index, states):
+        """Wrapper for set_multiple_relays with 3 states"""
+        if len(states) != 3:
+            logger.warning("set_three_relays requires exactly 3 states")
+            return
         return self.set_multiple_relays(device_name, starting_relay_index, states)
 
     def set_two_relays(self, device_name, starting_relay_index, states):
         """Wrapper for set_multiple_relays with 2 states"""
+        if len(states) != 2:
+            logger.warning("set_two_relays requires exactly 2 states")
+            return
         return self.set_multiple_relays(device_name, starting_relay_index, states)
 
     def set_valve_from_tank_to_outside(self, status):
@@ -864,24 +722,5 @@ class Relay:
 if __name__ == "__main__":
     relay = Relay()
     if relay is not None:  # Only proceed if device is enabled
-        # relay.get_status()
-        # relay.set_pump_from_collector_tray_to_tank(False)
-        # time.sleep(5)
-        # relay.set_pump_recirculation(True)
-        # time.sleep(180)
-        # relay.set_pump_recirculation(False)
-        
-        # relay.set_pump_nutrient_tank_to_gutters(True)
-        # time.sleep(5)
         relay.set_pump_nutrient_tank_to_gutters(False)
-        # time.sleep(1)
-        
-        # relay.set_valve_from_outside_to_tank(True)
-        # time.sleep(60)
-        # relay.set_valve_from_outside_to_tank(False)
-        # time.sleep(1)
-        
-        # relay.set_sprinkler(True)
-        # time.sleep(10)
-        # relay.set_sprinkler(False)
         time.sleep(1)
