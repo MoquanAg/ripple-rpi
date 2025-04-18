@@ -142,6 +142,18 @@ def save_data(subpath, data, path):
         for key, value in data.items():
             current_level[last_key][key] = value
 
+    # Format all float values to 2 decimal places
+    def format_floats(obj):
+        if isinstance(obj, float):
+            return round(obj, 2)
+        elif isinstance(obj, dict):
+            return {k: format_floats(v) for k, v in obj.items()}
+        elif isinstance(obj, list):
+            return [format_floats(item) for item in obj]
+        return obj
+
+    config = format_floats(config)
+
     # Changed from orjson.dump to orjson.dumps and manual write
     with open(path, "wb") as file:  # Note: changed to "wb" mode
         json_bytes = orjson.dumps(config, option=orjson.OPT_INDENT_2)
