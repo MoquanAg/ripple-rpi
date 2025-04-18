@@ -6,22 +6,15 @@
         "points": [
           {
             "tags": {
-              "sensor": "ec",
-              "measurement": "ec",
-              "location": "ec_main"
+              "sensor": "water_level",
+              "measurement": "water_level",
+              "location": "water_level_main"
             },
             "fields": {
-              "value": 137.01628148555756,
-              "temperature": 26.494863510131836,
-              "tds": 68.50814056396484,
-              "salinity": 71.24846649169922,
-              "resistance": 7298.40283203125,
-              "ec_constant": 1.045273780822754,
-              "compensation_coef": 0.017999999225139618,
-              "temperature_offset": null,
-              "electrode_sensitivity": 9.183409485952689e-41
+              "value": 6,
+              "unit": "cm"
             },
-            "timestamp": "2025-04-18T13:40:42+0800"
+            "timestamp": "2025-04-18T18:05:29+0800"
           }
         ]
       }
