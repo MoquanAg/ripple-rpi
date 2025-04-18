@@ -1,22 +1,78 @@
 {
   "data": {
     "water_metrics": {
-      "measurements": {
-        "name": "water_metrics",
-        "points": [
-          {
-            "tags": {
-              "sensor": "water_level",
-              "measurement": "water_level",
-              "location": "water_level_main"
-            },
-            "fields": {
-              "value": 6,
-              "unit": "cm"
-            },
-            "timestamp": "2025-04-18T18:05:29+0800"
-          }
-        ]
+      "water_level": {
+        "measurements": {
+          "name": "water_metrics",
+          "points": [
+            {
+              "tags": {
+                "sensor": "water_level",
+                "measurement": "level",
+                "location": "water_level_main"
+              },
+              "fields": {
+                "value": 6,
+                "temperature": null,
+                "pressure_unit": null,
+                "decimal_places": null,
+                "range_min": 0,
+                "range_max": 200,
+                "zero_offset": null
+              },
+              "timestamp": "2025-04-18T23:01:56+0800"
+            }
+          ]
+        }
+      },
+      "ph": {
+        "measurements": {
+          "name": "water_metrics",
+          "points": [
+            {
+              "tags": {
+                "sensor": "ph",
+                "measurement": "ph",
+                "location": "ph_main"
+              },
+              "fields": {
+                "value": 8.3,
+                "temperature": 26.3,
+                "offset": null
+              },
+              "timestamp": "2025-04-18T23:01:56+0800"
+            }
+          ]
+        }
+      },
+      "ec": {
+        "measurements": {
+          "name": "water_metrics",
+          "points": [
+            {
+              "tags": {
+                "sensor": "ec",
+                "measurement": "ec",
+                "location": "ec_main"
+              },
+              "fields": {
+                "value": 137.42,
+                "tds": 68.71,
+                "salinity": 71.46,
+                "temperature": 26.45,
+                "resistance": 7276.71,
+                "ec_constant": 1.05,
+                "compensation_coef": 0.02,
+                "manual_temp": 25.0,
+                "temp_offset": null,
+                "electrode_sensitivity": null,
+                "compensation_mode": null,
+                "sensor_type": null
+              },
+              "timestamp": "2025-04-18T23:01:56+0800"
+            }
+          ]
+        }
       }
     }
   }

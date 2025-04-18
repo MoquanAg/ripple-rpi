@@ -480,24 +480,17 @@ class EC:
         del self.pending_commands[response.command_id]
 
     def _process_status_response(self, data):
-        logger.debug(f"Processing status response for {self.sensor_id}: {data.hex(' ')}")
         """Process the raw response data from the sensor."""
-        # Print to console for debugging
-        print(f"\nStatus response from {self.sensor_id}:")
-        print(f"Raw data: {data.hex(' ')}")
+        logger.debug(f"Processing status response for {self.sensor_id}: {data.hex(' ')}")
         
         if data and len(data) >= 7:  # At minimum we need addr(1) + func(1) + byte_count(1) + data(≥4)
             try:
                 # Make sure byte_count is correct
                 byte_count = data[2]
                 logger.debug(f"Received byte count: {byte_count}, data length: {len(data)}")
-                print(f"  Address: {data[0]}")
-                print(f"  Function: {data[1]}")
-                print(f"  Byte count: {byte_count}")
                 
                 if len(data) < 3 + byte_count:
                     logger.warning(f"Incomplete data received, expected {byte_count} bytes, got {len(data)-3}")
-                    print(f"  Incomplete data received, expected {byte_count} bytes, got {len(data)-3}")
                     self.save_null_data()
                     return
                 
@@ -521,10 +514,6 @@ class EC:
                             ])
                             value = struct.unpack('>f', value_bytes)[0]
                             self.sensor_data[key] = value
-                            logger.debug(f"Register {key} at 0x{addr:04X}: {value}")
-                            # Print important registers to console
-                            if key in ['ec', 'temperature', 'tds', 'salinity', 'resistance']:
-                                print(f"  {key.capitalize()} (0x{addr:04X}): {value}")
                         except struct.error as e:
                             logger.warning(f"Could not unpack float for {key} at offset {data_offset}: {e}")
                             self.sensor_data[key] = None
@@ -538,7 +527,6 @@ class EC:
                 self.ec = self.sensor_data.get('ec')
                 if self.ec is not None:
                     self.ec *= 1000  # Convert from mS/cm to µS/cm as per the documentation
-                    print(f"  EC (converted): {self.ec:.5f} µS/cm")
                 
                 self.temperature = self.sensor_data.get('temperature')
                 self.tds = self.sensor_data.get('tds')
@@ -559,7 +547,7 @@ class EC:
                 
                 logger.info(main_values)
                 
-                # Log additional values
+                # Log additional values at debug level
                 if len(self.sensor_data) > 4:  # If we have more than the main 4 values
                     additional = f"{self.sensor_id} - Additional data: "
                     if self.sensor_data.get('resistance') is not None:
@@ -578,11 +566,9 @@ class EC:
             except Exception as e:
                 logger.warning(f"Error processing response for {self.sensor_id}: {e}")
                 logger.exception("Full exception details:")
-                print(f"  Error processing data: {e}")
                 self.save_null_data()
         else:
             logger.debug(f"Invalid response length from {self.sensor_id}: {len(data) if data else 0}")
-            print(f"  Invalid response length: {len(data) if data else 0}")
             self.save_null_data()
 
     def _process_additional_data_response(self, data):
@@ -713,23 +699,26 @@ class EC:
                             "location": self.sensor_id
                         },
                         "fields": {
-                            "value": self.ec,
-                            "temperature": self.temperature,
-                            "tds": self.tds,
-                            "salinity": self.salinity,
-                            "resistance": self.sensor_data.get('resistance'),
-                            "ec_constant": self.sensor_data.get('ec_constant'),
-                            "compensation_coef": self.sensor_data.get('compensation_coef'),
-                            "temperature_offset": self.sensor_data.get('temp_offset'),
-                            "electrode_sensitivity": self.sensor_data.get('electrode_sensitivity')
+                            "value": round(self.ec, 2) if self.ec is not None else None,
+                            "tds": round(self.tds, 2) if self.tds is not None else None,
+                            "salinity": round(self.salinity, 2) if self.salinity is not None else None,
+                            "temperature": round(self.temperature, 2) if self.temperature is not None else None,
+                            "resistance": round(self.sensor_data.get('resistance', None), 2) if self.sensor_data.get('resistance') is not None else None,
+                            "ec_constant": round(self.sensor_data.get('ec_constant', None), 2) if self.sensor_data.get('ec_constant') is not None else None,
+                            "compensation_coef": round(self.sensor_data.get('compensation_coef', None), 2) if self.sensor_data.get('compensation_coef') is not None else None,
+                            "manual_temp": round(self.sensor_data.get('manual_temp', None), 2) if self.sensor_data.get('manual_temp') is not None else None,
+                            "temp_offset": round(self.sensor_data.get('temp_offset', None), 2) if self.sensor_data.get('temp_offset') is not None else None,
+                            "electrode_sensitivity": round(self.sensor_data.get('electrode_sensitivity', None), 2) if self.sensor_data.get('electrode_sensitivity') is not None else None,
+                            "compensation_mode": self.sensor_data.get('compensation_mode', None),
+                            "sensor_type": self.sensor_data.get('sensor_type', None)
                         },
                         "timestamp": self.last_updated
                     }
                 ]
             }
         }
-        helpers.save_sensor_data(['data', 'water_metrics'], data)
-        logger.log_sensor_data(['data', 'water_metrics'], data)
+        helpers.save_sensor_data(['data', 'water_metrics', 'ec'], data)
+        logger.log_sensor_data(['data', 'water_metrics', 'ec'], data)
         
     def is_connected(self):
         """

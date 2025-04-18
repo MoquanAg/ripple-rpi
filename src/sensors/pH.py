@@ -81,6 +81,7 @@ class pH:
         self.ph = None
         self.temperature = None
         self.last_updated = None
+        self.sensor_data = {}  # Initialize sensor_data dictionary
         self.load_address()
 
         # Update modbus client initialization
@@ -394,16 +395,17 @@ class pH:
                             "location": self.sensor_id
                         },
                         "fields": {
-                            "value": self.ph,
-                            "temperature": self.temperature
+                            "value": round(self.ph, 2) if self.ph is not None else None,
+                            "temperature": round(self.temperature, 2) if self.temperature is not None else None,
+                            "offset": round(self.sensor_data.get('offset', None), 2) if self.sensor_data.get('offset') is not None else None
                         },
                         "timestamp": self.last_updated
                     }
                 ]
             }
         }
-        helpers.save_sensor_data(['data', 'water_metrics'], data)
-        logger.log_sensor_data(['data', 'water_metrics'], data)
+        helpers.save_sensor_data(['data', 'water_metrics', 'ph'], data)
+        logger.log_sensor_data(['data', 'water_metrics', 'ph'], data)
         
     def is_connected(self):
         """
