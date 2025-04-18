@@ -722,22 +722,14 @@ class WaterLevel:
         """Process the raw response data from the sensor."""
         logger.debug(f"Processing status response for {self.sensor_id}: {data.hex(' ')}")
         
-        # Print to console for debugging
-        print(f"\nStatus response from {self.sensor_id}:")
-        print(f"Raw data: {data.hex(' ')}")
-        
-        if data and len(data) >= 7:  # At minimum we need addr(1) + func(1) + byte count(1) + data(≥4)
+        if data and len(data) >= 7:  # At minimum we need addr(1) + func(1) + byte_count(1) + data(≥4)
             try:
                 # Make sure byte_count is correct
                 byte_count = data[2]
                 logger.debug(f"Received byte count: {byte_count}, data length: {len(data)}")
-                print(f"  Address: {data[0]}")
-                print(f"  Function: {data[1]}")
-                print(f"  Byte count: {byte_count}")
                 
                 if len(data) < 3 + byte_count:
                     logger.warning(f"Incomplete data received, expected {byte_count} bytes, got {len(data)-3}")
-                    print(f"  Incomplete data received, expected {byte_count} bytes, got {len(data)-3}")
                     self.save_null_data()
                     return
                 
@@ -749,22 +741,18 @@ class WaterLevel:
                     try:
                         # Register 0x0000: Slave address
                         slave_addr = (data[3] << 8) | data[4]
-                        print(f"  Register 0x0000: {slave_addr} (Slave address)")
                         
                         # Register 0x0001: Baudrate
                         baudrate_value = (data[5] << 8) | data[6]
                         baudrate = next((k for k, v in self.BAUDRATE_VALUES.items() if v == baudrate_value), "Unknown")
-                        print(f"  Register 0x0001: {baudrate_value} (Baudrate: {baudrate})")
                         
                         # Register 0x0002: Pressure unit
                         unit_value = (data[7] << 8) | data[8]
                         unit = next((k for k, v in self.UNIT_VALUES.items() if v == unit_value), "Unknown")
-                        print(f"  Register 0x0002: {unit_value} (Pressure unit: {unit})")
                         
                         # Register 0x0003: Decimal places
                         decimal_value = (data[9] << 8) | data[10]
                         decimal_format = self.DECIMAL_PLACES.get(decimal_value, "Unknown")
-                        print(f"  Register 0x0003: {decimal_value} (Decimal places: {decimal_format})")
                         
                         # Register 0x0004: Level value
                         level_raw = (data[11] << 8) | data[12]
@@ -772,8 +760,6 @@ class WaterLevel:
                         # Handle negative values (two's complement)
                         if level_raw > 32767:
                             level_raw -= 65536
-                        
-                        print(f"  Register 0x0004: {level_raw} (Level raw value)")
                         
                         # The raw value is already in cm, just use decimal places for display
                         level = level_raw
@@ -794,20 +780,17 @@ class WaterLevel:
                         range_min = (data[13] << 8) | data[14]
                         if range_min > 32767:  # Handle negative values
                             range_min -= 65536
-                        print(f"  Register 0x0005: {range_min} (Range min)")
                         
                         # Register 0x0006: Range max
                         range_max = (data[15] << 8) | data[16]
                         if range_max > 32767:  # Handle negative values
                             range_max -= 65536
-                        print(f"  Register 0x0006: {range_max} (Range max)")
                         
                         # Register 0x000C: Zero offset
                         if byte_count >= 18:  # Make sure we have the zero offset data
                             zero_offset = (data[17] << 8) | data[18]
                             if zero_offset > 32767:  # Handle negative values
                                 zero_offset -= 65536
-                            print(f"  Register 0x000C: {zero_offset} (Zero offset)")
                             self.sensor_data['zero_offset'] = zero_offset
                         
                         self.level = level
@@ -816,8 +799,6 @@ class WaterLevel:
                         self.sensor_data['unit'] = "cm"
                         self.sensor_data['range_min'] = range_min
                         self.sensor_data['range_max'] = range_max
-                        logger.debug(f"Level at 0x0004: {level_str} cm")
-                        # print(f"  Level: {level_str} cm")
                         
                         # Log the main values
                         main_values = f"{self.sensor_id} - "
@@ -828,6 +809,8 @@ class WaterLevel:
                             if 'zero_offset' in self.sensor_data:
                                 main_values += f", Zero offset: {self.sensor_data['zero_offset']}"
                         
+                        logger.info(main_values)
+                        
                     except Exception as e:
                         logger.warning(f"Could not parse register values: {e}")
                         self.level = None
@@ -836,28 +819,14 @@ class WaterLevel:
                         self.sensor_data['unit'] = None
                 
                 self.last_updated = helpers.datetime_to_iso8601()
-                
-                # Log the main values
-                main_values = f"{self.sensor_id} - "
-                if self.level is not None:
-                    main_values += f"Level: {level_str} cm"
-                    main_values += f", Range min: {range_min}"
-                    main_values += f", Range max: {range_max}"
-                    if 'zero_offset' in self.sensor_data:
-                        main_values += f", Zero offset: {self.sensor_data['zero_offset']}"
-                
-                logger.info(main_values)
-                
                 self.save_data()
                 
             except Exception as e:
                 logger.warning(f"Error processing response for {self.sensor_id}: {e}")
                 logger.exception("Full exception details:")
-                print(f"  Error processing data: {e}")
                 self.save_null_data()
         else:
             logger.debug(f"Invalid response length from {self.sensor_id}: {len(data) if data else 0}")
-            print(f"  Invalid response length: {len(data) if data else 0}")
             self.save_null_data()
 
     def _update_address_in_config(self, new_address):
@@ -895,20 +864,25 @@ class WaterLevel:
                     {
                         "tags": {
                             "sensor": "water_level",
-                            "measurement": "water_level",
+                            "measurement": "level",
                             "location": self.sensor_id
                         },
                         "fields": {
-                            "value": self.level,
-                            "unit": self.unit
+                            "value": round(self.level, 2) if self.level is not None else None,
+                            "temperature": round(self.temperature, 2) if self.temperature is not None else None,
+                            "pressure_unit": self.sensor_data.get('pressure_unit', None),
+                            "decimal_places": self.sensor_data.get('decimal_places', None),
+                            "range_min": round(self.sensor_data.get('range_min', None), 2) if self.sensor_data.get('range_min') is not None else None,
+                            "range_max": round(self.sensor_data.get('range_max', None), 2) if self.sensor_data.get('range_max') is not None else None,
+                            "zero_offset": round(self.sensor_data.get('zero_offset', None), 2) if self.sensor_data.get('zero_offset') is not None else None
                         },
                         "timestamp": self.last_updated
                     }
                 ]
             }
         }
-        helpers.save_sensor_data(['data', 'water_metrics'], data)
-        logger.log_sensor_data(['data', 'water_metrics'], data)
+        helpers.save_sensor_data(['data', 'water_metrics', 'water_level'], data)
+        logger.log_sensor_data(['data', 'water_metrics', 'water_level'], data)
         
     def is_connected(self):
         """

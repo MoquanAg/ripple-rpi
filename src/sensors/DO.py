@@ -1,12 +1,6 @@
-if __name__ == '__main__':
-    from modbus_helpers import *
-else:
-    from hardware.modbus_helpers import *
-
 import serial
 import time
 import os, sys
-import asyncio
 
 current_dir = os.path.dirname(__file__)
 parent_dir = os.path.dirname(current_dir)
