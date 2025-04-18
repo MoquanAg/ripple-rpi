@@ -19,18 +19,14 @@ class WaterLevel:
 
     # Register addresses from the register map based on the provided table
     REGISTERS = {
-        'level': 0x0000,          # Water level value
-        'temperature': 0x0002,    # Temperature (°C)
-        'zero_point': 0x0004,     # Zero point calibration
-        'unit': 0x0006,           # Pressure unit (0-Mpa/°C, 1-Kpa, 2-Pa, 3-Bar, 4-Mbar, 5-kg/cm², 6-psi, 7-mh₂o, 8-mmh₂o)
-        'decimal_places': 0x0003, # Decimal places (0-3 for decimal point positions)
-        'range_min': 0x0005,      # Transmitter range min point (-32768-32767)
-        'range_max': 0x0006,      # Transmitter range max point (-32768-32767)
-        'zero_offset': 0x000c,    # Zero point offset (default is 0)
-        'baudrate': 0x0001,       # Baud rate (0-1200, 1-2400, 2-4800, 3-9600, 4-19200, 5-38400, 6-57600, 7-115200)
         'slave_addr': 0x0000,     # Slave address (1-255)
-        'factory_reset': 0x000F,  # Factory reset (0-save to user area)
-        'restore_factory': 0x0010 # Restore factory parameters (1)
+        'baudrate': 0x0001,       # Baud rate (0-7 for different rates)
+        'pressure_unit': 0x0002,  # Pressure unit (9-Mpa/°C, 10-Kpa, 11-Pa, 12-Bar, 13-Mbar, 14-kg/cm², 15-psi, 16-mh₂o, 17-mmh₂o)
+        'decimal_places': 0x0003, # Decimal places (0-3 for decimal point positions)
+        'level': 0x0004,          # Measurement output value (-32768-32767)
+        'range_min': 0x0005,      # Range min point (-32768-32767)
+        'range_max': 0x0006,      # Range max point (-32768-32767)
+        'zero_offset': 0x000C     # Zero offset value (-32768-32767)
     }
     
     # Map of baudrate values to actual baudrate
@@ -47,23 +43,23 @@ class WaterLevel:
     
     # Map of unit values to actual units
     UNIT_VALUES = {
-        "MPa/°C": 0,
-        "KPa": 1,
-        "Pa": 2,
-        "Bar": 3,
-        "Mbar": 4,
-        "kg/cm²": 5,
-        "psi": 6,
-        "mh₂o": 7,
-        "mmh₂o": 8
+        "Mpa/°C": 9,
+        "KPa": 10,
+        "Pa": 11,
+        "Bar": 12,
+        "Mbar": 13,
+        "kg/cm²": 14,
+        "psi": 15,
+        "mh₂o": 16,
+        "mmh₂o": 17
     }
     
     # Map for decimal places
     DECIMAL_PLACES = {
-        0: "0",      # No decimal places
-        1: "0.0",    # 1 decimal place
-        2: "0.00",   # 2 decimal places
-        3: "0.000"   # 3 decimal places
+        0: "####",    # No decimal places
+        1: "###.#",   # 1 decimal place
+        2: "##.##",   # 2 decimal places
+        3: "#.###"    # 3 decimal places
     }
 
     _instances = {}  # Dictionary to hold multiple instances
@@ -217,20 +213,28 @@ class WaterLevel:
     def get_status_async(self):
         """
         Queue a status request command with the modbus client.
-        Reads essential sensor data registers: level and temperature.
+        Reads registers from 0x0000 to 0x0007 to get all essential sensor data:
+        - 0x0000: Slave address
+        - 0x0001: Baudrate
+        - 0x0002: Pressure unit
+        - 0x0003: Decimal places
+        - 0x0004: Measurement output value
+        - 0x0005: Range min point
+        - 0x0006: Range max point
+        - 0x0007: Additional settings
         """
         command = bytearray([
             self.address,     # Slave address
             0x03,            # Function code (Read Holding Registers)
-            0x00, 0x00,      # Starting address (0x0000 - level value)
-            0x00, 0x04       # Number of registers to read (4 registers to get level and temperature)
+            0x00, 0x00,      # Starting address (0x0000)
+            0x00, 0x08       # Number of registers to read (8 registers = 16 bytes)
         ])
         command_id = self.modbus_client.send_command(
             device_type='water_level',
             port=self.port,
             command=command,
             baudrate=self.baud_rate,
-            response_length=13,  # 1(addr) + 1(func) + 1(byte count) + 8(data) + 2(CRC)
+            response_length=21,  # 1(addr) + 1(func) + 1(byte count) + 16(data) + 2(CRC)
             timeout=1.0
         )
         self.pending_commands[command_id] = {'type': 'get_status'}
@@ -257,7 +261,7 @@ class WaterLevel:
     def write_unit_async(self, unit):
         """
         Write unit value.
-        unit: Pressure unit (0-Mpa/°C, 1-Kpa, 2-Pa, 3-Bar, 4-Mbar, 5-kg/cm², 6-psi, 7-mh₂o, 8-mmh₂o)
+        unit: Pressure unit (9-Mpa/°C, 10-Kpa, 11-Pa, 12-Bar, 13-Mbar, 14-kg/cm², 15-psi, 16-mh₂o, 17-mmh₂o)
         """
         # Convert unit name to value if string is provided
         if isinstance(unit, str):
@@ -268,14 +272,14 @@ class WaterLevel:
                 return
         else:
             unit_value = int(unit)
-            if unit_value < 0 or unit_value > 8:
-                logger.error(f"Invalid unit value {unit}. Must be between 0 and 8")
+            if unit_value < 9 or unit_value > 17:
+                logger.error(f"Invalid unit value {unit}. Must be between 9 and 17")
                 return
 
         command = bytearray([
             self.address,
             0x06,           # Write single register
-            0x00, 0x06,    # Register address 0x0006
+            0x00, 0x02,    # Register address 0x0002 (pressure unit)
             0x00, unit_value
         ])
         command_id = self.modbus_client.send_command(
@@ -307,18 +311,15 @@ class WaterLevel:
         self.pending_commands[command_id] = {'type': 'read_decimal_places'}
 
     def write_decimal_places_async(self, decimal_places):
-        """
-        Write decimal places setting.
-        decimal_places: Number of decimal places (0-3)
-        """
-        if not (0 <= decimal_places <= 3):
-            logger.error(f"Invalid decimal places value {decimal_places}. Must be between 0 and 3")
+        """Write decimal places value (0-3)."""
+        if not 0 <= decimal_places <= 3:
+            logger.error(f"Invalid decimal places {decimal_places}. Must be between 0 and 3")
             return
 
         command = bytearray([
             self.address,
             0x06,           # Write single register
-            0x00, 0x03,    # Register address 0x0003
+            0x00, 0x03,    # Register address 0x0003 (decimal places)
             0x00, decimal_places
         ])
         command_id = self.modbus_client.send_command(
@@ -349,22 +350,22 @@ class WaterLevel:
         )
         self.pending_commands[command_id] = {'type': 'read_zero_offset'}
 
-    def write_zero_offset_async(self, offset):
-        """
-        Write zero offset value.
-        offset: Zero offset value (-32768 to 32767)
-        """
-        offset_value = int(offset)
-        if offset_value < -32768 or offset_value > 32767:
-            logger.error(f"Invalid offset value {offset}. Must be between -32768 and 32767")
+    def write_zero_offset_async(self, value):
+        """Write zero offset value."""
+        # Convert to 16-bit signed integer
+        if value < -32768 or value > 32767:
+            logger.error(f"Invalid zero offset value {value}. Must be between -32768 and 32767")
             return
+
+        # Convert negative values to two's complement
+        if value < 0:
+            value = 65536 + value
 
         command = bytearray([
             self.address,
             0x06,           # Write single register
-            0x00, 0x0c,    # Register address 0x000c
-            (offset_value >> 8) & 0xFF,
-            offset_value & 0xFF
+            0x00, 0x0C,    # Register address 0x000C (zero offset)
+            (value >> 8) & 0xFF, value & 0xFF
         ])
         command_id = self.modbus_client.send_command(
             device_type='water_level',
@@ -374,7 +375,7 @@ class WaterLevel:
             response_length=8,
             timeout=0.5
         )
-        self.pending_commands[command_id] = {'type': 'write_zero_offset', 'value': offset}
+        self.pending_commands[command_id] = {'type': 'write_zero_offset', 'value': value}
 
     def read_slave_address_async(self):
         """Read the current slave address."""
@@ -404,12 +405,11 @@ class WaterLevel:
             logger.error(f"Invalid slave address {new_address}. Must be between 1 and 255")
             return None
 
-        # Create command to write slave address
         command = bytearray([
-            self.address,   # Current device ID
-            0x06,           # Function code for writing
-            0x00, 0x00,     # Register address 0x0000
-            0x00, new_address  # New address
+            self.address,    # Current slave address
+            0x06,           # Function code (Write Single Register)
+            0x00, 0x00,    # Register address 0x0000
+            0x00, new_address  # New address value
         ])
         
         command_id = self.modbus_client.send_command(
@@ -417,7 +417,7 @@ class WaterLevel:
             port=self.port,
             command=command,
             baudrate=self.baud_rate,
-            response_length=8,  # 8 bytes response
+            response_length=8,  # Standard response for function 0x06
             timeout=2.0
         )
         
@@ -428,7 +428,7 @@ class WaterLevel:
         }
         
         logger.info(f"Sent command to change slave address from {self.address} to {new_address}")
-        return command_id 
+        return command_id
 
     def read_baudrate_async(self):
         """Read the current baudrate setting."""
@@ -449,22 +449,25 @@ class WaterLevel:
         self.pending_commands[command_id] = {'type': 'read_baudrate'}
 
     def write_baudrate_async(self, baudrate):
-        """
-        Write baudrate value.
-        baudrate: Baudrate value (one of 1200, 2400, 4800, 9600, 19200, 38400, 57600, 115200)
-        
-        Note: After changing baudrate, you'll need to reconnect using the new baudrate.
-        """
-        if baudrate not in self.BAUDRATE_VALUES:
-            logger.error(f"Invalid baudrate {baudrate}. Must be one of {list(self.BAUDRATE_VALUES.keys())}")
-            return None
-            
-        value = self.BAUDRATE_VALUES[baudrate]
+        """Write baudrate value."""
+        # Convert baudrate name to value if string is provided
+        if isinstance(baudrate, str):
+            if baudrate.upper() in {k.upper(): v for k, v in self.BAUDRATE_VALUES.items()}:
+                baud_value = self.BAUDRATE_VALUES[baudrate.upper()]
+            else:
+                logger.error(f"Invalid baudrate {baudrate}. Must be one of {list(self.BAUDRATE_VALUES.keys())}")
+                return
+        else:
+            baud_value = int(baudrate)
+            if baud_value not in self.BAUDRATE_VALUES.values():
+                logger.error(f"Invalid baudrate value {baudrate}. Must be one of {list(self.BAUDRATE_VALUES.values())}")
+                return
+
         command = bytearray([
             self.address,
             0x06,           # Write single register
-            0x00, 0x01,    # Register address 0x0001
-            0x00, value
+            0x00, 0x01,    # Register address 0x0001 (baudrate)
+            0x00, baud_value
         ])
         command_id = self.modbus_client.send_command(
             device_type='water_level',
@@ -474,8 +477,7 @@ class WaterLevel:
             response_length=8,
             timeout=0.5
         )
-        self.pending_commands[command_id] = {'type': 'write_baudrate', 'value': baudrate}
-        return command_id
+        self.pending_commands[command_id] = {'type': 'write_baudrate', 'value': baud_value}
 
     def factory_reset_async(self):
         """
@@ -501,22 +503,29 @@ class WaterLevel:
     def restore_factory_params_async(self):
         """
         Restore device to factory parameters.
+        This resets all settings to their factory defaults.
         """
         command = bytearray([
             self.address,
-            0x06,           # Write single register
+            0x06,           # Function code (Write Single Register)
             0x00, 0x10,    # Register address 0x0010
-            0x00, 0x01     # Value to restore factory parameters
+            0x00, 0x01     # Value 1 to restore factory parameters
         ])
+        
         command_id = self.modbus_client.send_command(
             device_type='water_level',
             port=self.port,
             command=command,
             baudrate=self.baud_rate,
             response_length=8,
-            timeout=0.5
+            timeout=1.0
         )
-        self.pending_commands[command_id] = {'type': 'restore_factory_params'}
+        
+        self.pending_commands[command_id] = {
+            'type': 'restore_factory_params'
+        }
+        
+        logger.info("Sent command to restore factory parameters")
         return command_id
 
     def read_range_min_async(self):
@@ -538,21 +547,21 @@ class WaterLevel:
         self.pending_commands[command_id] = {'type': 'read_range_min'}
 
     def write_range_min_async(self, value):
-        """
-        Write transmitter range minimum point.
-        value: Range minimum (-32768 to 32767)
-        """
-        range_min = int(value)
-        if range_min < -32768 or range_min > 32767:
-            logger.error(f"Invalid range minimum value {value}. Must be between -32768 and 32767")
+        """Write range minimum value."""
+        # Convert to 16-bit signed integer
+        if value < -32768 or value > 32767:
+            logger.error(f"Invalid range min value {value}. Must be between -32768 and 32767")
             return
+
+        # Convert negative values to two's complement
+        if value < 0:
+            value = 65536 + value
 
         command = bytearray([
             self.address,
             0x06,           # Write single register
-            0x00, 0x05,    # Register address 0x0005
-            (range_min >> 8) & 0xFF,
-            range_min & 0xFF
+            0x00, 0x05,    # Register address 0x0005 (range min)
+            (value >> 8) & 0xFF, value & 0xFF
         ])
         command_id = self.modbus_client.send_command(
             device_type='water_level',
@@ -562,7 +571,7 @@ class WaterLevel:
             response_length=8,
             timeout=0.5
         )
-        self.pending_commands[command_id] = {'type': 'write_range_min', 'value': range_min}
+        self.pending_commands[command_id] = {'type': 'write_range_min', 'value': value}
 
     def read_range_max_async(self):
         """Read the transmitter range maximum point."""
@@ -583,21 +592,21 @@ class WaterLevel:
         self.pending_commands[command_id] = {'type': 'read_range_max'}
 
     def write_range_max_async(self, value):
-        """
-        Write transmitter range maximum point.
-        value: Range maximum (-32768 to 32767)
-        """
-        range_max = int(value)
-        if range_max < -32768 or range_max > 32767:
-            logger.error(f"Invalid range maximum value {value}. Must be between -32768 and 32767")
+        """Write range maximum value."""
+        # Convert to 16-bit signed integer
+        if value < -32768 or value > 32767:
+            logger.error(f"Invalid range max value {value}. Must be between -32768 and 32767")
             return
+
+        # Convert negative values to two's complement
+        if value < 0:
+            value = 65536 + value
 
         command = bytearray([
             self.address,
             0x06,           # Write single register
-            0x00, 0x06,    # Register address 0x0006
-            (range_max >> 8) & 0xFF,
-            range_max & 0xFF
+            0x00, 0x06,    # Register address 0x0006 (range max)
+            (value >> 8) & 0xFF, value & 0xFF
         ])
         command_id = self.modbus_client.send_command(
             device_type='water_level',
@@ -607,7 +616,7 @@ class WaterLevel:
             response_length=8,
             timeout=0.5
         )
-        self.pending_commands[command_id] = {'type': 'write_range_max', 'value': range_max}
+        self.pending_commands[command_id] = {'type': 'write_range_max', 'value': value}
 
     def _calculate_crc16(self, data):
         """
@@ -717,7 +726,7 @@ class WaterLevel:
         print(f"\nStatus response from {self.sensor_id}:")
         print(f"Raw data: {data.hex(' ')}")
         
-        if data and len(data) >= 7:  # At minimum we need addr(1) + func(1) + byte_count(1) + data(≥4)
+        if data and len(data) >= 7:  # At minimum we need addr(1) + func(1) + byte count(1) + data(≥4)
             try:
                 # Make sure byte_count is correct
                 byte_count = data[2]
@@ -736,37 +745,88 @@ class WaterLevel:
                 self.sensor_data = {}  # Store all sensor data
                 
                 # Process each register pair
-                if byte_count >= 8:  # We expect 8 bytes for 4 registers
+                if byte_count >= 16:  # We expect 16 bytes for 8 registers
                     try:
-                        # Register 0x0000-0x0001 (First pair)
-                        reg0_value = (data[3] << 8) | data[4]
-                        print(f"  Register 0x0000: {reg0_value} (Slave address)")
+                        # Register 0x0000: Slave address
+                        slave_addr = (data[3] << 8) | data[4]
+                        print(f"  Register 0x0000: {slave_addr} (Slave address)")
                         
-                        # Register 0x0001-0x0002 (Second pair)
-                        reg1_value = (data[5] << 8) | data[6]
-                        baudrate = next((k for k, v in self.BAUDRATE_VALUES.items() if v == reg1_value), "Unknown")
-                        print(f"  Register 0x0001: {reg1_value} (Baudrate: {baudrate})")
+                        # Register 0x0001: Baudrate
+                        baudrate_value = (data[5] << 8) | data[6]
+                        baudrate = next((k for k, v in self.BAUDRATE_VALUES.items() if v == baudrate_value), "Unknown")
+                        print(f"  Register 0x0001: {baudrate_value} (Baudrate: {baudrate})")
                         
-                        # Register 0x0002-0x0003 (Third pair)
-                        reg2_value = (data[7] << 8) | data[8]
-                        unit = next((k for k, v in self.UNIT_VALUES.items() if v == reg2_value), "Unknown")
-                        print(f"  Register 0x0002: {reg2_value} (Pressure unit: {unit})")
+                        # Register 0x0002: Pressure unit
+                        unit_value = (data[7] << 8) | data[8]
+                        unit = next((k for k, v in self.UNIT_VALUES.items() if v == unit_value), "Unknown")
+                        print(f"  Register 0x0002: {unit_value} (Pressure unit: {unit})")
                         
-                        # Register 0x0003-0x0004 (Fourth pair)
-                        reg3_value = (data[9] << 8) | data[10]
-                        decimal_format = self.DECIMAL_PLACES.get(reg3_value, "Unknown")
-                        print(f"  Register 0x0003: {reg3_value} (Decimal places: {decimal_format})")
+                        # Register 0x0003: Decimal places
+                        decimal_value = (data[9] << 8) | data[10]
+                        decimal_format = self.DECIMAL_PLACES.get(decimal_value, "Unknown")
+                        print(f"  Register 0x0003: {decimal_value} (Decimal places: {decimal_format})")
                         
-                        # Get the raw integer values for level
-                        level_raw = int.from_bytes(data[3:7], byteorder='big', signed=True)
-                        level = level_raw / 10000.0
+                        # Register 0x0004: Level value
+                        level_raw = (data[11] << 8) | data[12]
+                        
+                        # Handle negative values (two's complement)
+                        if level_raw > 32767:
+                            level_raw -= 65536
+                        
+                        print(f"  Register 0x0004: {level_raw} (Level raw value)")
+                        
+                        # The raw value is already in cm, just use decimal places for display
+                        level = level_raw
+                        
+                        # Format string based on decimal places setting
+                        if decimal_value == 0:  # ####
+                            level_str = f"{level:d}"
+                        elif decimal_value == 1:  # ###.#
+                            level_str = f"{level:.1f}"
+                        elif decimal_value == 2:  # ##.##
+                            level_str = f"{level:.2f}"
+                        elif decimal_value == 3:  # #.###
+                            level_str = f"{level:.3f}"
+                        else:
+                            level_str = f"{level:d}"
+                        
+                        # Register 0x0005: Range min
+                        range_min = (data[13] << 8) | data[14]
+                        if range_min > 32767:  # Handle negative values
+                            range_min -= 65536
+                        print(f"  Register 0x0005: {range_min} (Range min)")
+                        
+                        # Register 0x0006: Range max
+                        range_max = (data[15] << 8) | data[16]
+                        if range_max > 32767:  # Handle negative values
+                            range_max -= 65536
+                        print(f"  Register 0x0006: {range_max} (Range max)")
+                        
+                        # Register 0x000C: Zero offset
+                        if byte_count >= 18:  # Make sure we have the zero offset data
+                            zero_offset = (data[17] << 8) | data[18]
+                            if zero_offset > 32767:  # Handle negative values
+                                zero_offset -= 65536
+                            print(f"  Register 0x000C: {zero_offset} (Zero offset)")
+                            self.sensor_data['zero_offset'] = zero_offset
                         
                         self.level = level
-                        self.unit = unit
+                        self.unit = "cm"  # Always use cm
                         self.sensor_data['level'] = level
-                        self.sensor_data['unit'] = unit
-                        logger.debug(f"Level at 0x0004: {level} {unit}")
-                        print(f"  Level: {level:.4f} {unit}")
+                        self.sensor_data['unit'] = "cm"
+                        self.sensor_data['range_min'] = range_min
+                        self.sensor_data['range_max'] = range_max
+                        logger.debug(f"Level at 0x0004: {level_str} cm")
+                        # print(f"  Level: {level_str} cm")
+                        
+                        # Log the main values
+                        main_values = f"{self.sensor_id} - "
+                        if self.level is not None:
+                            main_values += f"Level: {level_str} cm"
+                            main_values += f", Range min: {range_min}"
+                            main_values += f", Range max: {range_max}"
+                            if 'zero_offset' in self.sensor_data:
+                                main_values += f", Zero offset: {self.sensor_data['zero_offset']}"
                         
                     except Exception as e:
                         logger.warning(f"Could not parse register values: {e}")
@@ -780,7 +840,11 @@ class WaterLevel:
                 # Log the main values
                 main_values = f"{self.sensor_id} - "
                 if self.level is not None:
-                    main_values += f"Level: {self.level:.4f} {self.unit if self.unit else ''}"
+                    main_values += f"Level: {level_str} cm"
+                    main_values += f", Range min: {range_min}"
+                    main_values += f", Range max: {range_max}"
+                    if 'zero_offset' in self.sensor_data:
+                        main_values += f", Zero offset: {self.sensor_data['zero_offset']}"
                 
                 logger.info(main_values)
                 
@@ -887,12 +951,61 @@ class WaterLevel:
             statuses[sensor_id] = sensor_instance.is_connected()
         return statuses
 
+    def write_slave_addr_async(self, addr):
+        """Write slave address."""
+        if not 1 <= addr <= 247:
+            logger.error(f"Invalid slave address {addr}. Must be between 1 and 247")
+            return
+
+        command = bytearray([
+            self.address,
+            0x06,           # Write single register
+            0x00, 0x00,    # Register address 0x0000 (slave address)
+            0x00, addr
+        ])
+        command_id = self.modbus_client.send_command(
+            device_type='water_level',
+            port=self.port,
+            command=command,
+            baudrate=self.baud_rate,
+            response_length=8,
+            timeout=0.5
+        )
+        self.pending_commands[command_id] = {'type': 'write_slave_addr', 'value': addr}
+
+    def read_status_async(self):
+        """Read all sensor registers."""
+        command = bytearray([
+            self.address,
+            0x03,           # Read holding registers
+            0x00, 0x00,    # Starting register address (0x0000)
+            0x00, 0x0D     # Number of registers to read (13 registers: 0x0000 to 0x000C)
+        ])
+        command_id = self.modbus_client.send_command(
+            device_type='water_level',
+            port=self.port,
+            command=command,
+            baudrate=self.baud_rate,
+            response_length=31,  # 1(addr) + 1(func) + 1(byte_count) + 26(data) + 2(crc)
+            timeout=0.5
+        )
+        self.pending_commands[command_id] = {'type': 'read_status'}
+
 if __name__ == "__main__":
     # Load all sensors
     WaterLevel.load_all_sensors(port='/dev/ttyAMA2')
 
     # Check connection status of all sensors
     connection_statuses = WaterLevel.get_connection_statuses()
+    
+    # Change address to 0x31 (49) if requested
+    # print("\nChanging device addresses to 0x31 (49)...")
+    # for sensor_id, sensor_instance in WaterLevel._instances.items():
+    #     print(f"Changing address for sensor {sensor_id}")
+    #     # Send the command to change address
+    #     cmd_id = sensor_instance.write_slave_address_async(0x31)
+    #     print(f"Command sent with ID: {cmd_id}")
+    #     time.sleep(2)  # Wait for the change to take effect
     
     # Now run the normal loop
     print("\nStarting normal polling loop:")
