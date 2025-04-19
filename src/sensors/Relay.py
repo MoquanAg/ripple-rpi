@@ -233,10 +233,37 @@ class Relay:
                 logger.info(f"Final relay_addresses: {self.relay_addresses}")
             else:
                 logger.info("No RELAY_CONTROL section found in config. Using default address.")
+                
+            # Load relay assignments
+            if "RELAY_ASSIGNMENTS" in config:
+                self.relay_assignments = {}
+                for key, value in config["RELAY_ASSIGNMENTS"].items():
+                    if key.upper().startswith('RELAY_'):
+                        # Parse the relay group name to get the base index
+                        parts = key.split('_')
+                        if len(parts) >= 3:
+                            base_index = int(parts[2])  # Get the starting index (e.g., 0 from "Relay_ONE_0_to_3")
+                            devices = [d.strip() for d in value.split(',')]
+                            for i, device in enumerate(devices):
+                                self.relay_assignments[device] = {
+                                    'relay_group': parts[1],  # e.g., "ONE"
+                                    'index': base_index + i
+                                }
+                logger.info(f"Loaded relay assignments: {self.relay_assignments}")
+            else:
+                logger.warning("No RELAY_ASSIGNMENTS section found in config")
+                
         except ValueError as e:
             logger.warning(f"Invalid address format in config: {e}")
         except Exception as e:
             logger.warning(f"Error loading relay addresses: {e}")
+
+    def _get_relay_info(self, device_name):
+        """Get relay group and index for a device name."""
+        if device_name in self.relay_assignments:
+            info = self.relay_assignments[device_name]
+            return f"RELAY{info['relay_group']}", info['index']
+        return None, None
 
     def save_null_data(self):
         """Save null data in the new format."""
@@ -570,85 +597,29 @@ class Relay:
             return
         return self.set_multiple_relays(device_name, starting_relay_index, states)
 
-    def set_valve_from_tank_to_outside(self, status):
-        """Control valve for flow from tank to outside.
-        
-        Args:
-            status (bool): True to open valve, False to close
-        """
-        if not any(key in self.relay_addresses for key in ['RELAYONE']):
-            logger.info("No tank-to-outside valve hardware present in RELAY_ONE")
-            return
-
-        logger.info(f"Setting tank-to-outside valve to {status}")
-        try:
-            # Get all relay assignments from config
-            assignments = globals.DEVICE_CONFIG_FILE['RELAY_ASSIGNMENTS']
-            
-            # Search through all relay groups for ValveTankToOutside
-            for group_name, devices in assignments.items():
-                if not group_name.startswith('Relay_'):
-                    continue
-                    
-                device_list = devices.split(',')
-                for i, device in enumerate(device_list):
-                    if device.strip() == 'ValveTankToOutside':
-                        # Extract the base index from group name
-                        base_index = int(group_name.split('_')[2])
-                        valve_index = i + base_index
-                        
-                        if status:
-                            self.turn_on("RELAYONE", valve_index)
-                        else:
-                            self.turn_off("RELAYONE", valve_index)
-                        return
-                        
-            raise KeyError("ValveTankToOutside not found in any relay assignments")
-                
-        except KeyError as e:
-            logger.warning(f"Missing configuration for tank-to-outside valve: {e}")
-        except Exception as e:
-            logger.error(f"Error controlling tank-to-outside valve: {e}")
-
     def set_valve_from_outside_to_tank(self, status):
-        """Control valve for flow from outside to tank.
-        
-        Args:
-            status (bool): True to open valve, False to close
-        """
-        if not any(key in self.relay_addresses for key in ['RELAYONE']):
-            logger.info("No outside-to-tank valve hardware present in RELAY_ONE")
-            return
-
+        """Control valve for flow from outside to tank."""
         logger.info(f"Setting outside-to-tank valve to {status}")
-        try:
-            # Get all relay assignments from config
-            assignments = globals.DEVICE_CONFIG_FILE['RELAY_ASSIGNMENTS']
-            
-            # Search through all relay groups for ValveOutsideToTank
-            for group_name, devices in assignments.items():
-                if not group_name.startswith('Relay_'):
-                    continue
-                    
-                device_list = devices.split(',')
-                for i, device in enumerate(device_list):
-                    if device.strip() == 'ValveOutsideToTank':
-                        # Extract the base index from group name
-                        base_index = int(group_name.split('_')[2])
-                        valve_index = i + base_index
-                        
-                        if status:
-                            self.turn_on("RELAYONE", valve_index)
-                        else:
-                            self.turn_off("RELAYONE", valve_index)
-                        return
-                        
-            raise KeyError("ValveOutsideToTank not found in any relay assignments")
-                
-        except KeyError as e:
-            logger.warning(f"Missing configuration for outside-to-tank valve: {e}")
-        except Exception as e:
-            logger.error(f"Error controlling outside-to-tank valve: {e}")
+        relay_group, index = self._get_relay_info("ValveOutsideToTank")
+        if relay_group and index:
+            if status:
+                self.turn_on(relay_group, index)
+            else:
+                self.turn_off(relay_group, index)
+        else:
+            logger.warning("ValveOutsideToTank not found in relay assignments")
+
+    def set_valve_from_tank_to_outside(self, status):
+        """Control valve for flow from tank to outside."""
+        logger.info(f"Setting tank-to-outside valve to {status}")
+        relay_group, index = self._get_relay_info("ValveTankToOutside")
+        if relay_group and index:
+            if status:
+                self.turn_on(relay_group, index)
+            else:
+                self.turn_off(relay_group, index)
+        else:
+            logger.warning("ValveTankToOutside not found in relay assignments")
 
     def set_pump_recirculation(self, status):
         """Control recirculation pump.
@@ -725,51 +696,20 @@ class Relay:
             logger.error(f"Error controlling tank-to-gutters pump: {e}")
 
     def set_sprinklers(self, status):
-        """Control both sprinkler A and B together.
-        
-        Args:
-            status (bool): True to turn on sprinklers, False to turn off
-        """
-        if not any(key in self.relay_addresses for key in ['RELAYONE']):
-            logger.info("No sprinkler hardware present in RELAY_ONE")
-            return
-
+        """Control both sprinkler A and B together."""
         logger.info(f"Setting sprinklers to {status}")
-        try:
-            # Get all relay assignments from config
-            assignments = globals.DEVICE_CONFIG_FILE['RELAY_ASSIGNMENTS']
-            
-            # Find indices for both sprinklers
-            sprinkler_a_index = None
-            sprinkler_b_index = None
-            for group_name, devices in assignments.items():
-                if not group_name.startswith('Relay_'):
-                    continue
-                    
-                device_list = devices.split(',')
-                base_index = int(group_name.split('_')[2])
-                
-                for i, device in enumerate(device_list):
-                    device = device.strip()
-                    if device == 'SprinklerA':
-                        sprinkler_a_index = i + base_index
-                    elif device == 'SprinklerB':
-                        sprinkler_b_index = i + base_index
-            
-            if sprinkler_a_index is None or sprinkler_b_index is None:
-                raise KeyError("SprinklerA or SprinklerB not found in any relay assignments")
-            
-            # Control both sprinklers together using set_two_relays
-            self.set_two_relays(
-                "RELAYONE",
-                min(sprinkler_a_index, sprinkler_b_index),
-                [status, status]  # Same status for both sprinklers
-            )
-                
-        except KeyError as e:
-            logger.warning(f"Missing configuration for sprinklers: {e}")
-        except Exception as e:
-            logger.error(f"Error controlling sprinklers: {e}")
+        relay_group_a, index_a = self._get_relay_info("SprinklerA")
+        relay_group_b, index_b = self._get_relay_info("SprinklerB")
+        
+        if relay_group_a and index_a and relay_group_b and index_b:
+            if status:
+                self.turn_on(relay_group_a, index_a)
+                self.turn_on(relay_group_b, index_b)
+            else:
+                self.turn_off(relay_group_a, index_a)
+                self.turn_off(relay_group_b, index_b)
+        else:
+            logger.warning("SprinklerA or SprinklerB not found in relay assignments")
 
     def set_pump_from_collector_tray_to_tank(self, status):
         """Control pump from collector tray to tank.
@@ -973,88 +913,65 @@ class Relay:
             logger.error(f"Error controlling nutrient pump {pump_letter}: {e}")
 
     def set_mixing_pump(self, status):
-        """Control mixing pump.
-        
-        Args:
-            status (bool): True to turn on pump, False to turn off
-        """
-        if not any(key in self.relay_addresses for key in ['RELAYONE']):
-            logger.info("No mixing pump hardware present in RELAY_ONE")
-            return
-
+        """Control mixing pump."""
         logger.info(f"Setting mixing pump to {status}")
-        try:
-            # Get all relay assignments from config
-            assignments = globals.DEVICE_CONFIG_FILE['RELAY_ASSIGNMENTS']
-            
-            # Search through all relay groups for MixingPump
-            for group_name, devices in assignments.items():
-                if not group_name.startswith('Relay_'):
-                    continue
-                    
-                device_list = devices.split(',')
-                for i, device in enumerate(device_list):
-                    if device.strip() == 'MixingPump':
-                        # Extract the base index from group name
-                        base_index = int(group_name.split('_')[2])
-                        pump_index = i + base_index
-                        
-                        if status:
-                            self.turn_on("RELAYONE", pump_index)
-                        else:
-                            self.turn_off("RELAYONE", pump_index)
-                        return
-                        
-            raise KeyError("MixingPump not found in any relay assignments")
-                
-        except KeyError as e:
-            logger.warning(f"Missing configuration for mixing pump: {e}")
-        except Exception as e:
-            logger.error(f"Error controlling mixing pump: {e}")
+        relay_group, index = self._get_relay_info("MixingPump")
+        if relay_group and index:
+            if status:
+                self.turn_on(relay_group, index)
+            else:
+                self.turn_off(relay_group, index)
+        else:
+            logger.warning("MixingPump not found in relay assignments")
 
 
 if __name__ == "__main__":
     relay = Relay()
     if relay is not None:  # Only proceed if device is enabled
         # Example usage of various methods
-        relay.set_mixing_pump(True)
-        time.sleep(1)
-        relay.set_mixing_pump(False)
         
-        # Test tank valve control
-        relay.set_valve_from_outside_to_tank(True)
-        time.sleep(1)
-        relay.set_valve_from_outside_to_tank(False)
+        while True:
+            relay.get_status()
+            time.sleep(10)
         
-        relay.set_valve_from_tank_to_outside(True)
-        time.sleep(1)
-        relay.set_valve_from_tank_to_outside(False)
+        # relay.set_mixing_pump(True)
+        # time.sleep(1)
+        # relay.set_mixing_pump(False)
         
-        # Test sprinklers
-        relay.set_sprinklers(True)
-        time.sleep(1)
-        relay.set_sprinklers(False)
+        # # Test tank valve control
+        # relay.set_valve_from_outside_to_tank(True)
+        # time.sleep(1)
+        # relay.set_valve_from_outside_to_tank(False)
         
-        # Test collector tray pump
-        relay.set_pump_from_collector_tray_to_tank(True)
-        time.sleep(1)
-        relay.set_pump_from_collector_tray_to_tank(False)
+        # relay.set_valve_from_tank_to_outside(True)
+        # time.sleep(1)
+        # relay.set_valve_from_tank_to_outside(False)
         
-        # Test pH pumps
-        relay.set_ph_plus_pump(True)
-        time.sleep(1)
-        relay.set_ph_plus_pump(False)
+        # # Test sprinklers
+        # relay.set_sprinklers(True)
+        # time.sleep(1)
+        # relay.set_sprinklers(False)
         
-        relay.set_ph_minus_pump(True)
-        time.sleep(1)
-        relay.set_ph_minus_pump(False)
+        # # Test collector tray pump
+        # relay.set_pump_from_collector_tray_to_tank(True)
+        # time.sleep(1)
+        # relay.set_pump_from_collector_tray_to_tank(False)
         
-        # Test nutrient pumps
-        relay.set_nutrient_pumps(True)
-        time.sleep(1)
-        relay.set_nutrient_pumps(False)
+        # # Test pH pumps
+        # relay.set_ph_plus_pump(True)
+        # time.sleep(1)
+        # relay.set_ph_plus_pump(False)
         
-        # Test tank to gutters pump
-        relay.set_pump_from_tank_to_gutters(True)
-        time.sleep(1)
-        relay.set_pump_from_tank_to_gutters(False)
+        # relay.set_ph_minus_pump(True)
+        # time.sleep(1)
+        # relay.set_ph_minus_pump(False)
+        
+        # # Test nutrient pumps
+        # relay.set_nutrient_pumps(True)
+        # time.sleep(1)
+        # relay.set_nutrient_pumps(False)
+        
+        # # Test tank to gutters pump
+        # relay.set_pump_from_tank_to_gutters(True)
+        # time.sleep(1)
+        # relay.set_pump_from_tank_to_gutters(False)
