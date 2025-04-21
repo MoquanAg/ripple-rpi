@@ -41,7 +41,8 @@ class Relay:
         self.data_path = globals.SAVED_SENSOR_DATA_PATH
         self.address = 0x01  # Default address
         self.ser = serial.Serial()
-        self.baud_rate = 9600
+        # Get baud rate from config file
+        self.baud_rate = globals.get_device_baudrate('RELAY_CONTROL', 'RelayOne', 38400)
         self.relay_statuses = {}  # Changed to dict to store multiple relay states
         self.last_updated = None
         self.load_addresses()  # Changed from load_address to load_addresses
@@ -145,7 +146,7 @@ class Relay:
             logger.info(f"Sending status request to {relay_name} at address 0x{address:02X}")
             try:
                 command = bytearray([address, 0x01, 0x00, 0x00, 0x00, 0x08])
-                logger.debug(f"Command bytes: {[f'0x{b:02X}' for b in command]}")
+                logger.info(f"Command bytes: {[f'0x{b:02X}' for b in command]}")
                 
                 timeout = 2.0
                 command_id = self.modbus_client.send_command(
@@ -156,7 +157,7 @@ class Relay:
                     response_length=6,
                     timeout=timeout,
                 )
-                
+                logger.info(f"baudrate: {self.baud_rate}")
                 # Track the pending command with timestamp
                 self.pending_commands[command_id] = {
                     "type": "get_status",
@@ -531,8 +532,8 @@ class Relay:
             states (list): List of boolean values indicating desired states (1 to 8 states)
         """
         logger.info(f"Setting {len(states)} relays starting at index {starting_relay_index} with states {states}")
-        if not 1 <= len(states) <= 12:
-            logger.warning("Must provide between 1 and 8 relay states")
+        if not 1 <= len(states) <= 16:
+            logger.warning("Must provide between 1 and 16 relay states")
             return
         
         # Get the correct address for the device from relay_addresses
@@ -564,6 +565,7 @@ class Relay:
             response_length=8,
             timeout=0.5,
         )
+        logger.info(f"baudrate: {self.baud_rate}")
         self.pending_commands[command_id] = {
             "type": f"set_{num_registers}_relays",
             "device": device_name,
@@ -930,9 +932,14 @@ if __name__ == "__main__":
     if relay is not None:  # Only proceed if device is enabled
         # Example usage of various methods
         
-        while True:
-            relay.get_status()
-            time.sleep(10)
+        
+        relay.set_multiple_relays("RELAYONE", 0, [True, True, True, True, True, True, True, True, True, True, True, True, True, True, True, True])
+        time.sleep(5)
+        relay.set_multiple_relays("RELAYONE", 0, [False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False])
+        time.sleep(1)
+        # while True:
+        #     relay.get_status()
+        #     time.sleep(10)
         
         # relay.set_mixing_pump(True)
         # time.sleep(1)
