@@ -101,11 +101,11 @@ class EC:
     def init(self, sensor_id, port='/dev/ttyAMA2'):
         logger.info(f"Initializing the EC instance for {sensor_id} in {port}.")
         self.sensor_id = sensor_id
-        self.port = port
+        self.port = globals.get_device_port('SENSORS', 'EC_main', '/dev/ttyAMA2')
         self.data_path = globals.SAVED_SENSOR_DATA_PATH
-        self.address = None  # Remove default address
+        self.address = globals.get_device_address('SENSORS', 'EC_main', '0x21')
         self.ser = serial.Serial()
-        self.baud_rate = 9600 
+        self.baud_rate = globals.get_device_baudrate('SENSORS', 'EC_main', 9600)
         self.position = "main"
         self.ec = None
         self.temperature = None

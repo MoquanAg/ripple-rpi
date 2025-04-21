@@ -60,9 +60,8 @@ class DO:
         self.sensor_id = sensor_id
         self.port = port
         self.data_path = globals.SAVED_SENSOR_DATA_PATH
-        self.address = 0x03  # Default address
-        self.ser = serial.Serial()
-        self.baud_rate = 9600 
+        self.address = globals.get_device_address('SENSORS', 'DO_main', '0x03')
+        self.baud_rate = globals.get_device_baudrate('SENSORS', 'DO_main', 9600)
         self.position = "main"
         self.do = None
         self.last_updated = None

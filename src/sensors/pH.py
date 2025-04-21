@@ -72,11 +72,11 @@ class pH:
     def init(self, sensor_id, port='/dev/ttyAMA2'):
         logger.info(f"Initializing the pH instance for {sensor_id} in {port}.")
         self.sensor_id = sensor_id
-        self.port = port
+        self.port = globals.get_device_port('SENSORS', 'pH_main', '/dev/ttyAMA2')
         self.data_path = globals.SAVED_SENSOR_DATA_PATH
-        self.address = None  # Remove default address
+        self.address = globals.get_device_address('SENSORS', 'pH_main', '0x11')
         self.ser = serial.Serial()
-        self.baud_rate = 9600 
+        self.baud_rate = globals.get_device_baudrate('SENSORS', 'pH_main', 9600)
         self.position = "main"
         self.ph = None
         self.temperature = None
