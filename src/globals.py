@@ -176,6 +176,15 @@ def get_device_position(section, key, default_position=''):
     except:
         return default_position
 
+def get_device_baudrate(section, key, default_baudrate=9600):
+    """Get device baudrate from appropriate section"""
+    try:
+        if section in DEVICE_CONFIG_FILE and key in DEVICE_CONFIG_FILE[section]:
+            return int(DEVICE_CONFIG_FILE[section][key].split(',')[5].strip())  # Get baudrate from 6th field
+        return default_baudrate
+    except:
+        return default_baudrate
+
 # Map system values to availabilities
 MOTOR_SET = get_availability_value("motor_set")
 HAS_LASER = get_availability("laser")
