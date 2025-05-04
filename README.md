@@ -6,11 +6,12 @@
 ### Quick Links
 - [Documentation](#project-context)
 - [Installation](#installation)
+- [API Server](#api-server)
 - [Communication Protocol](#communication-protocol)
 - [Error Handling](#error-handling)
 
 ### Version
-Current Version: 1.0.0-alpha
+Current Version: 1.0.0-beta
 
 ## Project Context
 
@@ -188,6 +189,97 @@ Application Mapping:
 - Drain meter (Modbus address: 0x07)
 - Return water tray level switch
 
+## API Server
+
+The Ripple system includes a REST API server that allows other systems on the same network to monitor sensor data and control the fertigation system.
+
+### API Setup
+
+1. The API server is included in the main installation and requires these dependencies:
+   ```
+   fastapi>=0.104.0
+   uvicorn>=0.23.2
+   pydantic>=2.4.2
+   ```
+
+2. Start the API server along with the main controller using the provided startup script:
+   ```bash
+   ./start_ripple.sh
+   ```
+
+3. Or start the API server directly:
+   ```bash
+   python server.py
+   ```
+
+### API Endpoints
+
+#### General Endpoints
+
+- `GET /`: Get system information
+  - Response: General system status and version information
+
+#### Sensor Endpoints
+
+- `GET /sensors`: Get all sensor data
+  - Response: Data from all sensors (pH, EC, Water Level, DO, Relay)
+
+- `GET /sensors/{sensor_type}`: Get data for a specific sensor type
+  - Path Parameters:
+    - `sensor_type`: One of "pH", "EC", "WaterLevel", "DO", "Relay"
+  - Response: Data from the specified sensor type
+
+#### Target Value Endpoints
+
+- `GET /targets`: Get all target values
+  - Response: Target values for all sensor types
+
+- `GET /targets/{sensor_type}`: Get target values for a specific sensor type
+  - Path Parameters:
+    - `sensor_type`: One of "pH", "EC", "WaterLevel", "DO"
+  - Response: Target values for the specified sensor type
+
+#### Control Endpoints
+
+- `POST /relay`: Control a relay
+  - Request Body:
+    ```json
+    {
+      "relay_id": "NutrientPumpA", 
+      "state": true
+    }
+    ```
+  - Response: Success status and result details
+
+- `PUT /targets/{sensor_type}`: Update target values for sensors
+  - Path Parameters:
+    - `sensor_type`: One of "pH", "EC", "WaterLevel", "DO"
+  - Request Body:
+    ```json
+    {
+      "target": 7.0,
+      "deadband": 0.1,
+      "min": 6.5,
+      "max": 7.5
+    }
+    ```
+  - Response: Updated target values
+
+### Using the API
+
+#### Authentication
+
+All API endpoints require HTTP Basic Authentication. Use the username and password configured in `device.conf` under the `[SYSTEM]` section.
+
+#### Example Client
+
+See `client_example.py` for example code on how to interact with the API using Python. The example shows how to:
+
+1. Retrieve sensor data
+2. Control relays
+3. Update target parameters
+4. Poll sensor data at regular intervals
+
 ## Communication Protocol
 
 ### Master Communication (ttyAMA2)
@@ -321,11 +413,7 @@ class CommunicationError(SystemError):
 ### Prerequisites
 1. Raspberry Pi CM4 with appropriate I/O board
 2. Python 3.8 or higher
-3. Required Python packages:
-   ```bash
-   pip install pyserial
-   pip install crcmod
-   ```
+3. Required Python packages (installed by setup script)
 
 ### Setup
 1. Enable serial ports in `/boot/config.txt`:
@@ -349,29 +437,39 @@ class CommunicationError(SystemError):
    ```bash
    git clone https://github.com/your-repo/ripple.git
    cd ripple
-   pip install -r requirements.txt
+   chmod +x setup_ripple.sh
+   ./setup_ripple.sh
    ```
 
 ### Running the System
 ```bash
-python3 ripple_control.py
+./start_ripple.sh
 ```
 
 ## Project Structure
 
-- `ripple_control.py` - Main control system
+- `main.py` - Main control system
+- `server.py` - REST API server
+- `start_ripple.sh` - System startup script
+- `setup_ripple.sh` - System setup script
+- `client_example.py` - Example API client
+- `API_README.md` - Detailed API documentation
 - `lumina_modbus_client.py` - Modbus communication client
 - `lumina_modbus_event_emitter.py` - Event handling system
-- `sensors/` - Sensor interface modules
-- `relays/` - Relay control modules
-- `utils/` - Utility functions
-- `config/` - Configuration files
+- `src/sensors/` - Sensor interface modules
+- `src/relays/` - Relay control modules
+- `src/utils/` - Utility functions
+- `device.conf` - System configuration
 
 ## Dependencies
 
 - Python 3.8+
-- pyserial
-- crcmod
+- PySerial
+- FastAPI
+- Uvicorn
+- Pydantic
+- orjson
+- APScheduler
 - Raspberry Pi CM4
 - Appropriate I/O board
 
