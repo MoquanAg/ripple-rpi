@@ -268,4 +268,4 @@ async def update_target(sensor_type: str, target_update: TargetUpdate, username:
 # Run the server if script is executed directly
 if __name__ == "__main__":
     logger.info("Starting Ripple API Server on 0.0.0.0:8000")
-    uvicorn.run("server:app", host="0.0.0.0", port=8000, reload=False) 
+    uvicorn.run("server:app", host="0.0.0.0", port=5000, reload=False) 
