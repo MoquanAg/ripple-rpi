@@ -7,11 +7,76 @@ import requests
 import json
 import time
 from datetime import datetime
+from typing import Dict, Any
 
 # API configuration
-API_URL = "http://localhost:8000"  # Change to your device's IP address
+API_URL = "http://localhost:5000"  # Change to your device's IP address
 USERNAME = "ripple-rpi"  # From device.conf
 PASSWORD = "+IHa0UpROx94"  # From device.conf
+
+class RippleClient:
+    def __init__(self, base_url: str, username: str, password: str):
+        self.base_url = base_url.rstrip('/')
+        self.auth = (username, password)
+        
+    def get_sensors(self) -> Dict[str, Any]:
+        """Get data from all sensors"""
+        response = requests.get(f"{self.base_url}/api/v1/sensors", auth=self.auth)
+        response.raise_for_status()
+        return response.json()
+    
+    def get_sensor(self, sensor_type: str) -> Dict[str, Any]:
+        """Get data from a specific sensor type"""
+        response = requests.get(f"{self.base_url}/api/v1/sensors/{sensor_type}", auth=self.auth)
+        response.raise_for_status()
+        return response.json()
+    
+    def get_targets(self) -> Dict[str, Any]:
+        """Get all target values"""
+        response = requests.get(f"{self.base_url}/api/v1/targets", auth=self.auth)
+        response.raise_for_status()
+        return response.json()
+    
+    def get_target(self, sensor_type: str) -> Dict[str, Any]:
+        """Get target values for a specific sensor type"""
+        response = requests.get(f"{self.base_url}/api/v1/targets/{sensor_type}", auth=self.auth)
+        response.raise_for_status()
+        return response.json()
+    
+    def control_relay(self, relay_id: str, state: bool) -> Dict[str, Any]:
+        """Control a relay"""
+        data = {
+            "relay_id": relay_id,
+            "state": state
+        }
+        response = requests.post(f"{self.base_url}/api/v1/relay", json=data, auth=self.auth)
+        response.raise_for_status()
+        return response.json()
+    
+    def update_target(self, sensor_type: str, target: float, deadband: float, 
+                     min_val: float, max_val: float) -> Dict[str, Any]:
+        """Update target values for a sensor type"""
+        data = {
+            "target": target,
+            "deadband": deadband,
+            "min": min_val,
+            "max": max_val
+        }
+        response = requests.put(f"{self.base_url}/api/v1/targets/{sensor_type}", json=data, auth=self.auth)
+        response.raise_for_status()
+        return response.json()
+    
+    def update_instruction_set(self, instruction_set: Dict[str, Any]) -> Dict[str, Any]:
+        """Update the instruction set and device configuration"""
+        response = requests.post(f"{self.base_url}/api/v1/instruction_set", json=instruction_set, auth=self.auth)
+        response.raise_for_status()
+        return response.json()
+    
+    def update_manual_command(self, command: Dict[str, Any]) -> Dict[str, Any]:
+        """Update device configuration with manual command values"""
+        response = requests.post(f"{self.base_url}/api/v1/manual_command", json=command, auth=self.auth)
+        response.raise_for_status()
+        return response.json()
 
 def get_system_info():
     """Get system information"""
@@ -118,6 +183,60 @@ def poll_sensor_data(interval=5, duration=30):
         # Wait for the next interval
         time.sleep(interval)
 
+def main():
+    # Example usage
+    client = RippleClient(API_URL, USERNAME, PASSWORD)
+    
+    # Get all sensor data
+    sensors = client.get_sensors()
+    print("All sensors:", json.dumps(sensors, indent=2))
+    
+    # Get specific sensor data
+    ph_data = client.get_sensor("pH")
+    print("pH sensor:", json.dumps(ph_data, indent=2))
+    
+    # Control a relay
+    result = client.control_relay("NutrientPumpA", True)
+    print("Relay control result:", json.dumps(result, indent=2))
+    
+    # Update target values
+    result = client.update_target("pH", 6.5, 0.1, 6.0, 7.0)
+    print("Target update result:", json.dumps(result, indent=2))
+    
+    # Example manual command
+    manual_command = {
+        "abc_ratio": "1:1:0",
+        "target_ec_max": 1.2,
+        "target_ec_min": 0.6,
+        "target_ec_deadband": 0.1,
+        "target_ph_max": 7,
+        "target_ph_min": 5,
+        "target_ph_deadband": 0.5,
+        "sprinkler_on_duration": "00:00:00",
+        "sprinkler_wait_duration": "00:00:00",
+        "recirculation_wait_duration": "00:00:00",
+        "recirculation_on_duration": "00:00:00",
+        "target_water_temperature_max": 18,
+        "target_water_temperature_min": 18,
+        "target_ec": 0.8,
+        "target_ph": 6
+    }
+    result = client.update_manual_command(manual_command)
+    print("Manual command result:", json.dumps(result, indent=2))
+    
+    # Poll sensor data every 5 seconds
+    while True:
+        try:
+            sensors = client.get_sensors()
+            print("\nCurrent sensor data:", json.dumps(sensors, indent=2))
+            time.sleep(5)
+        except KeyboardInterrupt:
+            print("\nStopping sensor polling")
+            break
+        except Exception as e:
+            print(f"Error polling sensors: {e}")
+            time.sleep(5)
+
 # Run examples
 if __name__ == "__main__":
     print("Ripple Fertigation REST API Client Example")
@@ -152,4 +271,6 @@ if __name__ == "__main__":
     
     # Poll sensor data
     print("\n7. Polling sensor data:")
-    poll_sensor_data(interval=5, duration=15)  # Poll every 5 seconds for 15 seconds 
+    poll_sensor_data(interval=5, duration=15)  # Poll every 5 seconds for 15 seconds
+    
+    main() 
