@@ -179,3 +179,5 @@ config/device.conf
 device.conf
 config/action.json
 action.json
+config/instruction_set.json
+instruction_set.json
