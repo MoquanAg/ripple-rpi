@@ -1,0 +1,17 @@
+{
+    "abc_ratio": "1:1:0",
+    "target_ec_max": 1.2,
+    "target_ec_min": 0.6,
+    "target_ec_deadband": 0.1,
+    "target_ph_max": 7,
+    "target_ph_min": 5,
+    "target_ph_deadband": 0.5,
+    "sprinkler_on_duration": "00:00:00",
+    "sprinkler_wait_duration": "00:00:00",
+    "recirculation_wait_duration": "00:00:00",
+    "recirculation_on_duration": "00:00:00",
+    "target_water_temperature_max": 18,
+    "target_water_temperature_min": 18,
+    "target_ec": 0.8,
+    "target_ph": 6
+}
