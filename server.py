@@ -105,6 +105,11 @@ def verify_credentials(credentials: HTTPBasicCredentials = Depends(security)):
 # Initialize the controller
 controller = RippleController()
 
+def _time_to_seconds(time_str):
+    """Convert HH:MM:SS format to seconds"""
+    hours, minutes, seconds = map(int, time_str.split(':'))
+    return hours * 3600 + minutes * 60 + seconds
+
 def update_device_conf(instruction_set: Dict) -> bool:
     """Update device.conf with values from instruction set."""
     try:
@@ -255,33 +260,54 @@ async def get_sensor(sensor_type: str, username: str = Depends(verify_credential
         elif sensor_type == "WaterLevel":
             sensor_data = WaterLevel.get_statuses_async()
             logger.log_sensor_data(["API", "sensors", "WaterLevel"], sensor_data)
+        elif sensor_type == "DO":
+            sensor_data = DO.get_statuses_async()
         elif sensor_type == "Relay":
             relay_instance = Relay()
             if relay_instance:
                 relay_instance.get_status()
-                if relay_instance.relay_statuses:
-                    sensor_data = relay_instance.relay_statuses
-                    logger.log_sensor_data(["API", "sensors", "Relay"], relay_instance.relay_statuses)
+                sensor_data = relay_instance.relay_statuses
+        
+        if not sensor_data:
+            raise HTTPException(status_code=404, detail=f"No data available for sensor type {sensor_type}")
         
         return {
             "timestamp": datetime.now().isoformat(),
-            "data": sensor_data or {}
+            "data": sensor_data
         }
     except Exception as e:
-        if isinstance(e, HTTPException):
-            raise e
-        logger.error(f"Error getting {sensor_type} data: {e}")
-        raise HTTPException(status_code=500, detail=f"Error getting {sensor_type} data: {str(e)}")
+        logger.error(f"Error getting sensor data for {sensor_type}: {e}")
+        raise HTTPException(status_code=500, detail=f"Error getting sensor data: {str(e)}")
 
 @app.get("/api/v1/targets", tags=["Targets"])
 async def get_all_targets(username: str = Depends(verify_credentials)):
-    """Get all target values"""
+    """Get all target values from device.conf"""
     try:
-        logger.log_sensor_data(["API", "targets"], controller.sensor_targets)
-        return {
-            "timestamp": datetime.now().isoformat(),
-            "data": controller.sensor_targets
+        config = configparser.ConfigParser()
+        config.read('config/device.conf')
+        
+        targets = {
+            "pH": {
+                "target": float(config.get('pH', 'ph_target').split(',')[1].strip()),
+                "deadband": float(config.get('pH', 'ph_deadband').split(',')[1].strip()),
+                "min": float(config.get('pH', 'ph_min').split(',')[1].strip()),
+                "max": float(config.get('pH', 'ph_max').split(',')[1].strip())
+            },
+            "EC": {
+                "target": float(config.get('EC', 'ec_target').split(',')[1].strip()),
+                "deadband": float(config.get('EC', 'ec_deadband').split(',')[1].strip()),
+                "min": float(config.get('EC', 'ec_min').split(',')[1].strip()),
+                "max": float(config.get('EC', 'ec_max').split(',')[1].strip())
+            },
+            "WaterLevel": {
+                "target": float(config.get('WaterLevel', 'water_level_target').split(',')[1].strip()),
+                "deadband": float(config.get('WaterLevel', 'water_level_deadband').split(',')[1].strip()),
+                "min": float(config.get('WaterLevel', 'water_level_min').split(',')[1].strip()),
+                "max": float(config.get('WaterLevel', 'water_level_max').split(',')[1].strip())
+            }
         }
+        
+        return targets
     except Exception as e:
         logger.error(f"Error getting target values: {e}")
         raise HTTPException(status_code=500, detail=f"Error getting target values: {str(e)}")
@@ -290,75 +316,89 @@ async def get_all_targets(username: str = Depends(verify_credentials)):
 async def get_target(sensor_type: str, username: str = Depends(verify_credentials)):
     """Get target values for a specific sensor type"""
     try:
-        if sensor_type not in controller.sensor_targets:
-            logger.warning(f"Target values not found for sensor type: {sensor_type}")
-            raise HTTPException(status_code=404, detail=f"Target values for {sensor_type} not found")
+        if sensor_type not in ["pH", "EC", "WaterLevel"]:
+            raise HTTPException(status_code=404, detail=f"Target type {sensor_type} not found")
         
-        logger.log_sensor_data(["API", "targets", sensor_type], controller.sensor_targets[sensor_type])
-        return {
-            "timestamp": datetime.now().isoformat(),
-            "data": controller.sensor_targets[sensor_type]
-        }
+        config = configparser.ConfigParser()
+        config.read('config/device.conf')
+        
+        if sensor_type == "pH":
+            targets = {
+                "target": float(config.get('pH', 'ph_target').split(',')[1].strip()),
+                "deadband": float(config.get('pH', 'ph_deadband').split(',')[1].strip()),
+                "min": float(config.get('pH', 'ph_min').split(',')[1].strip()),
+                "max": float(config.get('pH', 'ph_max').split(',')[1].strip())
+            }
+        elif sensor_type == "EC":
+            targets = {
+                "target": float(config.get('EC', 'ec_target').split(',')[1].strip()),
+                "deadband": float(config.get('EC', 'ec_deadband').split(',')[1].strip()),
+                "min": float(config.get('EC', 'ec_min').split(',')[1].strip()),
+                "max": float(config.get('EC', 'ec_max').split(',')[1].strip())
+            }
+        elif sensor_type == "WaterLevel":
+            targets = {
+                "target": float(config.get('WaterLevel', 'water_level_target').split(',')[1].strip()),
+                "deadband": float(config.get('WaterLevel', 'water_level_deadband').split(',')[1].strip()),
+                "min": float(config.get('WaterLevel', 'water_level_min').split(',')[1].strip()),
+                "max": float(config.get('WaterLevel', 'water_level_max').split(',')[1].strip())
+            }
+        
+        return targets
     except Exception as e:
-        if isinstance(e, HTTPException):
-            raise e
-        logger.error(f"Error getting {sensor_type} target values: {e}")
-        raise HTTPException(status_code=500, detail=f"Error getting {sensor_type} target values: {str(e)}")
+        logger.error(f"Error getting target values for {sensor_type}: {e}")
+        raise HTTPException(status_code=500, detail=f"Error getting target values: {str(e)}")
 
 @app.post("/api/v1/relay", tags=["Control"])
 async def control_relay(relay_control: RelayControl, username: str = Depends(verify_credentials)):
-    """Control a relay by ID"""
+    """Control a specific relay"""
     try:
         relay_instance = Relay()
-        result = relay_instance.set_relay(relay_control.relay_id, relay_control.state)
-        logger.info(f"Relay control: {relay_control.relay_id} set to {relay_control.state}")
-        logger.log_sensor_data(["API", "control", "relay", relay_control.relay_id], relay_control.state)
-        return {
-            "timestamp": datetime.now().isoformat(),
-            "success": True, 
-            "message": f"Relay {relay_control.relay_id} set to {relay_control.state}", 
-            "result": result
-        }
+        if relay_instance:
+            success = relay_instance.set_relay(relay_control.relay_id, relay_control.state)
+            if success:
+                return {"status": "success", "message": f"Relay {relay_control.relay_id} set to {relay_control.state}"}
+            else:
+                raise HTTPException(status_code=400, detail=f"Failed to set relay {relay_control.relay_id}")
+        else:
+            raise HTTPException(status_code=500, detail="Failed to initialize relay control")
     except Exception as e:
         logger.error(f"Error controlling relay: {e}")
         raise HTTPException(status_code=500, detail=f"Error controlling relay: {str(e)}")
 
 @app.put("/api/v1/targets/{sensor_type}", tags=["Control"])
 async def update_target(sensor_type: str, target_update: TargetUpdate, username: str = Depends(verify_credentials)):
-    """Update target values for a sensor type"""
+    """Update target values for a specific sensor type"""
     try:
-        if sensor_type not in ["pH", "EC", "WaterLevel", "DO"]:
-            logger.warning(f"Invalid sensor type for target update: {sensor_type}")
-            raise HTTPException(status_code=404, detail=f"Sensor type {sensor_type} not found")
+        if sensor_type not in ["pH", "EC", "WaterLevel"]:
+            raise HTTPException(status_code=404, detail=f"Target type {sensor_type} not found")
         
-        # Update target in controller
-        if sensor_type in controller.sensor_targets:
-            # Update only the provided values
-            target_dict = controller.sensor_targets[sensor_type]
-            if target_update.target is not None:
-                target_dict['target'] = target_update.target
-            if target_update.deadband is not None:
-                target_dict['deadband'] = target_update.deadband
-            if target_update.min is not None:
-                target_dict['min'] = target_update.min
-            if target_update.max is not None:
-                target_dict['max'] = target_update.max
-            
-            logger.info(f"Updated {sensor_type} targets: {target_dict}")
-            logger.log_sensor_data(["API", "control", "targets", sensor_type], target_dict)
-            
-            return {
-                "timestamp": datetime.now().isoformat(),
-                "success": True, 
-                "message": f"{sensor_type} targets updated", 
-                "targets": target_dict
-            }
-        else:
-            raise HTTPException(status_code=404, detail=f"Target values for {sensor_type} not found")
+        config = configparser.ConfigParser()
+        config.read('config/device.conf')
+        
+        # Get current values
+        current_target = config.get(sensor_type, f"{sensor_type.lower()}_target").split(',')[1].strip()
+        current_deadband = config.get(sensor_type, f"{sensor_type.lower()}_deadband").split(',')[1].strip()
+        current_min = config.get(sensor_type, f"{sensor_type.lower()}_min").split(',')[1].strip()
+        current_max = config.get(sensor_type, f"{sensor_type.lower()}_max").split(',')[1].strip()
+        
+        # Update values if provided
+        if target_update.target is not None:
+            config.set(sensor_type, f"{sensor_type.lower()}_target", f"{target_update.target}, {current_target}")
+        if target_update.deadband is not None:
+            config.set(sensor_type, f"{sensor_type.lower()}_deadband", f"{target_update.deadband}, {current_deadband}")
+        if target_update.min is not None:
+            config.set(sensor_type, f"{sensor_type.lower()}_min", f"{target_update.min}, {current_min}")
+        if target_update.max is not None:
+            config.set(sensor_type, f"{sensor_type.lower()}_max", f"{target_update.max}, {current_max}")
+        
+        # Write updated config back to file
+        with open('config/device.conf', 'w') as configfile:
+            config.write(configfile)
+        
+        return {"status": "success", "message": f"Updated {sensor_type} targets"}
     except Exception as e:
-        if isinstance(e, HTTPException):
-            raise e
-        logger.error(f"Error updating targets: {e}")
+        logger.error(f"Error updating {sensor_type} targets: {e}")
         raise HTTPException(status_code=500, detail=f"Error updating targets: {str(e)}")
 
 def update_device_conf_from_manual(command: ManualCommand) -> bool:
@@ -368,59 +408,59 @@ def update_device_conf_from_manual(command: ManualCommand) -> bool:
         config = configparser.ConfigParser()
         config.read('config/device.conf')
         
-        # Update pH settings - keep first value unchanged
-        current_ph_target = config.get('pH', 'ph_target').split(',')[0].strip()
-        config.set('pH', 'ph_target', f"{current_ph_target}, {command.target_ph}")
+        # Update pH settings - keep second value unchanged
+        current_ph_target = config.get('pH', 'ph_target').split(',')[1].strip()
+        config.set('pH', 'ph_target', f"{command.target_ph}, {current_ph_target}")
         
-        current_ph_deadband = config.get('pH', 'ph_deadband').split(',')[0].strip()
-        config.set('pH', 'ph_deadband', f"{current_ph_deadband}, {command.target_ph_deadband}")
+        current_ph_deadband = config.get('pH', 'ph_deadband').split(',')[1].strip()
+        config.set('pH', 'ph_deadband', f"{command.target_ph_deadband}, {current_ph_deadband}")
         
-        current_ph_min = config.get('pH', 'ph_min').split(',')[0].strip()
-        config.set('pH', 'ph_min', f"{current_ph_min}, {command.target_ph_min}")
+        current_ph_min = config.get('pH', 'ph_min').split(',')[1].strip()
+        config.set('pH', 'ph_min', f"{command.target_ph_min}, {current_ph_min}")
         
-        current_ph_max = config.get('pH', 'ph_max').split(',')[0].strip()
-        config.set('pH', 'ph_max', f"{current_ph_max}, {command.target_ph_max}")
+        current_ph_max = config.get('pH', 'ph_max').split(',')[1].strip()
+        config.set('pH', 'ph_max', f"{command.target_ph_max}, {current_ph_max}")
         
-        # Update EC settings - keep first value unchanged
-        current_ec_target = config.get('EC', 'ec_target').split(',')[0].strip()
-        config.set('EC', 'ec_target', f"{current_ec_target}, {command.target_ec}")
+        # Update EC settings - keep second value unchanged
+        current_ec_target = config.get('EC', 'ec_target').split(',')[1].strip()
+        config.set('EC', 'ec_target', f"{command.target_ec}, {current_ec_target}")
         
-        current_ec_deadband = config.get('EC', 'ec_deadband').split(',')[0].strip()
-        config.set('EC', 'ec_deadband', f"{current_ec_deadband}, {command.target_ec_deadband}")
+        current_ec_deadband = config.get('EC', 'ec_deadband').split(',')[1].strip()
+        config.set('EC', 'ec_deadband', f"{command.target_ec_deadband}, {current_ec_deadband}")
         
-        current_ec_min = config.get('EC', 'ec_min').split(',')[0].strip()
-        config.set('EC', 'ec_min', f"{current_ec_min}, {command.target_ec_min}")
+        current_ec_min = config.get('EC', 'ec_min').split(',')[1].strip()
+        config.set('EC', 'ec_min', f"{command.target_ec_min}, {current_ec_min}")
         
-        current_ec_max = config.get('EC', 'ec_max').split(',')[0].strip()
-        config.set('EC', 'ec_max', f"{current_ec_max}, {command.target_ec_max}")
+        current_ec_max = config.get('EC', 'ec_max').split(',')[1].strip()
+        config.set('EC', 'ec_max', f"{command.target_ec_max}, {current_ec_max}")
         
-        # Update NutrientPump settings - keep first value unchanged
-        current_abc_ratio = config.get('NutrientPump', 'abc_ratio').split(',')[0].strip()
-        config.set('NutrientPump', 'abc_ratio', f"{current_abc_ratio}, {command.abc_ratio}")
+        # Update NutrientPump settings - keep second value unchanged
+        current_abc_ratio = config.get('NutrientPump', 'abc_ratio').split(',')[1].strip()
+        config.set('NutrientPump', 'abc_ratio', f'"{command.abc_ratio}", {current_abc_ratio}')
         
-        # Update Sprinkler settings - keep first value unchanged
-        current_sprinkler_on = config.get('Sprinkler', 'sprinkler_on_duration').split(',')[0].strip()
-        config.set('Sprinkler', 'sprinkler_on_duration', f"{current_sprinkler_on}, {command.sprinkler_on_duration}")
+        # Update Sprinkler settings - keep second value unchanged
+        current_sprinkler_on = config.get('Sprinkler', 'sprinkler_on_duration').split(',')[1].strip()
+        config.set('Sprinkler', 'sprinkler_on_duration', f"{command.sprinkler_on_duration}, {current_sprinkler_on}")
         
-        current_sprinkler_wait = config.get('Sprinkler', 'sprinkler_wait_duration').split(',')[0].strip()
-        config.set('Sprinkler', 'sprinkler_wait_duration', f"{current_sprinkler_wait}, {command.sprinkler_wait_duration}")
+        current_sprinkler_wait = config.get('Sprinkler', 'sprinkler_wait_duration').split(',')[1].strip()
+        config.set('Sprinkler', 'sprinkler_wait_duration', f"{command.sprinkler_wait_duration}, {current_sprinkler_wait}")
         
-        # Update WaterTemperature settings - keep first value unchanged
-        current_temp = config.get('WaterTemperature', 'target_water_temperature').split(',')[0].strip()
-        config.set('WaterTemperature', 'target_water_temperature', f"{current_temp}, {command.target_water_temperature_min}")
+        # Update WaterTemperature settings - keep second value unchanged
+        current_temp = config.get('WaterTemperature', 'target_water_temperature').split(',')[1].strip()
+        config.set('WaterTemperature', 'target_water_temperature', f"{command.target_water_temperature_min}, {current_temp}")
         
-        current_temp_min = config.get('WaterTemperature', 'target_water_temperature_min').split(',')[0].strip()
-        config.set('WaterTemperature', 'target_water_temperature_min', f"{current_temp_min}, {command.target_water_temperature_min}")
+        current_temp_min = config.get('WaterTemperature', 'target_water_temperature_min').split(',')[1].strip()
+        config.set('WaterTemperature', 'target_water_temperature_min', f"{command.target_water_temperature_min}, {current_temp_min}")
         
-        current_temp_max = config.get('WaterTemperature', 'target_water_temperature_max').split(',')[0].strip()
-        config.set('WaterTemperature', 'target_water_temperature_max', f"{current_temp_max}, {command.target_water_temperature_max}")
+        current_temp_max = config.get('WaterTemperature', 'target_water_temperature_max').split(',')[1].strip()
+        config.set('WaterTemperature', 'target_water_temperature_max', f"{command.target_water_temperature_max}, {current_temp_max}")
         
-        # Update Recirculation settings - keep first value unchanged
-        current_recirc_on = config.get('Recirculation', 'recirculation_on_duration').split(',')[0].strip()
-        config.set('Recirculation', 'recirculation_on_duration', f"{current_recirc_on}, {command.recirculation_on_duration}")
+        # Update Recirculation settings - keep second value unchanged
+        current_recirc_on = config.get('Recirculation', 'recirculation_on_duration').split(',')[1].strip()
+        config.set('Recirculation', 'recirculation_on_duration', f"{command.recirculation_on_duration}, {current_recirc_on}")
         
-        current_recirc_wait = config.get('Recirculation', 'recirculation_wait_duration').split(',')[0].strip()
-        config.set('Recirculation', 'recirculation_wait_duration', f"{current_recirc_wait}, {command.recirculation_wait_duration}")
+        current_recirc_wait = config.get('Recirculation', 'recirculation_wait_duration').split(',')[1].strip()
+        config.set('Recirculation', 'recirculation_wait_duration', f"{command.recirculation_wait_duration}, {current_recirc_wait}")
         
         # Write updated config back to file
         with open('config/device.conf', 'w') as configfile:
@@ -429,62 +469,32 @@ def update_device_conf_from_manual(command: ManualCommand) -> bool:
         logger.info("Successfully updated device.conf with manual command")
         return True
     except Exception as e:
-        logger.error(f"Error updating device.conf from manual command: {e}")
+        logger.error(f"Error updating device.conf: {e}")
         return False
 
 @app.post("/api/v1/instruction_set", tags=["Control"])
 async def update_instruction_set(instruction_set: Dict, username: str = Depends(verify_credentials)):
-    """Update the instruction set and device configuration."""
+    """Update system configuration from instruction set"""
     try:
-        # Save instruction set to file
-        with open('config/instruction_set.json', 'w') as f:
-            json.dump(instruction_set, f, indent=4)
-            
-        # Update device.conf
         if update_device_conf(instruction_set):
-            logger.info("Successfully updated instruction set and device configuration")
-            return {
-                "status": "success",
-                "message": "Instruction set and device configuration updated successfully",
-                "timestamp": datetime.now().isoformat()
-            }
+            return {"status": "success", "message": "Instruction set applied successfully"}
         else:
-            logger.error("Failed to update device configuration")
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Failed to update device configuration"
-            )
+            raise HTTPException(status_code=500, detail="Failed to apply instruction set")
     except Exception as e:
-        logger.error(f"Error updating instruction set: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error updating instruction set: {str(e)}"
-        )
+        logger.error(f"Error applying instruction set: {e}")
+        raise HTTPException(status_code=500, detail=f"Error applying instruction set: {str(e)}")
 
 @app.post("/api/v1/manual_command", tags=["Control"])
 async def update_manual_command(command: ManualCommand, username: str = Depends(verify_credentials)):
-    """Update device configuration with manual command values."""
+    """Update system configuration from manual command"""
     try:
-        # Update device.conf
         if update_device_conf_from_manual(command):
-            logger.info("Successfully updated device configuration with manual command")
-            return {
-                "status": "success",
-                "message": "Device configuration updated successfully",
-                "timestamp": datetime.now().isoformat()
-            }
+            return {"status": "success", "message": "Manual command applied successfully"}
         else:
-            logger.error("Failed to update device configuration with manual command")
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Failed to update device configuration"
-            )
+            raise HTTPException(status_code=500, detail="Failed to apply manual command")
     except Exception as e:
-        logger.error(f"Error updating manual command: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error updating manual command: {str(e)}"
-        )
+        logger.error(f"Error applying manual command: {e}")
+        raise HTTPException(status_code=500, detail=f"Error applying manual command: {str(e)}")
 
 # Run the server if script is executed directly
 if __name__ == "__main__":
