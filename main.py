@@ -4,10 +4,12 @@ import os
 import sys
 import time
 import logging
+import json
 from typing import Dict, List, Optional, Union, Any
 import configparser
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
+from datetime import datetime
 
 # Add the src directory to the Python path
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -28,11 +30,70 @@ logger = GlobalLogger("RippleController", log_prefix="ripple_").logger
 class ConfigFileHandler(FileSystemEventHandler):
     def __init__(self, controller):
         self.controller = controller
+        self.last_action_state = {}
         
     def on_modified(self, event):
         if event.src_path == self.controller.config_file:
             logger.info("Configuration file modified, reloading settings")
             self.controller.reload_configuration()
+        elif event.src_path == os.path.abspath('config/action.json'):
+            logger.info("Action file modified, processing new actions")
+            self.process_actions()
+            
+    def process_actions(self):
+        try:
+            # Read the action file
+            with open('config/action.json', 'r') as f:
+                new_actions = json.load(f)
+                
+            # Check if actions are different from last state
+            if new_actions != self.last_action_state:
+                logger.info(f"New actions detected: {new_actions}")
+                
+                # Map API field names to relay names
+                relay_mapping = {
+                    'nutrient_pump_a': 'NutrientPumpA',
+                    'nutrient_pump_b': 'NutrientPumpB',
+                    'nutrient_pump_c': 'NutrientPumpC',
+                    'ph_up_pump': 'pHUpPump',
+                    'ph_down_pump': 'pHDownPump',
+                    'valve_outside_to_tank': 'ValveOutsideToTank',
+                    'valve_tank_to_outside': 'ValveTankToOutside',
+                    'mixing_pump': 'MixingPump',
+                    'pump_from_tank_to_gutters': 'PumpFromTankToGutters',
+                    'sprinkler_a': 'SprinklerA',
+                    'sprinkler_b': 'SprinklerB',
+                    'pump_from_collector_tray_to_tank': 'PumpFromCollectorTrayToTank'
+                }
+                
+                # Process each action
+                for action, state in new_actions.items():
+                    relay_name = relay_mapping.get(action)
+                    if relay_name:
+                        logger.info(f"Setting {relay_name} to {state}")
+                        # Get relay instance
+                        relay_instance = Relay()
+                        if relay_instance:
+                            relay_instance.set_relay(relay_name, state)
+                        else:
+                            logger.warning(f"Failed to get relay instance for {relay_name}")
+                    else:
+                        logger.warning(f"Unknown action: {action}")
+                
+                # Update last state
+                self.last_action_state = new_actions.copy()
+                
+                # Clear the action file
+                with open('config/action.json', 'w') as f:
+                    json.dump({}, f)
+                    
+                logger.info("Actions processed and file cleared")
+            else:
+                logger.info("No new actions detected")
+                
+        except Exception as e:
+            logger.error(f"Error processing actions: {e}")
+            logger.exception("Full exception details:")
 
 class RippleController:
     def __init__(self):
@@ -43,6 +104,7 @@ class RippleController:
         self.scheduler = RippleScheduler()
         self.config_file = os.path.abspath('config/device.conf')
         self.config = configparser.ConfigParser()
+        self.sensor_data_file = os.path.abspath('data/saved_sensor_data.json')
         self.initialize_sensors()
         self.load_sensor_targets()
         
@@ -50,8 +112,9 @@ class RippleController:
         self.event_handler = ConfigFileHandler(self)
         self.observer = Observer()
         self.observer.schedule(self.event_handler, os.path.dirname(self.config_file), recursive=False)
+        self.observer.schedule(self.event_handler, os.path.dirname('config/action.json'), recursive=False)
         self.observer.start()
-        logger.info("Configuration file monitoring started")
+        logger.info("Configuration and action file monitoring started")
 
     def _time_to_seconds(self, time_str):
         """Convert HH:MM:SS format to seconds"""
@@ -186,7 +249,7 @@ class RippleController:
             self.scheduler.shutdown()
             self.observer.stop()
             self.observer.join()
-            logger.info("Configuration file monitoring stopped")
+            logger.info("Configuration and action file monitoring stopped")
         except Exception as e:
             logger.error(f"Error during shutdown: {e}")
             
@@ -197,6 +260,9 @@ class RippleController:
             while True:
                 # Get data from all sensors
                 self.update_sensor_data()
+                
+                # Save sensor data
+                self.save_sensor_data()
                 
                 # Process any pending commands or events
                 self.process_events()
@@ -303,8 +369,177 @@ class RippleController:
         # This method can be expanded to handle scheduled tasks,
         # respond to sensor thresholds, etc.
         pass
-            
-            
+
+    def save_sensor_data(self):
+        """Save current sensor data to JSON file"""
+        try:
+            data = {
+                "data": {
+                    "water_metrics": {
+                        "water_level": {
+                            "measurements": {
+                                "name": "water_metrics",
+                                "points": []
+                            }
+                        },
+                        "ph": {
+                            "measurements": {
+                                "name": "water_metrics",
+                                "points": []
+                            }
+                        },
+                        "ec": {
+                            "measurements": {
+                                "name": "water_metrics",
+                                "points": []
+                            }
+                        }
+                    },
+                    "relay_metrics": {
+                        "measurements": {
+                            "name": "relay_metrics",
+                            "points": []
+                        },
+                        "configuration": {
+                            "relay_configuration": {
+                                "relayone": {
+                                    "total_ports": 16,
+                                    "assigned_ports": [],
+                                    "unassigned_ports": list(range(16))
+                                }
+                            }
+                        }
+                    }
+                },
+                "relays": {
+                    "last_updated": datetime.now().isoformat(),
+                    "relayone": {
+                        "RELAYONE": {
+                            "RELAYONE": [0] * 16
+                        }
+                    }
+                },
+                "devices": {
+                    "last_updated": datetime.now().isoformat()
+                }
+            }
+
+            # Get water level data
+            wl_data = WaterLevel.get_statuses_async()
+            if wl_data:
+                for sensor_name, value in wl_data.items():
+                    data["data"]["water_metrics"]["water_level"]["measurements"]["points"].append({
+                        "tags": {
+                            "sensor": "water_level",
+                            "measurement": "level",
+                            "location": sensor_name
+                        },
+                        "fields": {
+                            "value": value,
+                            "temperature": None,
+                            "pressure_unit": None,
+                            "decimal_places": None,
+                            "range_min": 0,
+                            "range_max": 200,
+                            "zero_offset": None
+                        },
+                        "timestamp": datetime.now().isoformat()
+                    })
+
+            # Get pH data
+            ph_data = pH.get_statuses_async()
+            if ph_data:
+                for sensor_name, value in ph_data.items():
+                    data["data"]["water_metrics"]["ph"]["measurements"]["points"].append({
+                        "tags": {
+                            "sensor": "ph",
+                            "measurement": "ph",
+                            "location": sensor_name
+                        },
+                        "fields": {
+                            "value": value,
+                            "temperature": 25.0,
+                            "offset": None
+                        },
+                        "timestamp": datetime.now().isoformat()
+                    })
+
+            # Get EC data
+            ec_data = EC.get_statuses_async()
+            if ec_data:
+                for sensor_name, value in ec_data.items():
+                    data["data"]["water_metrics"]["ec"]["measurements"]["points"].append({
+                        "tags": {
+                            "sensor": "ec",
+                            "measurement": "ec",
+                            "location": sensor_name
+                        },
+                        "fields": {
+                            "value": value,
+                            "tds": value * 0.5,
+                            "salinity": value * 0.55,
+                            "temperature": 25.0,
+                            "resistance": 1000.0,
+                            "ec_constant": 1.0,
+                            "compensation_coef": 0.02,
+                            "manual_temp": 25.0,
+                            "temp_offset": None,
+                            "electrode_sensitivity": None,
+                            "compensation_mode": None,
+                            "sensor_type": None
+                        },
+                        "timestamp": datetime.now().isoformat()
+                    })
+
+            # Get relay data and map according to device.conf assignments
+            relay_instance = Relay()
+            if relay_instance:
+                relay_instance.get_status()
+                if relay_instance.relay_statuses:
+                    # Map relay statuses according to device.conf assignments
+                    relay_mapping = {
+                        0: "NutrientPumpA",
+                        1: "NutrientPumpB",
+                        2: "NutrientPumpC",
+                        3: "pHUpPump",
+                        4: "pHDownPump",
+                        5: "ValveOutsideToTank",
+                        6: "ValveTankToOutside",
+                        7: "MixingPump",
+                        8: "PumpFromTankToGutters",
+                        9: "SprinklerA",
+                        10: "SprinklerB",
+                        11: "PumpFromCollectorTrayToTank"
+                    }
+                    
+                    # Update relay status array
+                    data["relays"]["relayone"]["RELAYONE"]["RELAYONE"] = relay_instance.relay_statuses
+                    
+                    # Update relay metrics points
+                    for port, status in enumerate(relay_instance.relay_statuses):
+                        device_name = relay_mapping.get(port, "none")
+                        data["data"]["relay_metrics"]["measurements"]["points"].append({
+                            "tags": {
+                                "relay_board": "relayone",
+                                "port_index": port,
+                                "port_type": "assigned" if device_name != "none" else "unassigned",
+                                "device": device_name
+                            },
+                            "fields": {
+                                "status": status,
+                                "is_assigned": device_name != "none",
+                                "raw_status": status
+                            },
+                            "timestamp": datetime.now().isoformat()
+                        })
+
+            # Save to file
+            with open(self.sensor_data_file, 'w') as f:
+                json.dump(data, f, indent=2)
+                
+            logger.debug("Sensor data saved successfully")
+        except Exception as e:
+            logger.error(f"Error saving sensor data: {e}")
 
 if __name__ == "__main__":
     try:
