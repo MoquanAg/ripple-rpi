@@ -3,6 +3,8 @@
 import os
 import sys
 import logging
+import json
+import configparser
 from typing import Dict, List, Optional, Union, Any
 from fastapi import FastAPI, HTTPException, Depends, status
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
@@ -49,9 +51,8 @@ app.add_middleware(
 security = HTTPBasic()
 
 # Read credentials from device.conf
-import configparser
 config = configparser.ConfigParser()
-config.read('device.conf')
+config.read('config/device.conf')
 USERNAME = config.get('SYSTEM', 'username').strip('"')
 PASSWORD = config.get('SYSTEM', 'password').strip('"')
 
@@ -68,6 +69,80 @@ def verify_credentials(credentials: HTTPBasicCredentials = Depends(security)):
 
 # Initialize the controller
 controller = RippleController()
+
+def update_device_conf(instruction_set: Dict) -> bool:
+    """Update device.conf with values from instruction set."""
+    try:
+        # Read current device.conf
+        config = configparser.ConfigParser()
+        config.read('config/device.conf')
+        
+        # Get fertigation settings from instruction set
+        fertigation = instruction_set['current_phase']['details']['action_fertigation']
+        
+        # Update pH settings
+        config.set('pH', 'ph_target', f"{fertigation['target_ph']}, {fertigation['target_ph']}")
+        config.set('pH', 'ph_deadband', f"{fertigation['target_ph_deadband']}, {fertigation['target_ph_deadband']}")
+        config.set('pH', 'ph_min', f"{fertigation['target_ph_min']}, {fertigation['target_ph_min']}")
+        config.set('pH', 'ph_max', f"{fertigation['target_ph_max']}, {fertigation['target_ph_max']}")
+        
+        # Update EC settings
+        config.set('EC', 'ec_target', f"{fertigation['target_ec']}, {fertigation['target_ec']}")
+        config.set('EC', 'ec_deadband', f"{fertigation['target_ec_deadband']}, {fertigation['target_ec_deadband']}")
+        config.set('EC', 'ec_min', f"{fertigation['target_ec_min']}, {fertigation['target_ec_min']}")
+        config.set('EC', 'ec_max', f"{fertigation['target_ec_max']}, {fertigation['target_ec_max']}")
+        
+        # Update NutrientPump settings
+        config.set('NutrientPump', 'abc_ratio', f'"{fertigation["abc_ratio"]}", "{fertigation["abc_ratio"]}"')
+        
+        # Update Sprinkler settings
+        config.set('Sprinkler', 'sprinkler_on_duration', '0, 0')
+        config.set('Sprinkler', 'sprinkler_wait_duration', '0, 0')
+        
+        # Update WaterTemperature settings
+        config.set('WaterTemperature', 'target_water_temperature', f"{fertigation['target_water_temperature_min']}, {fertigation['target_water_temperature_min']}")
+        config.set('WaterTemperature', 'target_water_temperature_min', f"{fertigation['target_water_temperature_min']}, {fertigation['target_water_temperature_min']}")
+        config.set('WaterTemperature', 'target_water_temperature_max', f"{fertigation['target_water_temperature_max']}, {fertigation['target_water_temperature_max']}")
+        
+        # Update Recirculation settings
+        config.set('Recirculation', 'recirculation_on_duration', '0, 0')
+        config.set('Recirculation', 'recirculation_wait_duration', '0, 0')
+        
+        # Write updated config back to file
+        with open('config/device.conf', 'w') as configfile:
+            config.write(configfile)
+            
+        return True
+    except Exception as e:
+        logger.error(f"Error updating device.conf: {e}")
+        return False
+
+@app.post("/instruction_set", tags=["Control"])
+async def update_instruction_set(instruction_set: Dict, username: str = Depends(verify_credentials)):
+    """Update the instruction set and device configuration."""
+    try:
+        # Save instruction set to file
+        with open('config/instruction_set.json', 'w') as f:
+            json.dump(instruction_set, f, indent=4)
+            
+        # Update device.conf
+        if update_device_conf(instruction_set):
+            return {
+                "status": "success",
+                "message": "Instruction set and device configuration updated successfully",
+                "timestamp": datetime.now().isoformat()
+            }
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to update device configuration"
+            )
+    except Exception as e:
+        logger.error(f"Error updating instruction set: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error updating instruction set: {str(e)}"
+        )
 
 # Pydantic models for API requests/responses
 class RelayControl(BaseModel):
