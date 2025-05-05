@@ -20,12 +20,15 @@ mkdir -p "$AUTOSTART_DIR"
 # Ensure start script is executable
 chmod +x "$RIPPLE_PATH/start_ripple.sh"
 
+# Create config directory if it doesn't exist
+mkdir -p "$RIPPLE_PATH/config"
+
 # Create device.conf from template if it doesn't exist
-if [ ! -f "$RIPPLE_PATH/device.conf" ]; then
+if [ ! -f "$RIPPLE_PATH/config/device.conf" ]; then
     echo "Creating device configuration."
     # If there's a template, use it, otherwise create a minimal one
     if [ -f "$RIPPLE_PATH/config/template_device.conf" ]; then
-        cp "$RIPPLE_PATH/config/template_device.conf" "$RIPPLE_PATH/device.conf"
+        cp "$RIPPLE_PATH/config/template_device.conf" "$RIPPLE_PATH/config/device.conf"
     fi
 else
     echo "Device configuration already exists."
@@ -51,7 +54,7 @@ mkdir -p "$RIPPLE_PATH/log"
 # Set appropriate permissions
 echo "Setting file permissions."
 chmod -R 755 "$RIPPLE_PATH"
-chmod 644 "$RIPPLE_PATH/device.conf"
+chmod 644 "$RIPPLE_PATH/config/device.conf"
 
 echo "Setup complete. The Ripple Fertigation System will start automatically at boot."
 echo "You can also start it manually by running: $RIPPLE_PATH/start_ripple.sh" 
