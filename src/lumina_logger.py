@@ -30,64 +30,69 @@ class CustomLogger(logging.Logger):
 
 
 class GlobalLogger:
-    _instance = None
+    _instances = {}  # Dictionary to hold instances for different prefixes
 
-    def __new__(cls, logger_name=None):
-        if cls._instance is None:
-            cls._instance = super(GlobalLogger, cls).__new__(cls)
+    def __new__(cls, logger_name=None, log_prefix="lumina_"):
+        instance_key = f"{logger_name}_{log_prefix}"
+        if instance_key not in cls._instances:
+            instance = super(GlobalLogger, cls).__new__(cls)
+            instance.init(logger_name, log_prefix)  # Initialize the instance
+            cls._instances[instance_key] = instance
+        return cls._instances[instance_key]
 
-            # Your setup_logging function
-            global logger
-            logger_name = logger_name or __name__
-            logger = CustomLogger(logger_name)
-            logger.setLevel(logging.DEBUG)
-            logger.propagate = False
+    def init(self, logger_name=None, log_prefix="lumina_"):
+        """Initialize a new logger instance."""
+        # Your setup_logging function
+        global logger
+        logger_name = logger_name or __name__
+        logger = CustomLogger(logger_name)
+        logger.setLevel(logging.DEBUG)
+        logger.propagate = False
 
-            # Set higher logging level for third-party libraries
-            logging.getLogger("pika").setLevel(logging.WARNING)
-            logging.getLogger("urllib3").setLevel(logging.WARNING)
-            logging.getLogger("requests").setLevel(logging.WARNING)
-            logging.getLogger("apscheduler").setLevel(logging.WARNING)
+        # Set higher logging level for third-party libraries
+        logging.getLogger("pika").setLevel(logging.WARNING)
+        logging.getLogger("urllib3").setLevel(logging.WARNING)
+        logging.getLogger("requests").setLevel(logging.WARNING)
+        logging.getLogger("apscheduler").setLevel(logging.WARNING)
 
-            # Initialize the current date and log number
-            cls._instance.current_date = datetime.datetime.now().strftime("%Y%m%d")
-            cls._instance.current_log_number = 1
+        # Initialize the current date and log number
+        self.current_date = datetime.datetime.now().strftime("%Y%m%d")
+        self.current_log_number = 1
+        self.log_prefix = log_prefix
 
-            # Generate the initial log file name without checking existing files
-            log_file_name = f"lumina_{cls._instance.current_date}_{cls._instance.current_log_number:03d}.log"
-            cls._instance.LOG_FILE_PATH = os.path.join(
-                globals.LOG_FOLDER_PATH, log_file_name
-            )
+        # Generate the initial log file name without checking existing files
+        log_file_name = f"{self.log_prefix}{self.current_date}_{self.current_log_number:03d}.log"
+        self.LOG_FILE_PATH = os.path.join(
+            globals.LOG_FOLDER_PATH, log_file_name
+        )
 
-            file_handler = logging.FileHandler(cls._instance.LOG_FILE_PATH)
-            file_handler.setLevel(logging.INFO)
+        file_handler = logging.FileHandler(self.LOG_FILE_PATH)
+        file_handler.setLevel(logging.INFO)
 
-            # Set up console handler to print logs to console
-            console_handler = logging.StreamHandler()
-            console_handler.setLevel(logging.INFO)
+        # Set up console handler to print logs to console
+        console_handler = logging.StreamHandler()
+        console_handler.setLevel(logging.INFO)
 
-            # Define log format with time
-            formatter = logging.Formatter(
-                "%(asctime)s - %(filename)s - %(funcName)s - %(message)s"
-            )
-            file_handler.setFormatter(formatter)
-            console_handler.setFormatter(formatter)
+        # Define log format with time
+        formatter = logging.Formatter(
+            "%(asctime)s - %(filename)s - %(funcName)s - %(message)s"
+        )
+        file_handler.setFormatter(formatter)
+        console_handler.setFormatter(formatter)
 
-            # Add handlers to the logger
-            logger.addHandler(file_handler)
-            logger.addHandler(console_handler)
+        # Add handlers to the logger
+        logger.addHandler(file_handler)
+        logger.addHandler(console_handler)
 
-            cls._instance.logger = logger
+        self.logger = logger
 
-            # Add the log_sensor_data method to the logger instance
-            cls._instance.logger.log_sensor_data = cls._instance.log_sensor_data
+        # Add the log_sensor_data method to the logger instance
+        self.logger.log_sensor_data = self.log_sensor_data
 
-            cls._instance.schedule_cleanup()  # Schedule log file cleanup
+        self.schedule_cleanup()  # Schedule log file cleanup
 
-            # Explicitly set the level for the root logger
-            logging.getLogger().setLevel(logging.INFO)
-
-        return cls._instance
+        # Explicitly set the level for the root logger
+        logging.getLogger().setLevel(logging.INFO)
 
     def schedule_cleanup(self):
         # Schedule the `clean_up_if_needed` function to run every `LOG_SIZE_CHECK_INTERVAL` seconds
@@ -111,7 +116,7 @@ class GlobalLogger:
             if not os.path.exists(self.LOG_FILE_PATH):
                 self.current_log_number = 1
                 new_log_file_name = (
-                    f"lumina_{self.current_date}_{self.current_log_number:03d}.log"
+                    f"{self.log_prefix}{self.current_date}_{self.current_log_number:03d}.log"
                 )
                 self.LOG_FILE_PATH = os.path.join(
                     globals.LOG_FOLDER_PATH, new_log_file_name
@@ -168,7 +173,7 @@ class GlobalLogger:
 
                 # Create the new log file name
                 new_log_file_name = (
-                    f"lumina_{self.current_date}_{self.current_log_number:03d}.log"
+                    f"{self.log_prefix}{self.current_date}_{self.current_log_number:03d}.log"
                 )
                 new_log_file_path = os.path.join(
                     globals.LOG_FOLDER_PATH, new_log_file_name
@@ -214,7 +219,7 @@ class GlobalLogger:
         self.current_date = current_date
 
         log_files = glob.glob(
-            os.path.join(globals.LOG_FOLDER_PATH, f"lumina_{current_date}_*.log")
+            os.path.join(globals.LOG_FOLDER_PATH, f"{self.log_prefix}{current_date}_*.log")
         )
         if log_files:
             latest_log_file = max(log_files, key=os.path.getctime)
@@ -223,18 +228,18 @@ class GlobalLogger:
         else:
             new_log_number = 1
 
-        new_log_file_name = f"lumina_{current_date}_{new_log_number:03d}.log"
+        new_log_file_name = f"{self.log_prefix}{current_date}_{new_log_number:03d}.log"
         return new_log_file_name
 
     def delete_oldest_log_files(self):
-        log_files = glob.glob(os.path.join(globals.LOG_FOLDER_PATH, "lumina_*_*.log"))
+        log_files = glob.glob(os.path.join(globals.LOG_FOLDER_PATH, f"{self.log_prefix}*_*.log"))
         if log_files:
             oldest_date = min(
                 log_files, key=lambda x: os.path.splitext(x)[0].split("_")[1]
             )
             oldest_date = oldest_date.split("_")[1]
             oldest_log_files = glob.glob(
-                os.path.join(globals.LOG_FOLDER_PATH, f"lumina_{oldest_date}_*.log")
+                os.path.join(globals.LOG_FOLDER_PATH, f"{self.log_prefix}{oldest_date}_*.log")
             )
             for log_file in oldest_log_files:
                 try:
