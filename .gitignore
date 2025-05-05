@@ -177,3 +177,5 @@ data/saved_sensor_data.json
 # Configuration files
 config/device.conf
 device.conf
+config/action.json
+action.json
