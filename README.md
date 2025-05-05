@@ -454,8 +454,61 @@ class CommunicationError(SystemError):
 - `setup_ripple.sh` - System setup script
 - `client_example.py` - Example API client
 - `API_README.md` - Detailed API documentation
-- `lumina_modbus_client.py` - Modbus communication client
-- `lumina_modbus_event_emitter.py` - Event handling system
+- `src/lumina_logger.py` - Logging system
+- `src/lumina_modbus_client.py` - Modbus communication client
+- `src/lumina_modbus_event_emitter.py` - Event handling system
+- `src/sensors/` - Sensor interface modules
+- `src/relays/` - Relay control modules
+- `src/utils/` - Utility functions
+- `device.conf` - System configuration
+
+## Dependencies
+
+- Python 3.8+
+- PySerial
+- FastAPI
+- Uvicorn
+- Pydantic
+- orjson
+- APScheduler
+- Raspberry Pi CM4
+- Appropriate I/O board
+
+## License
+
+This project is licensed under the MIT License - see the LICENSE file for details.
+
+### Logging System
+
+The Ripple system uses a comprehensive logging system that separates logs by component:
+
+- `ripple_YYYYMMDD_NNN.log` - Main application logs
+- `ripple_server_YYYYMMDD_NNN.log` - API server logs
+- `ripple_YYYYMMDD_NNN.log` - Sensor and control system logs
+
+Log files are automatically rotated when they reach 2MB in size or at the start of a new day. Old logs are automatically cleaned up to prevent disk space issues.
+
+Log files are stored in the `log/` directory and follow this format:
+- `YYYYMMDD` - Date in format year/month/day
+- `NNN` - Sequential number starting from 001
+
+Each log entry includes:
+- Timestamp
+- Source file
+- Function name
+- Message
+
+## Project Structure
+
+- `main.py` - Main control system
+- `server.py` - REST API server
+- `start_ripple.sh` - System startup script
+- `setup_ripple.sh` - System setup script
+- `client_example.py` - Example API client
+- `API_README.md` - Detailed API documentation
+- `src/lumina_logger.py` - Logging system
+- `src/lumina_modbus_client.py` - Modbus communication client
+- `src/lumina_modbus_event_emitter.py` - Event handling system
 - `src/sensors/` - Sensor interface modules
 - `src/relays/` - Relay control modules
 - `src/utils/` - Utility functions

@@ -19,6 +19,27 @@ This API provides a RESTful interface to monitor sensor data and control the Rip
    http://<device-ip>:5000
    ```
 
+## Logging
+
+The API server logs are stored in the `log/` directory with the prefix `ripple_server_`. Log files follow the format:
+```
+ripple_server_YYYYMMDD_NNN.log
+```
+where:
+- `YYYYMMDD` is the date (e.g., 20250505)
+- `NNN` is a sequential number starting from 001
+
+Log files are automatically rotated when they reach 2MB or at the start of a new day. Each log entry includes:
+- Timestamp
+- Source file
+- Function name
+- Message
+
+Example log entry:
+```
+2025-05-05 19:21:13,727 - server.py - <module> - Starting Ripple API Server
+```
+
 ## Authentication
 
 All API endpoints require HTTP Basic Authentication. Use the username and password configured in `device.conf` under the `[SYSTEM]` section.
