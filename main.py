@@ -102,19 +102,42 @@ class RippleController:
         self.relays = {}  # Dict to store relay instances
         self.sensor_targets = {}  # Dict to store sensor target values
         self.scheduler = RippleScheduler()
-        self.config_file = os.path.abspath('config/device.conf')
+        
+        # Use absolute paths for config files
+        self.base_dir = os.path.dirname(os.path.abspath(__file__))
+        self.config_dir = os.path.join(self.base_dir, 'config')
+        self.data_dir = os.path.join(self.base_dir, 'data')
+        
+        # Ensure config and data directories exist
+        os.makedirs(self.config_dir, exist_ok=True)
+        os.makedirs(self.data_dir, exist_ok=True)
+        
+        self.config_file = os.path.join(self.config_dir, 'device.conf')
         self.config = configparser.ConfigParser()
-        self.sensor_data_file = os.path.abspath('data/saved_sensor_data.json')
+        self.sensor_data_file = os.path.join(self.data_dir, 'saved_sensor_data.json')
+        
         self.initialize_sensors()
         self.load_sensor_targets()
+        
+        # Make sure config file exists before attempting to watch it
+        if not os.path.exists(self.config_file):
+            logger.warning(f"Config file {self.config_file} does not exist. Creating an empty file.")
+            with open(self.config_file, 'w') as f:
+                pass
+        
+        # Make sure action.json exists before attempting to watch it
+        action_file = os.path.join(self.config_dir, 'action.json')
+        if not os.path.exists(action_file):
+            logger.warning(f"Action file {action_file} does not exist. Creating an empty JSON file.")
+            with open(action_file, 'w') as f:
+                json.dump({}, f)
         
         # Initialize watchdog observer
         self.event_handler = ConfigFileHandler(self)
         self.observer = Observer()
-        self.observer.schedule(self.event_handler, os.path.dirname(self.config_file), recursive=False)
-        self.observer.schedule(self.event_handler, os.path.dirname('config/action.json'), recursive=False)
+        self.observer.schedule(self.event_handler, self.config_dir, recursive=False)
         self.observer.start()
-        logger.info("Configuration and action file monitoring started")
+        logger.info(f"Configuration and action file monitoring started for directory: {self.config_dir}")
 
     def _time_to_seconds(self, time_str):
         """Convert HH:MM:SS format to seconds"""
