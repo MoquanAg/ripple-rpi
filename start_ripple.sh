@@ -26,7 +26,7 @@ pkill -f "$RIPPLE_PATH/main.py"
 pkill -f "$RIPPLE_PATH/server.py"
 
 # Give processes time to terminate
-sleep 2
+sleep 1
 
 # Start main controller script
 echo "Starting main controller..."

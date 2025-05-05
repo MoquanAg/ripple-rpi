@@ -199,20 +199,28 @@ class RippleScheduler:
                 if mixing_duration_seconds == 0:
                     logger.warning("Skipping mixing cycle: zero duration")
                     return
+                
+                from src.sensors.Relay import Relay
+                relay = Relay()
+                if not relay:
+                    logger.warning("Failed to start mixing cycle: relay not available")
+                    return
                     
+                # Start mixing pump
+                relay.set_mixing_pump(True)
                 self.mixing_pump_running = True
                 self.mixing_pump_end_time = datetime.now() + timedelta(seconds=mixing_duration_seconds)
-                
-                # Start mixing pump
                 logger.info(f"Starting mixing pump for {mixing_duration}")
                 
-                # Simulate mixing duration
-                time.sleep(mixing_duration_seconds)
-                
-                # Stop mixing pump
-                self.mixing_pump_running = False
-                self.mixing_pump_end_time = None
-                logger.info("Mixing pump cycle completed")
+                # Schedule job to stop the mixing pump after duration
+                self.scheduler.add_job(
+                    self._stop_mixing_pump,
+                    'date',
+                    run_date=self.mixing_pump_end_time,
+                    id='mixing_stop_job',
+                    replace_existing=True
+                )
+                logger.info(f"Mixing pump scheduled to stop at: {self.mixing_pump_end_time}")
         except Exception as e:
             logger.error(f"Error in mixing cycle: {e}")
             self.mixing_pump_running = False
@@ -222,20 +230,30 @@ class RippleScheduler:
         """Execute UV sterilization cycle"""
         try:
             if not self.mixing_pump_running:
-                self.mixing_pump_running = True
-                logger.info("Starting mixing pump for UV sterilization")
-                
                 # UV sterilization runs for 20 minutes
                 uv_duration = 20 * 60  # 20 minutes in seconds
+                
+                from src.sensors.Relay import Relay
+                relay = Relay()
+                if not relay:
+                    logger.warning("Failed to start UV sterilization: relay not available")
+                    return
+                
+                # Start mixing pump for UV sterilization
+                relay.set_mixing_pump(True)
+                self.mixing_pump_running = True
                 self.mixing_pump_end_time = datetime.now() + timedelta(seconds=uv_duration)
+                logger.info("Starting mixing pump for UV sterilization")
                 
-                # Simulate UV duration
-                time.sleep(uv_duration)
-                
-                # Stop mixing pump
-                self.mixing_pump_running = False
-                self.mixing_pump_end_time = None
-                logger.info("UV sterilization cycle completed")
+                # Schedule job to stop the mixing pump after duration
+                self.scheduler.add_job(
+                    self._stop_mixing_pump,
+                    'date',
+                    run_date=self.mixing_pump_end_time,
+                    id='uv_stop_job',
+                    replace_existing=True
+                )
+                logger.info(f"UV sterilization scheduled to stop at: {self.mixing_pump_end_time}")
         except Exception as e:
             logger.error(f"Error in UV sterilization cycle: {e}")
             self.mixing_pump_running = False
@@ -253,8 +271,28 @@ class RippleScheduler:
                 logger.warning("Skipping nutrient cycle: zero duration")
                 return
                 
+            # Get relay instance
+            from src.sensors.Relay import Relay
+            relay = Relay()
+            if not relay:
+                logger.warning("Failed to start nutrient cycle: relay not available")
+                return
+                
             # Record the time when nutrient pump starts
             self.last_nutrient_pump_time = datetime.now()
+            
+            # Start nutrient pump
+            relay.set_nutrient_pumps(True)
+            logger.info(f"Running nutrient cycle for {on_duration}")
+            
+            # Schedule to stop after on_duration
+            self.scheduler.add_job(
+                self._stop_nutrient_pump,
+                'date',
+                run_date=datetime.now() + timedelta(seconds=on_seconds),
+                id='scheduled_nutrient_stop',
+                replace_existing=True
+            )
             
             # Check if mixing pump is running and has less than trigger duration remaining
             if self.mixing_pump_running and self.mixing_pump_end_time:
@@ -263,15 +301,34 @@ class RippleScheduler:
                     # Extend mixing pump duration
                     extension_seconds = trigger_seconds - remaining_seconds
                     self.mixing_pump_end_time = self.mixing_pump_end_time + timedelta(seconds=extension_seconds)
+                    
+                    # Update the scheduled stop time
+                    self.scheduler.remove_job('mixing_stop_job')
+                    self.scheduler.add_job(
+                        self._stop_mixing_pump,
+                        'date',
+                        run_date=self.mixing_pump_end_time,
+                        id='mixing_stop_job',
+                        replace_existing=True
+                    )
+                    
                     logger.info(f"Extending mixing pump by {extension_seconds} seconds to ensure proper mixing after nutrient addition")
             elif not self.mixing_pump_running:
                 # Start mixing pump if not running
+                relay.set_mixing_pump(True)
                 self.mixing_pump_running = True
                 self.mixing_pump_end_time = datetime.now() + timedelta(seconds=trigger_seconds)
+                
+                # Schedule mixing pump to stop
+                self.scheduler.add_job(
+                    self._stop_mixing_pump,
+                    'date',
+                    run_date=self.mixing_pump_end_time,
+                    id='mixing_stop_job',
+                    replace_existing=True
+                )
+                
                 logger.info(f"Starting mixing pump for {trigger_duration} after nutrient pump activation")
-            
-            # Implement nutrient pump logic here
-            logger.info(f"Running nutrient cycle for {on_duration}")
         except Exception as e:
             logger.error(f"Error in nutrient cycle: {e}")
             
@@ -286,9 +343,39 @@ class RippleScheduler:
             if on_seconds == 0:
                 logger.warning("Skipping pH cycle: zero duration")
                 return
+            
+            # Get relay instance
+            from src.sensors.Relay import Relay
+            relay = Relay()
+            if not relay:
+                logger.warning("Failed to start pH cycle: relay not available")
+                return
                 
             # Record the time when pH pump starts
             self.last_nutrient_pump_time = datetime.now()
+            
+            # Determine which pH pump to use based on sensor reading
+            # For now, let's assume we need pH up (can be refined with actual logic)
+            use_ph_up = True
+            
+            # Start appropriate pH pump
+            if use_ph_up:
+                relay.set_ph_plus_pump(True)
+                pump_type = "pH Up"
+            else:
+                relay.set_ph_minus_pump(True)
+                pump_type = "pH Down"
+                
+            logger.info(f"Running {pump_type} cycle for {on_duration}")
+            
+            # Schedule to stop after on_duration
+            self.scheduler.add_job(
+                self._stop_ph_pump,
+                'date',
+                run_date=datetime.now() + timedelta(seconds=on_seconds),
+                id='scheduled_ph_stop',
+                replace_existing=True
+            )
             
             # Check if mixing pump is running and has less than trigger duration remaining
             if self.mixing_pump_running and self.mixing_pump_end_time:
@@ -297,15 +384,34 @@ class RippleScheduler:
                     # Extend mixing pump duration
                     extension_seconds = trigger_seconds - remaining_seconds
                     self.mixing_pump_end_time = self.mixing_pump_end_time + timedelta(seconds=extension_seconds)
+                    
+                    # Update the scheduled stop time
+                    self.scheduler.remove_job('mixing_stop_job')
+                    self.scheduler.add_job(
+                        self._stop_mixing_pump,
+                        'date',
+                        run_date=self.mixing_pump_end_time,
+                        id='mixing_stop_job',
+                        replace_existing=True
+                    )
+                    
                     logger.info(f"Extending mixing pump by {extension_seconds} seconds to ensure proper mixing after pH adjustment")
             elif not self.mixing_pump_running:
                 # Start mixing pump if not running
+                relay.set_mixing_pump(True)
                 self.mixing_pump_running = True
                 self.mixing_pump_end_time = datetime.now() + timedelta(seconds=trigger_seconds)
+                
+                # Schedule mixing pump to stop
+                self.scheduler.add_job(
+                    self._stop_mixing_pump,
+                    'date',
+                    run_date=self.mixing_pump_end_time,
+                    id='mixing_stop_job',
+                    replace_existing=True
+                )
+                
                 logger.info(f"Starting mixing pump for {trigger_duration} after pH pump activation")
-            
-            # Implement pH pump logic here
-            logger.info(f"Running pH cycle for {on_duration}")
         except Exception as e:
             logger.error(f"Error in pH cycle: {e}")
             
@@ -318,9 +424,26 @@ class RippleScheduler:
             if on_seconds == 0:
                 logger.warning("Skipping sprinkler cycle: zero duration")
                 return
+            
+            # Get relay instance
+            from src.sensors.Relay import Relay
+            relay = Relay()
+            if not relay:
+                logger.warning("Failed to start sprinkler cycle: relay not available")
+                return
                 
-            # Implement sprinkler logic here
+            # Start sprinkler
+            relay.set_sprinklers(True)
             logger.info(f"Running sprinkler cycle for {on_duration}")
+            
+            # Schedule to stop after on_duration
+            self.scheduler.add_job(
+                self._stop_sprinkler,
+                'date',
+                run_date=datetime.now() + timedelta(seconds=on_seconds),
+                id='scheduled_sprinkler_stop',
+                replace_existing=True
+            )
         except Exception as e:
             logger.error(f"Error in sprinkler cycle: {e}")
             
@@ -461,55 +584,183 @@ class RippleScheduler:
         except Exception as e:
             logger.error(f"Failed to restart recirculation schedule: {e}")
             
+    def _stop_nutrient_pump(self):
+        """Stop the nutrient pump"""
+        try:
+            from src.sensors.Relay import Relay
+            relay = Relay()
+            if relay:
+                # Stop all three nutrient pumps (A, B, C)
+                relay.set_nutrient_pumps(False)
+                logger.info("Nutrient pumps stopped")
+            else:
+                logger.warning("Failed to stop nutrient pumps: relay not available")
+        except Exception as e:
+            logger.error(f"Error stopping nutrient pumps: {e}")
+            
+    def _stop_ph_pump(self):
+        """Stop the pH pumps"""
+        try:
+            from src.sensors.Relay import Relay
+            relay = Relay()
+            if relay:
+                # Stop both pH pumps (up and down)
+                relay.set_ph_plus_pump(False)
+                relay.set_ph_minus_pump(False)
+                logger.info("pH pumps stopped")
+            else:
+                logger.warning("Failed to stop pH pumps: relay not available")
+        except Exception as e:
+            logger.error(f"Error stopping pH pumps: {e}")
+            
+    def _stop_mixing_pump(self):
+        """Stop the mixing pump"""
+        try:
+            from src.sensors.Relay import Relay
+            relay = Relay()
+            if relay:
+                relay.set_mixing_pump(False)
+                # Update state tracking variables
+                self.mixing_pump_running = False
+                self.mixing_pump_end_time = None
+                logger.info("Mixing pump stopped")
+            else:
+                logger.warning("Failed to stop mixing pump: relay not available")
+        except Exception as e:
+            logger.error(f"Error stopping mixing pump: {e}")
+            
+    def _stop_sprinkler(self):
+        """Stop the sprinklers"""
+        try:
+            from src.sensors.Relay import Relay
+            relay = Relay()
+            if relay:
+                relay.set_sprinklers(False)
+                logger.info("Sprinklers stopped")
+            else:
+                logger.warning("Failed to stop sprinklers: relay not available")
+        except Exception as e:
+            logger.error(f"Error stopping sprinklers: {e}")
+
     def handle_manual_command(self, command_type, duration=None):
         """Handle manual commands from the API"""
         try:
             if command_type == 'mixing':
-                if duration:
+                if duration and duration != "00:00:00":
                     # Convert duration to seconds
                     duration_seconds = self._time_to_seconds(duration)
                     if duration_seconds > 0:
                         # Start mixing pump for specified duration
-                        self.mixing_pump_running = True
-                        self.mixing_pump_end_time = datetime.now() + timedelta(seconds=duration_seconds)
-                        logger.info(f"Manual mixing pump started for {duration}")
-                        logger.info(f"  Scheduled to end at: {self.mixing_pump_end_time}")
+                        from src.sensors.Relay import Relay
+                        relay = Relay()
+                        if relay:
+                            relay.set_mixing_pump(True)
+                            self.mixing_pump_running = True
+                            self.mixing_pump_end_time = datetime.now() + timedelta(seconds=duration_seconds)
+                            logger.info(f"Manual mixing pump started for {duration}")
+                            logger.info(f"  Scheduled to end at: {self.mixing_pump_end_time}")
+                        else:
+                            logger.warning("Failed to start mixing pump: relay not available")
+                    else:
+                        logger.warning(f"Invalid mixing duration: {duration}")
                 else:
                     # Stop mixing pump
-                    self.mixing_pump_running = False
-                    self.mixing_pump_end_time = None
-                    logger.info("Manual mixing pump stopped")
+                    self._stop_mixing_pump()
                     
             elif command_type == 'nutrient':
-                if duration:
+                if duration and duration != "00:00:00":
                     # Convert duration to seconds
                     duration_seconds = self._time_to_seconds(duration)
                     if duration_seconds > 0:
                         # Start nutrient pump for specified duration
-                        self._run_nutrient_cycle()
-                        logger.info(f"Manual nutrient pump started for {duration}")
-                        self._log_schedule_details('nutrient_cycle')
+                        from src.sensors.Relay import Relay
+                        relay = Relay()
+                        if relay:
+                            relay.set_nutrient_pumps(True)
+                            # Schedule to stop after duration
+                            self.scheduler.add_job(
+                                self._stop_nutrient_pump,
+                                'date',
+                                run_date=datetime.now() + timedelta(seconds=duration_seconds),
+                                id='nutrient_stop_job',
+                                replace_existing=True
+                            )
+                            logger.info(f"Manual nutrient pump started for {duration}")
+                            logger.info(f"  Scheduled to stop at: {datetime.now() + timedelta(seconds=duration_seconds)}")
+                        else:
+                            logger.warning("Failed to start nutrient pump: relay not available")
+                    else:
+                        logger.warning(f"Invalid nutrient duration: {duration}")
+                else:
+                    # Stop nutrient pump
+                    self._stop_nutrient_pump()
                         
             elif command_type == 'ph':
-                if duration:
+                if duration and duration != "00:00:00":
                     # Convert duration to seconds
                     duration_seconds = self._time_to_seconds(duration)
                     if duration_seconds > 0:
                         # Start pH pump for specified duration
-                        self._run_ph_cycle()
-                        logger.info(f"Manual pH pump started for {duration}")
-                        self._log_schedule_details('ph_cycle')
+                        from src.sensors.Relay import Relay
+                        relay = Relay()
+                        if relay:
+                            # Determine which pH pump to use based on latest sensor reading
+                            # For now, let's assume we need pH up (can be changed with actual logic)
+                            use_ph_up = True
+                            
+                            if use_ph_up:
+                                relay.set_ph_plus_pump(True)
+                                pump_type = "pH Up"
+                            else:
+                                relay.set_ph_minus_pump(True)
+                                pump_type = "pH Down"
+                                
+                            # Schedule to stop after duration
+                            self.scheduler.add_job(
+                                self._stop_ph_pump,
+                                'date',
+                                run_date=datetime.now() + timedelta(seconds=duration_seconds),
+                                id='ph_stop_job',
+                                replace_existing=True
+                            )
+                            logger.info(f"Manual {pump_type} pump started for {duration}")
+                            logger.info(f"  Scheduled to stop at: {datetime.now() + timedelta(seconds=duration_seconds)}")
+                        else:
+                            logger.warning("Failed to start pH pump: relay not available")
+                    else:
+                        logger.warning(f"Invalid pH duration: {duration}")
+                else:
+                    # Stop pH pump
+                    self._stop_ph_pump()
                         
             elif command_type == 'sprinkler':
-                if duration:
+                if duration and duration != "00:00:00":
                     # Convert duration to seconds
                     duration_seconds = self._time_to_seconds(duration)
                     if duration_seconds > 0:
                         # Start sprinkler for specified duration
-                        self._run_sprinkler_cycle()
-                        logger.info(f"Manual sprinkler started for {duration}")
-                        self._log_schedule_details('sprinkler_cycle')
-                        
+                        from src.sensors.Relay import Relay
+                        relay = Relay()
+                        if relay:
+                            relay.set_sprinklers(True)
+                            # Schedule to stop after duration
+                            self.scheduler.add_job(
+                                self._stop_sprinkler,
+                                'date',
+                                run_date=datetime.now() + timedelta(seconds=duration_seconds),
+                                id='sprinkler_stop_job',
+                                replace_existing=True
+                            )
+                            logger.info(f"Manual sprinkler started for {duration}")
+                            logger.info(f"  Scheduled to stop at: {datetime.now() + timedelta(seconds=duration_seconds)}")
+                        else:
+                            logger.warning("Failed to start sprinkler: relay not available")
+                    else:
+                        logger.warning(f"Invalid sprinkler duration: {duration}")
+                else:
+                    # Stop sprinkler
+                    self._stop_sprinkler()
+                    
             # Log all schedules after manual command
             self._log_all_schedules()
             return True

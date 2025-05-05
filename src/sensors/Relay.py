@@ -74,20 +74,33 @@ class Relay:
         logger.debug(f"Processing status response - Data: {data}, Command Info: {command_info}")
         if data and len(data) >= 5:
             try:
-                status_byte = data[3]
+                status_byte = data[3]  # First status byte
                 relay_name = command_info.get("relay_name")
                 logger.debug(f"Status byte: {status_byte}, Relay name: {relay_name}")
                 if relay_name:
-                    # Convert relay name to match config sections (e.g., relay_one -> RELAY_ONE)
-                    config_section = relay_name.upper()
+                    # Use the exact relay name from the config
                     # Initialize the relay_statuses dict for this relay if it doesn't exist
-                    if config_section not in self.relay_statuses:
-                        self.relay_statuses[config_section] = [None] * 8
-                    self.relay_statuses[config_section] = [(status_byte >> i) & 1 for i in range(8)]
+                    if relay_name not in self.relay_statuses:
+                        self.relay_statuses[relay_name] = [0] * 16  # Initialize with 16 ports
+                    
+                    # Update the first 8 ports from the status byte
+                    port_statuses = [(status_byte >> i) & 1 for i in range(8)]
+                    
+                    # Handle 16 ports (read the second byte if available)
+                    if len(data) >= 6:
+                        status_byte_2 = data[4]  # Second status byte
+                        port_statuses.extend([(status_byte_2 >> i) & 1 for i in range(8)])
+                    else:
+                        # If no second byte, keep last 8 ports at 0
+                        port_statuses.extend([0] * 8)
+                    
+                    # Ensure exactly 16 ports
+                    self.relay_statuses[relay_name] = port_statuses[:16]
+                    
                     self.last_updated = helpers.datetime_to_iso8601()
-                    logger.info(f"{config_section} statuses: {self.relay_statuses[config_section]}")
+                    logger.info(f"{relay_name} statuses: {self.relay_statuses[relay_name]}")
                     # Save data for just this relay
-                    self.save_data(relay_name=config_section)
+                    self.save_data(relay_name=relay_name)
             except Exception as e:
                 logger.warning(f"Error processing relay status response: {e}")
                 logger.exception("Full exception details:")
@@ -146,7 +159,8 @@ class Relay:
         for relay_name, address in self.relay_addresses.items():
             logger.info(f"Sending status request to {relay_name} at address 0x{address:02X}")
             try:
-                command = bytearray([address, 0x01, 0x00, 0x00, 0x00, 0x08])
+                # Request status for 16 coils (0x00 to 0x0F)
+                command = bytearray([address, 0x01, 0x00, 0x00, 0x00, 0x10])
                 logger.info(f"Command bytes: {[f'0x{b:02X}' for b in command]}")
                 
                 timeout = 2.0
@@ -155,7 +169,7 @@ class Relay:
                     port=self.port,  # Use the port from config
                     command=command,
                     baudrate=self.baud_rate,
-                    response_length=6,
+                    response_length=6,  # This should be 7 for 16 ports
                     timeout=timeout,
                 )
                 logger.info(f"baudrate: {self.baud_rate}")
@@ -216,42 +230,84 @@ class Relay:
         )
 
     def load_addresses(self):
-        """Load relay addresses from config file"""
+        """Load relay addresses and assignments from config file"""
         config = globals.DEVICE_CONFIG_FILE
         try:
             self.relay_addresses = {}
+            self.relay_board_names = {}  # Map from config key to display name
+            
             logger.info(f"Available config sections: {config.sections()}")
             if "RELAY_CONTROL" in config:
                 logger.info(f"RELAY_CONTROL section content: {dict(config['RELAY_CONTROL'])}")
                 for key, value in config["RELAY_CONTROL"].items():
-                    # Skip comments and process relay entries
-                    if key.upper().startswith('RELAY'):
-                        # Parse the comma-separated value string
-                        parts = value.split(',')
-                        if len(parts) >= 5:  # We need at least 5 parts for the address
-                            hex_address = int(parts[4].strip(), 16)
-                            self.relay_addresses[key.upper()] = hex_address
-                            logger.info(f"Loaded {key.upper()} address: 0x{hex_address:02X} (decimal: {hex_address})")
+                    # Process all relay entries
+                    parts = value.split(',')
+                    if len(parts) >= 5:  # We need at least 5 parts for the address
+                        hex_address = int(parts[4].strip(), 16)
+                        # Use the exact key from the config (e.g., "relayone")
+                        self.relay_addresses[key] = hex_address
+                        
+                        # Construct relay_board name as "relay_type" (e.g., "relay_ripple")
+                        # from the first two comma-separated values
+                        if len(parts) >= 2:
+                            relay_type = parts[0].strip()
+                            relay_name = parts[1].strip()
+                            board_name = f"{relay_type}_{relay_name}"
+                            self.relay_board_names[key] = board_name
+                            logger.info(f"Relay board name for {key}: {board_name}")
+                        
+                        logger.info(f"Loaded {key} address: 0x{hex_address:02X} (decimal: {hex_address})")
                 logger.info(f"Final relay_addresses: {self.relay_addresses}")
+                logger.info(f"Final relay_board_names: {self.relay_board_names}")
             else:
                 logger.info("No RELAY_CONTROL section found in config. Using default address.")
                 
             # Load relay assignments
             if "RELAY_ASSIGNMENTS" in config:
                 self.relay_assignments = {}
+                
+                # Parse the relay assignments explicitly from the config format
+                # Example: relay_one_0_to_3 = NutrientPumpA, NutrientPumpB, NutrientPumpC, pHUpPump
                 for key, value in config["RELAY_ASSIGNMENTS"].items():
-                    if key.upper().startswith('RELAY_'):
-                        # Parse the relay group name to get the base index
+                    if key.startswith('relay_'):
                         parts = key.split('_')
-                        if len(parts) >= 3:
-                            base_index = int(parts[2])  # Get the starting index (e.g., 0 from "Relay_ONE_0_to_3")
+                        if len(parts) >= 5 and parts[3] == 'to':
+                            relay_group = parts[1]  # Keep exact case: 'one' instead of 'ONE'
+                            start_index = int(parts[2])     # Get '0' from 'relay_one_0_to_3'
+                            end_index = int(parts[4])       # Get '3' from 'relay_one_0_to_3'
+                            
                             devices = [d.strip() for d in value.split(',')]
+                            
+                            if len(devices) != (end_index - start_index + 1):
+                                logger.warning(f"Number of devices ({len(devices)}) doesn't match range {start_index}-{end_index}")
+                            
+                            # Find the config key for this relay group
+                            relay_key = None
+                            for k in self.relay_addresses.keys():
+                                if relay_group in k:
+                                    relay_key = k
+                                    break
+                            
+                            if relay_key is None:
+                                logger.warning(f"Could not find relay key for group {relay_group}")
+                                continue
+                                
+                            # Get the board name for this relay
+                            board_name = self.relay_board_names.get(relay_key, f"relay_{relay_group}")
+                            
+                            # Assign each device to its port
                             for i, device in enumerate(devices):
-                                self.relay_assignments[device] = {
-                                    'relay_group': parts[1],  # e.g., "ONE"
-                                    'index': base_index + i
-                                }
-                logger.info(f"Loaded relay assignments: {self.relay_assignments}")
+                                if i < (end_index - start_index + 1):
+                                    port_index = start_index + i
+                                    self.relay_assignments[device] = {
+                                        'relay_group': relay_group,
+                                        'index': port_index,
+                                        'relay_name': relay_key,
+                                        'board_name': board_name
+                                    }
+                                    logger.info(f"Assigned {device} to {board_name} port {port_index}")
+                
+                logger.info(f"Loaded {len(self.relay_assignments)} relay assignments: {self.relay_assignments}")
             else:
                 logger.warning("No RELAY_ASSIGNMENTS section found in config")
                 
@@ -259,12 +315,13 @@ class Relay:
             logger.warning(f"Invalid address format in config: {e}")
         except Exception as e:
             logger.warning(f"Error loading relay addresses: {e}")
+            logger.exception("Full exception details:")
 
     def _get_relay_info(self, device_name):
-        """Get relay group and index for a device name."""
+        """Get relay name and index for a device name."""
         if device_name in self.relay_assignments:
             info = self.relay_assignments[device_name]
-            return f"RELAY{info['relay_group']}", info['index']
+            return info.get('relay_name', None), info.get('index', None)
         return None, None
 
     def save_null_data(self):
@@ -275,8 +332,11 @@ class Relay:
         null_relay_data = {
             "last_updated": self.last_updated
         }
+        
+        # For each relay in relay_addresses, create a null status array
         for relay_name in self.relay_addresses.keys():
-            null_relay_data[relay_name.lower()] = [0] * 8
+            board_name = self.relay_board_names.get(relay_name, relay_name)
+            null_relay_data[board_name] = [0] * 16  # 16 ports with status 0
         
         # Add last_updated to null devices data as well
         null_devices_data = {
@@ -285,6 +345,9 @@ class Relay:
         
         helpers.save_sensor_data(["relays"], null_relay_data)
         helpers.save_sensor_data(["devices"], null_devices_data)
+        
+        # Also save null relay metrics data
+        self._save_null_metrics_data()
 
     def save_data(self, relay_name=None):
         """
@@ -294,7 +357,7 @@ class Relay:
             # If relay_name is provided, only process that relay
             relays_to_process = [relay_name] if relay_name else self.relay_addresses.keys()
             
-            # Create metrics data structure
+            # Create metrics data structure for relay_metrics
             metrics_data = {
                 "measurements": {
                     "name": "relay_metrics",
@@ -302,73 +365,104 @@ class Relay:
                 }
             }
             
-            # Process relay status points
-            for current_relay in relays_to_process:
-                if current_relay in self.relay_statuses:
-                    for port_index, status in enumerate(self.relay_statuses[current_relay]):
-                        point = {
-                            "tags": {
-                                "relay_board": current_relay.lower(),
-                                "port_index": port_index,
-                                "port_type": "unassigned",
-                                "device": "none"
-                            },
-                            "fields": {
-                                "status": status,
-                                "is_assigned": False,
-                                "raw_status": status
-                            },
-                            "timestamp": self.last_updated
-                        }
-                        
-                        # Update device info if port is assigned
-                        if current_relay in globals.DEVICE_CONFIG_FILE:
-                            for device_name, index in globals.DEVICE_CONFIG_FILE[current_relay].items():
-                                if device_name.lower() == 'port':
-                                    continue
-                                try:
-                                    if int(index) == port_index:
-                                        point["tags"]["port_type"] = "assigned"
-                                        point["tags"]["device"] = device_name.lower()
-                                        point["fields"]["is_assigned"] = True
-                                except (ValueError, IndexError):
-                                    continue
-                                    
-                        metrics_data["measurements"]["points"].append(point)
+            # Keep track of assigned ports for configuration
+            assigned_ports_map = {}
             
-            # Save relay points
+            # Process relay status points for each relay
+            for current_relay in relays_to_process:
+                # Get the board name for this relay
+                board_name = self.relay_board_names.get(current_relay, current_relay)
+                
+                # Initialize assigned ports for this relay
+                assigned_ports_map[current_relay] = []
+                
+                # Ensure we can access up to 16 ports even if we only have status for 8
+                status_array = self.relay_statuses.get(current_relay, [0] * 16)
+                if len(status_array) < 16:
+                    status_array.extend([0] * (16 - len(status_array)))
+                
+                # Create points for all 16 ports
+                for port_index in range(16):
+                    status = status_array[port_index] if port_index < len(status_array) else 0
+                    
+                    # Default to unassigned
+                    point = {
+                        "tags": {
+                            "relay_board": board_name,  # Use the board name from config
+                            "port_index": port_index,
+                            "port_type": "unassigned",
+                            "device": "none"
+                        },
+                        "fields": {
+                            "status": status,
+                            "is_assigned": False,
+                            "raw_status": status
+                        },
+                        "timestamp": self.last_updated
+                    }
+                    
+                    # Check if port is assigned to a device
+                    for device_name, info in self.relay_assignments.items():
+                        if info.get('relay_name') == current_relay and info.get('index') == port_index:
+                            point["tags"]["port_type"] = "assigned"
+                            point["tags"]["device"] = device_name
+                            point["fields"]["is_assigned"] = True
+                            assigned_ports_map[current_relay].append(port_index)
+                            break
+                    
+                    metrics_data["measurements"]["points"].append(point)
+            
+            # Save relay metrics points
             helpers.save_sensor_data(["data", "relay_metrics"], metrics_data)
-            logger.log_sensor_data(["data", "relay_metrics"], metrics_data)
             
             # Save relay configuration
             config_data = {
-                "relay_configuration": {
-                    relay.lower(): {
-                        "total_ports": 8,
-                        "assigned_ports": [],
-                        "unassigned_ports": list(range(8))
-                    } for relay in relays_to_process
-                }
+                "relay_configuration": {}
             }
             
-            # Update port assignments in configuration
+            # Update configuration with assigned and unassigned ports
             for relay in relays_to_process:
-                if relay in globals.DEVICE_CONFIG_FILE:
-                    assigned = []
-                    for device_name, index in globals.DEVICE_CONFIG_FILE[relay].items():
-                        if device_name.lower() != 'port':
-                            try:
-                                port = int(index)
-                                assigned.append(port)
-                            except ValueError:
-                                continue
-                    
-                    config_data["relay_configuration"][relay.lower()]["assigned_ports"] = sorted(assigned)
-                    config_data["relay_configuration"][relay.lower()]["unassigned_ports"] = sorted(list(set(range(8)) - set(assigned)))
+                assigned = assigned_ports_map.get(relay, [])
+                board_name = self.relay_board_names.get(relay, relay)
+                
+                config_data["relay_configuration"][board_name] = {
+                    "total_ports": 16,
+                    "assigned_ports": sorted(assigned),
+                    "unassigned_ports": sorted(list(set(range(16)) - set(assigned)))
+                }
+                
+                logger.info(f"Relay {board_name} assigned ports: {sorted(assigned)}")
+                logger.info(f"Relay {board_name} unassigned ports: {sorted(list(set(range(16)) - set(assigned)))}")
             
             helpers.save_sensor_data(["data", "relay_metrics", "configuration"], config_data)
-            logger.log_sensor_data(["data", "relay_metrics", "configuration"], config_data)
-
+            
+            # Update relay status in the main structure
+            relay_data = {
+                "last_updated": self.last_updated
+            }
+            
+            # Create full relay status structure
+            for current_relay in relays_to_process:
+                # Ensure we have status for all 16 ports
+                status_array = self.relay_statuses.get(current_relay, [0] * 16)
+                if len(status_array) < 16:
+                    status_array.extend([0] * (16 - len(status_array)))
+                
+                # Use the board name from config
+                board_name = self.relay_board_names.get(current_relay, current_relay)
+                relay_data[board_name] = status_array[:16]  # Ensure exactly 16 elements
+            
+            # Save relay status
+            helpers.save_sensor_data(["relays"], relay_data)
+            
+            # Update devices data
+            devices_data = {
+                "last_updated": self.last_updated
+            }
+            helpers.save_sensor_data(["devices"], devices_data)
+            
+            logger.info(f"Saved relay data with assignments.")
+            
         except Exception as e:
             logger.error(f"Error in save_data: {e}")
             logger.exception("Full exception details:")
@@ -763,14 +857,14 @@ class Relay:
             # Get all relay assignments from config
             assignments = globals.DEVICE_CONFIG_FILE['RELAY_ASSIGNMENTS']
             
-            # Search through all relay groups for pHPlusPump
+            # Search through all relay groups for pHUpPump
             for group_name, devices in assignments.items():
                 if not group_name.startswith('Relay_'):
                     continue
                     
                 device_list = devices.split(',')
                 for i, device in enumerate(device_list):
-                    if device.strip() == 'pHPlusPump':
+                    if device.strip() == 'pHUpPump':
                         # Extract the base index from group name (e.g., 0 from "Relay_ONE_0_to_3")
                         base_index = int(group_name.split('_')[2])
                         pump_index = i + base_index
@@ -781,7 +875,7 @@ class Relay:
                             self.turn_off("RELAYONE", pump_index)
                         return
                         
-            raise KeyError("pHPlusPump not found in any relay assignments")
+            raise KeyError("pHUpPump not found in any relay assignments")
                 
         except KeyError as e:
             logger.warning(f"Missing configuration for pH plus pump: {e}")
@@ -803,14 +897,14 @@ class Relay:
             # Get all relay assignments from config
             assignments = globals.DEVICE_CONFIG_FILE['RELAY_ASSIGNMENTS']
             
-            # Search through all relay groups for pHMinusPump
+            # Search through all relay groups for pHDownPump
             for group_name, devices in assignments.items():
                 if not group_name.startswith('Relay_'):
                     continue
                     
                 device_list = devices.split(',')
                 for i, device in enumerate(device_list):
-                    if device.strip() == 'pHMinusPump':
+                    if device.strip() == 'pHDownPump':
                         # Extract the base index from group name (e.g., 4 from "Relay_ONE_4_to_7")
                         base_index = int(group_name.split('_')[2])
                         pump_index = i + base_index
@@ -821,7 +915,7 @@ class Relay:
                             self.turn_off("RELAYONE", pump_index)
                         return
                         
-            raise KeyError("pHMinusPump not found in any relay assignments")
+            raise KeyError("pHDownPump not found in any relay assignments")
                 
         except KeyError as e:
             logger.warning(f"Missing configuration for pH minus pump: {e}")
@@ -926,6 +1020,75 @@ class Relay:
                 self.turn_off(relay_group, index)
         else:
             logger.warning("MixingPump not found in relay assignments")
+
+    def _save_null_metrics_data(self):
+        """Save null data for relay metrics."""
+        metrics_data = {
+            "measurements": {
+                "name": "relay_metrics",
+                "points": []
+            }
+        }
+        
+        # Keep track of assigned ports for configuration
+        assigned_ports_map = {}
+        
+        # Create points for all relays
+        for current_relay in self.relay_addresses.keys():
+            board_name = self.relay_board_names.get(current_relay, current_relay)
+            assigned_ports_map[board_name] = []
+            
+            # Create points for all 16 ports
+            for port_index in range(16):
+                # Default to unassigned
+                point = {
+                    "tags": {
+                        "relay_board": board_name,
+                        "port_index": port_index,
+                        "port_type": "unassigned",
+                        "device": "none"
+                    },
+                    "fields": {
+                        "status": 0,
+                        "is_assigned": False,
+                        "raw_status": 0
+                    },
+                    "timestamp": self.last_updated
+                }
+                
+                # Check if port is assigned to a device
+                for device_name, info in self.relay_assignments.items():
+                    if info.get('relay_name') == current_relay and info.get('index') == port_index:
+                        point["tags"]["port_type"] = "assigned"
+                        point["tags"]["device"] = device_name
+                        point["fields"]["is_assigned"] = True
+                        assigned_ports_map[board_name].append(port_index)
+                        break
+                
+                metrics_data["measurements"]["points"].append(point)
+        
+        # Save relay metrics points
+        helpers.save_sensor_data(["data", "relay_metrics"], metrics_data)
+        
+        # Save relay configuration
+        config_data = {
+            "relay_configuration": {}
+        }
+        
+        # Update configuration with assigned and unassigned ports
+        for relay in self.relay_addresses.keys():
+            board_name = self.relay_board_names.get(relay, relay)
+            assigned = assigned_ports_map.get(board_name, [])
+            
+            config_data["relay_configuration"][board_name] = {
+                "total_ports": 16,
+                "assigned_ports": sorted(assigned),
+                "unassigned_ports": sorted(list(set(range(16)) - set(assigned)))
+            }
+            
+            logger.info(f"Relay {board_name} assigned ports: {sorted(assigned)}")
+        
+        helpers.save_sensor_data(["data", "relay_metrics", "configuration"], config_data)
 
 
 if __name__ == "__main__":
