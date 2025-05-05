@@ -9,8 +9,9 @@ sys.path.append(parent_dir)
 from lumina_modbus_event_emitter import ModbusResponse
 
 import globals
+from src.lumina_logger import GlobalLogger
 
-logger = globals.logger
+logger = GlobalLogger("RippleRelay", log_prefix="ripple_").logger
 import helpers
 
 

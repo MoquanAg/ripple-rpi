@@ -17,8 +17,9 @@ from src.sensors.Relay import Relay
 from src.sensors.DO import DO
 from src.sensors.pH import pH
 from src.sensors.ec import EC
+from src.lumina_logger import GlobalLogger
 
-logger = globals.logger
+logger = GlobalLogger("RippleController", log_prefix="ripple_").logger
 
 class RippleController:
     def __init__(self):
@@ -57,7 +58,7 @@ class RippleController:
         try:
             import configparser
             config = configparser.ConfigParser()
-            config.read('device.conf')
+            config.read('config/device.conf')
             
             # Load pH targets
             ph_target = config.get('pH', 'ph_target').split(',')[1].strip()

@@ -18,7 +18,7 @@ LOG_FOLDER_PATH = os.path.join(BASE_DIR, "..", "log")
 os.makedirs(LOG_FOLDER_PATH, exist_ok=True)
 from lumina_logger import GlobalLogger
 
-logger = GlobalLogger().logger
+logger = GlobalLogger("RippleGlobals", log_prefix="ripple_").logger
 
 
 #############################################
@@ -49,7 +49,7 @@ else:
     if not loaded_files:
         logger.error(f"Failed to load system configuration from {SYSTEM_CONF_PATH}")
 
-DEVICE_CONF_PATH = os.path.join(BASE_DIR, "..", "device.conf")
+DEVICE_CONF_PATH = os.path.join(BASE_DIR, "..", "config", "device.conf")
 DEVICE_CONFIG_FILE = configparser.ConfigParser()
 if not os.path.exists(DEVICE_CONF_PATH):
     logger.error(f"Device configuration file not found at {DEVICE_CONF_PATH}")
@@ -58,7 +58,6 @@ else:
     if not loaded_files:
         logger.error(f"Failed to load device configuration from {DEVICE_CONF_PATH}")
     else:
-        # Verify the SENSORS section exists
         if 'SENSORS' not in DEVICE_CONFIG_FILE:
             logger.warning("No 'SENSORS' section found in device configuration")
         else:

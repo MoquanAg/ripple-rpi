@@ -3,11 +3,15 @@ import re
 import tzlocal
 from datetime import datetime, timedelta
 import os, sys
+import json
+import globals
+from src.lumina_logger import GlobalLogger
+
+logger = GlobalLogger("RippleHelpers", log_prefix="ripple_").logger
+
 current_dir = os.path.dirname(__file__)
 parent_dir = os.path.dirname(current_dir)
 sys.path.append(parent_dir)
-import globals
-logger = globals.logger
 
 
 def remove_comments(jsonc_content):
