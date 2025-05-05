@@ -33,7 +33,7 @@ echo "Starting main controller..."
 start_script "main.py" "Ripple Controller"
 
 # Wait to ensure controller starts before API
-sleep 3
+sleep 1
 
 # Start API server script
 echo "Starting REST API server..."
