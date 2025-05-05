@@ -214,71 +214,51 @@ The Ripple system includes a REST API server that allows other systems on the sa
 
 ### API Endpoints
 
-#### General Endpoints
+The API has been streamlined to focus on core functionality with clear separation between the server and controller:
 
-- `GET /`: Get system information
-  - Response: General system status and version information
+#### System Information
 
-#### Sensor Endpoints
+- `GET /api/v1/system`: Get basic system information
+  - Returns system name, version, status, and last update timestamp
 
-- `GET /sensors`: Get all sensor data
-  - Response: Data from all sensors (pH, EC, Water Level, DO, Relay)
+#### System Status
 
-- `GET /sensors/{sensor_type}`: Get data for a specific sensor type
-  - Path Parameters:
-    - `sensor_type`: One of "pH", "EC", "WaterLevel", "DO", "Relay"
-  - Response: Data from the specified sensor type
-
-#### Target Value Endpoints
-
-- `GET /targets`: Get all target values
-  - Response: Target values for all sensor types
-
-- `GET /targets/{sensor_type}`: Get target values for a specific sensor type
-  - Path Parameters:
-    - `sensor_type`: One of "pH", "EC", "WaterLevel", "DO"
-  - Response: Target values for the specified sensor type
+- `GET /api/v1/status`: Get full system status
+  - Returns all sensor readings, relay states, and system metrics
+  - Reads data collected and maintained by the main controller
 
 #### Control Endpoints
 
-- `POST /relay`: Control a relay
-  - Request Body:
+- `POST /api/v1/action`: Control relays/devices
+  - Request Body: JSON object with action fields and boolean values
     ```json
     {
-      "relay_id": "NutrientPumpA", 
-      "state": true
+      "mixing_pump": true,
+      "sprinkler": false
     }
     ```
-  - Response: Success status and result details
+  - Actions are saved to `action.json`, which is monitored by the main controller
+  - The `sprinkler` field automatically controls both sprinkler_a and sprinkler_b relays
 
-- `PUT /targets/{sensor_type}`: Update target values for sensors
-  - Path Parameters:
-    - `sensor_type`: One of "pH", "EC", "WaterLevel", "DO"
-  - Request Body:
-    ```json
-    {
-      "target": 7.0,
-      "deadband": 0.1,
-      "min": 6.5,
-      "max": 7.5
-    }
-    ```
-  - Response: Updated target values
+- `POST /api/v1/server_instruction_set`: Process instructions from a central server
+  - Updates device configuration based on grow plans
+  - Used for automated system management
+  
+- `POST /api/v1/user_instruction_set`: Process manual configuration changes
+  - Apply user-specified settings to the system
+  - Used for manual adjustments and overrides
 
-### Using the API
+### Architecture
 
-#### Authentication
+The API server follows a clean separation of concerns:
+1. The server never directly interacts with hardware
+2. Control commands are written to configuration files monitored by the main controller
+3. Sensor data is read from files maintained by the main controller
+4. This avoids resource conflicts and improves system stability
+
+### Authentication
 
 All API endpoints require HTTP Basic Authentication. Use the username and password configured in `device.conf` under the `[SYSTEM]` section.
-
-#### Example Client
-
-See `client_example.py` for example code on how to interact with the API using Python. The example shows how to:
-
-1. Retrieve sensor data
-2. Control relays
-3. Update target parameters
-4. Poll sensor data at regular intervals
 
 ## Communication Protocol
 

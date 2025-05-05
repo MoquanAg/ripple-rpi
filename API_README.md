@@ -46,58 +46,42 @@ All API endpoints require HTTP Basic Authentication. Use the username and passwo
 
 ## API Endpoints
 
-### General
+The API has been simplified to focus on only essential functions with a clear separation of concerns. The server writes to config files and reads sensor data from files populated by the main controller.
 
-- `GET /api/v1/`: Get system information
+### System Information
+
+- `GET /api/v1/system`: Get system information
   - Response: General system status and version information
+  - Example response:
+    ```json
+    {
+      "system": "Ripple Fertigation System",
+      "version": "1.0.0",
+      "status": "online",
+      "last_update": "2023-06-01T12:34:56.789012"
+    }
+    ```
 
-### Sensors
+### System Status
 
-- `GET /api/v1/sensors`: Get all sensor data
-  - Response: Data from all sensors (pH, EC, Water Level, DO, Relay)
-
-- `GET /api/v1/sensors/{sensor_type}`: Get data for a specific sensor type
-  - Path Parameters:
-    - `sensor_type`: One of "pH", "EC", "WaterLevel", "DO", "Relay"
-  - Response: Data from the specified sensor type
-
-### Targets
-
-- `GET /api/v1/targets`: Get all target values
-  - Response: Target values for all sensor types
-
-- `GET /api/v1/targets/{sensor_type}`: Get target values for a specific sensor type
-  - Path Parameters:
-    - `sensor_type`: One of "pH", "EC", "WaterLevel", "DO"
-  - Response: Target values for the specified sensor type
+- `GET /api/v1/status`: Get full system status
+  - Response: Complete system status including all sensor readings and relay states
+  - Returns the raw sensor data as collected by the main controller
 
 ### Control
 
-- `POST /api/v1/relay`: Control a relay
-  - Request Body:
+- `POST /api/v1/action`: Control relays/devices
+  - Request Body: A JSON object with action fields and boolean values
     ```json
     {
-      "relay_id": "NutrientPumpA", 
-      "state": true
+      "mixing_pump": true,
+      "sprinkler": false
     }
     ```
-  - Response: Success status and result details
+  - Response: Success status and message
+  - Note: The `sprinkler` field will automatically control both sprinkler_a and sprinkler_b relays for safety
 
-- `PUT /api/v1/targets/{sensor_type}`: Update target values for sensors
-  - Path Parameters:
-    - `sensor_type`: One of "pH", "EC", "WaterLevel", "DO"
-  - Request Body:
-    ```json
-    {
-      "target": 7.0,
-      "deadband": 0.1,
-      "min": 6.5,
-      "max": 7.5
-    }
-    ```
-  - Response: Updated target values
-
-- `POST /api/v1/instruction_set`: Update the instruction set and device configuration
+- `POST /api/v1/server_instruction_set`: Update the instruction set and device configuration
   - Request Body: JSON instruction set (see example below)
   - Response: Success status and result details
   - Example Request Body:
@@ -150,7 +134,7 @@ All API endpoints require HTTP Basic Authentication. Use the username and passwo
     }
     ```
 
-- `POST /api/v1/manual_command`: Update device configuration with manual command values
+- `POST /api/v1/user_instruction_set`: Update device configuration with user instruction values
   - Request Body:
     ```json
     {
@@ -178,33 +162,21 @@ All API endpoints require HTTP Basic Authentication. Use the username and passwo
 All API responses follow this format:
 ```json
 {
-  "timestamp": "2023-06-01T12:34:56.789012",
+  "status": "success",
+  "message": "Operation succeeded",
   "data": {
     // Response data specific to the endpoint
   }
 }
 ```
 
-For control endpoints, the format is:
+Or in case of errors:
 ```json
 {
-  "timestamp": "2023-06-01T12:34:56.789012",
-  "success": true,
-  "message": "Operation succeeded",
-  "result": {
-    // Additional result information
-  }
+  "status": "error",
+  "message": "Error description"
 }
 ```
-
-## Example Client
-
-See `client_example.py` for example code on how to interact with the API using Python. The example shows how to:
-
-1. Retrieve sensor data
-2. Control relays
-3. Update target parameters
-4. Poll sensor data at regular intervals
 
 ## Integrating with Other Systems
 
@@ -212,5 +184,6 @@ To integrate this API with other systems on your network:
 
 1. Make HTTP requests to the appropriate endpoints
 2. Use HTTP Basic Authentication with your credentials
-3. For sensor monitoring, poll the `/api/v1/sensors` endpoint at appropriate intervals
-4. For control, use the `/api/v1/relay` and `/api/v1/targets/{sensor_type}` endpoints 
+3. For system monitoring, poll the `/api/v1/status` endpoint
+4. For control, use the `/api/v1/action` endpoint
+5. For configuration, use the server or user instruction set endpoints 
