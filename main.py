@@ -5,6 +5,9 @@ import sys
 import time
 import logging
 from typing import Dict, List, Optional, Union, Any
+import configparser
+from watchdog.observers import Observer
+from watchdog.events import FileSystemEventHandler
 
 # Add the src directory to the Python path
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -18,8 +21,18 @@ from src.sensors.DO import DO
 from src.sensors.pH import pH
 from src.sensors.ec import EC
 from src.lumina_logger import GlobalLogger
+from src.scheduler import RippleScheduler
 
 logger = GlobalLogger("RippleController", log_prefix="ripple_").logger
+
+class ConfigFileHandler(FileSystemEventHandler):
+    def __init__(self, controller):
+        self.controller = controller
+        
+    def on_modified(self, event):
+        if event.src_path == self.controller.config_file:
+            logger.info("Configuration file modified, reloading settings")
+            self.controller.reload_configuration()
 
 class RippleController:
     def __init__(self):
@@ -27,8 +40,23 @@ class RippleController:
         self.water_level_sensors = {}  # Dict to store water level sensor instances
         self.relays = {}  # Dict to store relay instances
         self.sensor_targets = {}  # Dict to store sensor target values
+        self.scheduler = RippleScheduler()
+        self.config_file = os.path.abspath('config/device.conf')
+        self.config = configparser.ConfigParser()
         self.initialize_sensors()
         self.load_sensor_targets()
+        
+        # Initialize watchdog observer
+        self.event_handler = ConfigFileHandler(self)
+        self.observer = Observer()
+        self.observer.schedule(self.event_handler, os.path.dirname(self.config_file), recursive=False)
+        self.observer.start()
+        logger.info("Configuration file monitoring started")
+
+    def _time_to_seconds(self, time_str):
+        """Convert HH:MM:SS format to seconds"""
+        hours, minutes, seconds = map(int, time_str.split(':'))
+        return hours * 3600 + minutes * 60 + seconds
 
     def initialize_sensors(self):
         """Initialize all sensors from configuration."""
@@ -56,27 +84,25 @@ class RippleController:
     def load_sensor_targets(self):
         """Load sensor target values from device.conf."""
         try:
-            import configparser
-            config = configparser.ConfigParser()
-            config.read('config/device.conf')
+            self.config.read(self.config_file)
             
             # Load pH targets
-            ph_target = config.get('pH', 'ph_target').split(',')[1].strip()
-            ph_deadband = config.get('pH', 'ph_deadband').split(',')[1].strip()
-            ph_min = config.get('pH', 'ph_min').split(',')[1].strip()
-            ph_max = config.get('pH', 'ph_max').split(',')[1].strip()
+            ph_target = self.config.get('pH', 'ph_target').split(',')[1].strip()
+            ph_deadband = self.config.get('pH', 'ph_deadband').split(',')[1].strip()
+            ph_min = self.config.get('pH', 'ph_min').split(',')[1].strip()
+            ph_max = self.config.get('pH', 'ph_max').split(',')[1].strip()
             
             # Load EC targets
-            ec_target = config.get('EC', 'ec_target').split(',')[1].strip()
-            ec_deadband = config.get('EC', 'ec_deadband').split(',')[1].strip()
-            ec_min = config.get('EC', 'ec_min').split(',')[1].strip()
-            ec_max = config.get('EC', 'ec_max').split(',')[1].strip()
+            ec_target = self.config.get('EC', 'ec_target').split(',')[1].strip()
+            ec_deadband = self.config.get('EC', 'ec_deadband').split(',')[1].strip()
+            ec_min = self.config.get('EC', 'ec_min').split(',')[1].strip()
+            ec_max = self.config.get('EC', 'ec_max').split(',')[1].strip()
             
             # Load Water Level targets
-            water_level_target = config.get('WaterLevel', 'water_level_target').split(',')[1].strip()
-            water_level_deadband = config.get('WaterLevel', 'water_level_deadband').split(',')[1].strip()
-            water_level_min = config.get('WaterLevel', 'water_level_min').split(',')[1].strip()
-            water_level_max = config.get('WaterLevel', 'water_level_max').split(',')[1].strip()
+            water_level_target = self.config.get('WaterLevel', 'water_level_target').split(',')[1].strip()
+            water_level_deadband = self.config.get('WaterLevel', 'water_level_deadband').split(',')[1].strip()
+            water_level_min = self.config.get('WaterLevel', 'water_level_min').split(',')[1].strip()
+            water_level_max = self.config.get('WaterLevel', 'water_level_max').split(',')[1].strip()
             
             # Store the values
             self.sensor_targets = {
@@ -111,9 +137,61 @@ class RippleController:
                 'WaterLevel': {'target': 80.0, 'deadband': 10.0, 'min': 50.0, 'max': 100.0}
             }
 
+    def reload_configuration(self):
+        """Reload configuration from device.conf"""
+        try:
+            # Reload sensor targets
+            self.load_sensor_targets()
+            
+            # Update scheduler configuration
+            self.scheduler.update_configuration('MIXING', 'mixing_interval', 
+                self.config.get('MIXING', 'mixing_interval').split(',')[0])
+            self.scheduler.update_configuration('MIXING', 'mixing_duration', 
+                self.config.get('MIXING', 'mixing_duration').split(',')[0])
+            self.scheduler.update_configuration('MIXING', 'trigger_mixing_duration', 
+                self.config.get('MIXING', 'trigger_mixing_duration').split(',')[0])
+                
+            self.scheduler.update_configuration('NutrientPump', 'nutrient_pump_on_duration', 
+                self.config.get('NutrientPump', 'nutrient_pump_on_duration').split(',')[0])
+            self.scheduler.update_configuration('NutrientPump', 'nutrient_pump_wait_duration', 
+                self.config.get('NutrientPump', 'nutrient_pump_wait_duration').split(',')[0])
+            self.scheduler.update_configuration('NutrientPump', 'ph_pump_on_duration', 
+                self.config.get('NutrientPump', 'ph_pump_on_duration').split(',')[0])
+            self.scheduler.update_configuration('NutrientPump', 'ph_pump_wait_duration', 
+                self.config.get('NutrientPump', 'ph_pump_wait_duration').split(',')[0])
+                
+            self.scheduler.update_configuration('Sprinkler', 'sprinkler_on_duration', 
+                self.config.get('Sprinkler', 'sprinkler_on_duration').split(',')[0])
+            self.scheduler.update_configuration('Sprinkler', 'sprinkler_wait_duration', 
+                self.config.get('Sprinkler', 'sprinkler_wait_duration').split(',')[0])
+                
+            logger.info("Configuration reloaded successfully")
+        except Exception as e:
+            logger.error(f"Error reloading configuration: {e}")
+
+    def start(self):
+        """Start the Ripple controller"""
+        try:
+            logger.info("Starting Ripple controller")
+            self.scheduler.start()
+            self.run_main_loop()
+        except Exception as e:
+            logger.error(f"Error starting Ripple controller: {e}")
+            self.shutdown()
+            
+    def shutdown(self):
+        """Shutdown the Ripple controller"""
+        try:
+            logger.info("Shutting down Ripple controller")
+            self.scheduler.shutdown()
+            self.observer.stop()
+            self.observer.join()
+            logger.info("Configuration file monitoring stopped")
+        except Exception as e:
+            logger.error(f"Error during shutdown: {e}")
+            
     def run_main_loop(self):
-        """Main loop for the Ripple controller."""
-        """Main loop for the Ripple controller."""
+        """Main loop for the Ripple controller"""
         logger.info("Starting main control loop")
         try:
             while True:
@@ -124,7 +202,7 @@ class RippleController:
                 self.process_events()
                 
                 # Wait for next cycle
-                time.sleep(10)  # 2 second interval between sensor readings
+                time.sleep(10)  # 10 second interval between sensor readings
                 
         except KeyboardInterrupt:
             logger.info("Main loop interrupted by user")
@@ -133,7 +211,7 @@ class RippleController:
             logger.exception("Full exception details:")
             
     def update_sensor_data(self):
-        """Update data from all connected sensors."""
+        """Update data from all connected sensors"""
         try:
             # Initialize sensor readings
             water_levels = {}
@@ -232,7 +310,7 @@ if __name__ == "__main__":
     try:
         controller = RippleController()
         # Start the main control loop
-        controller.run_main_loop()
+        controller.start()
     except Exception as e:
         logger.error(f"Error starting Ripple controller: {e}")
         logger.exception("Full exception details:") 
