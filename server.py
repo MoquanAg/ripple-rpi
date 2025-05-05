@@ -62,6 +62,20 @@ class ManualCommand(BaseModel):
     target_ec: float
     target_ph: float
 
+class ActionCommand(BaseModel):
+    nutrient_pump_a: Optional[bool] = None
+    nutrient_pump_b: Optional[bool] = None
+    nutrient_pump_c: Optional[bool] = None
+    ph_up_pump: Optional[bool] = None
+    ph_down_pump: Optional[bool] = None
+    valve_outside_to_tank: Optional[bool] = None
+    valve_tank_to_outside: Optional[bool] = None
+    mixing_pump: Optional[bool] = None
+    pump_from_tank_to_gutters: Optional[bool] = None
+    sprinkler_a: Optional[bool] = None
+    sprinkler_b: Optional[bool] = None
+    pump_from_collector_tray_to_tank: Optional[bool] = None
+
 # Set up logging using GlobalLogger
 logger = GlobalLogger("RippleAPI", log_prefix="ripple_server_").logger
 logger.info("Starting Ripple API Server")
@@ -184,222 +198,16 @@ def update_device_conf(instruction_set: Dict) -> bool:
         logger.error(f"Error updating device.conf: {e}")
         return False
 
-@app.get("/api/v1/", response_model=SystemStatus, tags=["General"])
-async def root(username: str = Depends(verify_credentials)):
-    """Root endpoint with system information"""
-    logger.info("Root endpoint accessed")
+@app.get("/api/v1/system", response_model=SystemStatus, tags=["General"])
+async def system_info(username: str = Depends(verify_credentials)):
+    """System information endpoint"""
+    logger.info("System information endpoint accessed")
     return {
         "system": "Ripple Fertigation System",
         "version": "1.0.0",
         "status": "online",
         "last_update": datetime.now().isoformat()
     }
-
-@app.get("/api/v1/sensors", tags=["Sensors"])
-async def get_all_sensors(username: str = Depends(verify_credentials)):
-    """Get all sensor data"""
-    try:
-        sensor_data = {
-            "pH": {},
-            "EC": {},
-            "WaterLevel": {},
-            "DO": {},
-            "Relay": {}
-        }
-        
-        # Get pH data
-        ph_data = pH.get_statuses_async()
-        if ph_data:
-            sensor_data["pH"] = ph_data
-            logger.log_sensor_data(["API", "sensors", "pH"], ph_data)
-            
-        # Get EC data
-        ec_data = EC.get_statuses_async()
-        if ec_data:
-            sensor_data["EC"] = ec_data
-            logger.log_sensor_data(["API", "sensors", "EC"], ec_data)
-            
-        # Get Water Level data
-        wl_data = WaterLevel.get_statuses_async()
-        if wl_data:
-            sensor_data["WaterLevel"] = wl_data
-            logger.log_sensor_data(["API", "sensors", "WaterLevel"], wl_data)
-            
-        # Get Relay data
-        relay_instance = Relay()
-        if relay_instance:
-            relay_instance.get_status()
-            if relay_instance.relay_statuses:
-                sensor_data["Relay"] = relay_instance.relay_statuses
-                logger.log_sensor_data(["API", "sensors", "Relay"], relay_instance.relay_statuses)
-        
-        return {
-            "timestamp": datetime.now().isoformat(),
-            "data": sensor_data
-        }
-    except Exception as e:
-        logger.error(f"Error getting sensor data: {e}")
-        raise HTTPException(status_code=500, detail=f"Error getting sensor data: {str(e)}")
-
-@app.get("/api/v1/sensors/{sensor_type}", tags=["Sensors"])
-async def get_sensor(sensor_type: str, username: str = Depends(verify_credentials)):
-    """Get data for a specific sensor type"""
-    try:
-        if sensor_type not in ["pH", "EC", "WaterLevel", "DO", "Relay"]:
-            logger.warning(f"Invalid sensor type requested: {sensor_type}")
-            raise HTTPException(status_code=404, detail=f"Sensor type {sensor_type} not found")
-        
-        sensor_data = {}
-        
-        if sensor_type == "pH":
-            sensor_data = pH.get_statuses_async()
-            logger.log_sensor_data(["API", "sensors", "pH"], sensor_data)
-        elif sensor_type == "EC":
-            sensor_data = EC.get_statuses_async()
-            logger.log_sensor_data(["API", "sensors", "EC"], sensor_data)
-        elif sensor_type == "WaterLevel":
-            sensor_data = WaterLevel.get_statuses_async()
-            logger.log_sensor_data(["API", "sensors", "WaterLevel"], sensor_data)
-        elif sensor_type == "DO":
-            sensor_data = DO.get_statuses_async()
-        elif sensor_type == "Relay":
-            relay_instance = Relay()
-            if relay_instance:
-                relay_instance.get_status()
-                sensor_data = relay_instance.relay_statuses
-        
-        if not sensor_data:
-            raise HTTPException(status_code=404, detail=f"No data available for sensor type {sensor_type}")
-        
-        return {
-            "timestamp": datetime.now().isoformat(),
-            "data": sensor_data
-        }
-    except Exception as e:
-        logger.error(f"Error getting sensor data for {sensor_type}: {e}")
-        raise HTTPException(status_code=500, detail=f"Error getting sensor data: {str(e)}")
-
-@app.get("/api/v1/targets", tags=["Targets"])
-async def get_all_targets(username: str = Depends(verify_credentials)):
-    """Get all target values from device.conf"""
-    try:
-        config = configparser.ConfigParser()
-        config.read('config/device.conf')
-        
-        targets = {
-            "pH": {
-                "target": float(config.get('pH', 'ph_target').split(',')[1].strip()),
-                "deadband": float(config.get('pH', 'ph_deadband').split(',')[1].strip()),
-                "min": float(config.get('pH', 'ph_min').split(',')[1].strip()),
-                "max": float(config.get('pH', 'ph_max').split(',')[1].strip())
-            },
-            "EC": {
-                "target": float(config.get('EC', 'ec_target').split(',')[1].strip()),
-                "deadband": float(config.get('EC', 'ec_deadband').split(',')[1].strip()),
-                "min": float(config.get('EC', 'ec_min').split(',')[1].strip()),
-                "max": float(config.get('EC', 'ec_max').split(',')[1].strip())
-            },
-            "WaterLevel": {
-                "target": float(config.get('WaterLevel', 'water_level_target').split(',')[1].strip()),
-                "deadband": float(config.get('WaterLevel', 'water_level_deadband').split(',')[1].strip()),
-                "min": float(config.get('WaterLevel', 'water_level_min').split(',')[1].strip()),
-                "max": float(config.get('WaterLevel', 'water_level_max').split(',')[1].strip())
-            }
-        }
-        
-        return targets
-    except Exception as e:
-        logger.error(f"Error getting target values: {e}")
-        raise HTTPException(status_code=500, detail=f"Error getting target values: {str(e)}")
-
-@app.get("/api/v1/targets/{sensor_type}", tags=["Targets"])
-async def get_target(sensor_type: str, username: str = Depends(verify_credentials)):
-    """Get target values for a specific sensor type"""
-    try:
-        if sensor_type not in ["pH", "EC", "WaterLevel"]:
-            raise HTTPException(status_code=404, detail=f"Target type {sensor_type} not found")
-        
-        config = configparser.ConfigParser()
-        config.read('config/device.conf')
-        
-        if sensor_type == "pH":
-            targets = {
-                "target": float(config.get('pH', 'ph_target').split(',')[1].strip()),
-                "deadband": float(config.get('pH', 'ph_deadband').split(',')[1].strip()),
-                "min": float(config.get('pH', 'ph_min').split(',')[1].strip()),
-                "max": float(config.get('pH', 'ph_max').split(',')[1].strip())
-            }
-        elif sensor_type == "EC":
-            targets = {
-                "target": float(config.get('EC', 'ec_target').split(',')[1].strip()),
-                "deadband": float(config.get('EC', 'ec_deadband').split(',')[1].strip()),
-                "min": float(config.get('EC', 'ec_min').split(',')[1].strip()),
-                "max": float(config.get('EC', 'ec_max').split(',')[1].strip())
-            }
-        elif sensor_type == "WaterLevel":
-            targets = {
-                "target": float(config.get('WaterLevel', 'water_level_target').split(',')[1].strip()),
-                "deadband": float(config.get('WaterLevel', 'water_level_deadband').split(',')[1].strip()),
-                "min": float(config.get('WaterLevel', 'water_level_min').split(',')[1].strip()),
-                "max": float(config.get('WaterLevel', 'water_level_max').split(',')[1].strip())
-            }
-        
-        return targets
-    except Exception as e:
-        logger.error(f"Error getting target values for {sensor_type}: {e}")
-        raise HTTPException(status_code=500, detail=f"Error getting target values: {str(e)}")
-
-@app.post("/api/v1/relay", tags=["Control"])
-async def control_relay(relay_control: RelayControl, username: str = Depends(verify_credentials)):
-    """Control a specific relay"""
-    try:
-        relay_instance = Relay()
-        if relay_instance:
-            success = relay_instance.set_relay(relay_control.relay_id, relay_control.state)
-            if success:
-                return {"status": "success", "message": f"Relay {relay_control.relay_id} set to {relay_control.state}"}
-            else:
-                raise HTTPException(status_code=400, detail=f"Failed to set relay {relay_control.relay_id}")
-        else:
-            raise HTTPException(status_code=500, detail="Failed to initialize relay control")
-    except Exception as e:
-        logger.error(f"Error controlling relay: {e}")
-        raise HTTPException(status_code=500, detail=f"Error controlling relay: {str(e)}")
-
-@app.put("/api/v1/targets/{sensor_type}", tags=["Control"])
-async def update_target(sensor_type: str, target_update: TargetUpdate, username: str = Depends(verify_credentials)):
-    """Update target values for a specific sensor type"""
-    try:
-        if sensor_type not in ["pH", "EC", "WaterLevel"]:
-            raise HTTPException(status_code=404, detail=f"Target type {sensor_type} not found")
-        
-        config = configparser.ConfigParser()
-        config.read('config/device.conf')
-        
-        # Get current values
-        current_target = config.get(sensor_type, f"{sensor_type.lower()}_target").split(',')[1].strip()
-        current_deadband = config.get(sensor_type, f"{sensor_type.lower()}_deadband").split(',')[1].strip()
-        current_min = config.get(sensor_type, f"{sensor_type.lower()}_min").split(',')[1].strip()
-        current_max = config.get(sensor_type, f"{sensor_type.lower()}_max").split(',')[1].strip()
-        
-        # Update values if provided
-        if target_update.target is not None:
-            config.set(sensor_type, f"{sensor_type.lower()}_target", f"{target_update.target}, {current_target}")
-        if target_update.deadband is not None:
-            config.set(sensor_type, f"{sensor_type.lower()}_deadband", f"{target_update.deadband}, {current_deadband}")
-        if target_update.min is not None:
-            config.set(sensor_type, f"{sensor_type.lower()}_min", f"{target_update.min}, {current_min}")
-        if target_update.max is not None:
-            config.set(sensor_type, f"{sensor_type.lower()}_max", f"{target_update.max}, {current_max}")
-        
-        # Write updated config back to file
-        with open('config/device.conf', 'w') as configfile:
-            config.write(configfile)
-        
-        return {"status": "success", "message": f"Updated {sensor_type} targets"}
-    except Exception as e:
-        logger.error(f"Error updating {sensor_type} targets: {e}")
-        raise HTTPException(status_code=500, detail=f"Error updating targets: {str(e)}")
 
 def update_device_conf_from_manual(command: ManualCommand) -> bool:
     """Update device.conf with values from manual command."""
@@ -472,9 +280,9 @@ def update_device_conf_from_manual(command: ManualCommand) -> bool:
         logger.error(f"Error updating device.conf: {e}")
         return False
 
-@app.post("/api/v1/instruction_set", tags=["Control"])
+@app.post("/api/v1/server_instruction_set", tags=["Control"])
 async def update_instruction_set(instruction_set: Dict, username: str = Depends(verify_credentials)):
-    """Update system configuration from instruction set"""
+    """Update system configuration from instruction set received from server"""
     try:
         if update_device_conf(instruction_set):
             return {"status": "success", "message": "Instruction set applied successfully"}
@@ -484,17 +292,100 @@ async def update_instruction_set(instruction_set: Dict, username: str = Depends(
         logger.error(f"Error applying instruction set: {e}")
         raise HTTPException(status_code=500, detail=f"Error applying instruction set: {str(e)}")
 
-@app.post("/api/v1/manual_command", tags=["Control"])
+@app.post("/api/v1/user_instruction_set", tags=["Control"])
 async def update_manual_command(command: ManualCommand, username: str = Depends(verify_credentials)):
-    """Update system configuration from manual command"""
+    """Update system configuration from user instruction set"""
     try:
         if update_device_conf_from_manual(command):
-            return {"status": "success", "message": "Manual command applied successfully"}
+            return {"status": "success", "message": "User instruction set applied successfully"}
         else:
-            raise HTTPException(status_code=500, detail="Failed to apply manual command")
+            raise HTTPException(status_code=500, detail="Failed to apply user instruction set")
     except Exception as e:
-        logger.error(f"Error applying manual command: {e}")
-        raise HTTPException(status_code=500, detail=f"Error applying manual command: {str(e)}")
+        logger.error(f"Error applying user instruction set: {e}")
+        raise HTTPException(status_code=500, detail=f"Error applying user instruction set: {str(e)}")
+
+@app.get("/api/v1/status", tags=["Status"])
+async def get_system_status(username: str = Depends(verify_credentials)):
+    """Get current system status in the saved_sensor_data.json format"""
+    try:
+        # Read current sensor data
+        with open('data/saved_sensor_data.json', 'r') as f:
+            sensor_data = json.load(f)
+        
+        # Return the data as is, without modifying it
+        return sensor_data
+    except Exception as e:
+        logger.error(f"Error getting system status: {e}")
+        raise HTTPException(status_code=500, detail=f"Error getting system status: {str(e)}")
+
+@app.post("/api/v1/action", tags=["Control"])
+async def update_action(request: dict, username: str = Depends(verify_credentials)):
+    """Update action configuration and save to action.json"""
+    try:
+        logger.info(f"Received raw action request: {request}")
+        
+        # Explicit list of valid API field names with sprinkler as special case
+        valid_fields = [
+            'nutrient_pump_a',
+            'nutrient_pump_b',
+            'nutrient_pump_c',
+            'ph_up_pump',
+            'ph_down_pump',
+            'valve_outside_to_tank',
+            'valve_tank_to_outside',
+            'mixing_pump',
+            'pump_from_tank_to_gutters',
+            'sprinkler',  # Special case that maps to both sprinkler_a and sprinkler_b
+            'sprinkler_a',
+            'sprinkler_b',
+            'pump_from_collector_tray_to_tank'
+        ]
+        
+        # Check for invalid fields
+        invalid_fields = []
+        for field in request:
+            if field not in valid_fields:
+                invalid_fields.append(field)
+                
+        if invalid_fields:
+            error_msg = f"Invalid action fields: {', '.join(invalid_fields)}"
+            logger.warning(error_msg)
+            return {
+                "status": "error",
+                "message": error_msg
+            }
+        
+        # Check for valid field types
+        for field, value in request.items():
+            if not isinstance(value, bool):
+                error_msg = f"Field {field} must be a boolean, got {type(value).__name__}"
+                logger.warning(error_msg)
+                return {
+                    "status": "error",
+                    "message": error_msg
+                }
+        
+        # Process special case for sprinkler
+        processed_request = request.copy()
+        if 'sprinkler' in processed_request:
+            sprinkler_value = processed_request.pop('sprinkler')
+            # Set both sprinkler relays to the same value
+            processed_request['sprinkler_a'] = sprinkler_value
+            processed_request['sprinkler_b'] = sprinkler_value
+            logger.info(f"Mapped 'sprinkler' to both sprinkler_a and sprinkler_b with value {sprinkler_value}")
+        
+        # Save to action.json
+        with open('config/action.json', 'w') as f:
+            json.dump(processed_request, f, indent=2)
+            
+        logger.info(f"Action updated successfully: {processed_request}")
+        return {"status": "success", "message": "Action updated successfully"}
+    except Exception as e:
+        logger.error(f"Error updating action: {e}")
+        return {
+            "status": "error",
+            "message": f"Error updating action: {str(e)}"
+        }
 
 # Run the server if script is executed directly
 if __name__ == "__main__":
