@@ -6,13 +6,23 @@ current_dir = os.path.dirname(__file__)
 parent_dir = os.path.dirname(current_dir)
 sys.path.append(parent_dir)
 
-from lumina_modbus_event_emitter import ModbusResponse
-
-import globals
-from src.lumina_logger import GlobalLogger
+# If running directly, we need to adjust the imports
+if __name__ == "__main__":
+    # Get the parent of the parent directory to access project root
+    project_root = os.path.dirname(parent_dir)
+    sys.path.append(project_root)
+    from src.lumina_logger import GlobalLogger
+    import src.globals as globals
+    import src.helpers as helpers
+    from src.lumina_modbus_event_emitter import ModbusResponse
+else:
+    # When imported from main.py, src is already in path
+    from lumina_logger import GlobalLogger
+    import globals
+    import helpers
+    from lumina_modbus_event_emitter import ModbusResponse
 
 logger = GlobalLogger("RippleRelay", log_prefix="ripple_").logger
-import helpers
 
 
 class Relay:
@@ -1021,6 +1031,25 @@ class Relay:
         else:
             logger.warning("MixingPump not found in relay assignments")
 
+    def set_relay(self, device_name, status):
+        """Control a relay by device name from assignments.
+        
+        Args:
+            device_name (str): Name of the device in relay assignments
+            status (bool): True to turn on, False to turn off
+        """
+        logger.info(f"Setting {device_name} to {status}")
+        relay_group, index = self._get_relay_info(device_name)
+        if relay_group and index:
+            if status:
+                self.turn_on(relay_group, index)
+            else:
+                self.turn_off(relay_group, index)
+            return True
+        else:
+            logger.warning(f"{device_name} not found in relay assignments")
+            return False
+
     def _save_null_metrics_data(self):
         """Save null data for relay metrics."""
         metrics_data = {
@@ -1094,55 +1123,36 @@ class Relay:
 if __name__ == "__main__":
     relay = Relay()
     if relay is not None:  # Only proceed if device is enabled
-        # Example usage of various methods
+        # Add initialization delay to ensure stable connection
+        print("Initializing relay connection...")
+        time.sleep(1)  # Wait 2 seconds for initialization
         
+        # Test each relay port one by one
+        for port in range(16):
+            print(f"Turning on port {port}")
+            # Turn on just the current port
+            relay.turn_on("RELAYONE", port)
+            time.sleep(1)  # On for 1 second
+            
+            # Turn off the current port
+            relay.turn_off("RELAYONE", port)
+            time.sleep(1)  # Wait 1 second before next port
         
-        relay.set_multiple_relays("RELAYONE", 0, [True, True, True, True, True, True, True, True, True, True, True, True, True, True, True, True])
-        time.sleep(5)
-        relay.set_multiple_relays("RELAYONE", 0, [False, False, False, False, False, False, False, False, False, False, False, False, False, False, False, False])
+        # Test multiple relay control
+        print("\nTesting multiple relay control")
+        print("Turning on first 5 ports (0-4)")
+        # Turn on ports 0-4 simultaneously
+        relay.set_multiple_relays("RELAYONE", 0, [True, True, True, True, True])
+        
+        # Wait 2 seconds before turning off ports 3 and 4
+        time.sleep(2)
+        print("Turning off ports 3 and 4")
+        relay.set_multiple_relays("RELAYONE", 3, [False, False])
+        
+        # Wait 5 more seconds, then turn off remaining ports
+        time.sleep(2)
+        print("Turning off remaining ports")
+        relay.set_multiple_relays("RELAYONE", 0, [False, False, False])
+        
+        # Final delay before exiting
         time.sleep(1)
-        # while True:
-        #     relay.get_status()
-        #     time.sleep(10)
-        
-        # relay.set_mixing_pump(True)
-        # time.sleep(1)
-        # relay.set_mixing_pump(False)
-        
-        # # Test tank valve control
-        # relay.set_valve_from_outside_to_tank(True)
-        # time.sleep(1)
-        # relay.set_valve_from_outside_to_tank(False)
-        
-        # relay.set_valve_from_tank_to_outside(True)
-        # time.sleep(1)
-        # relay.set_valve_from_tank_to_outside(False)
-        
-        # # Test sprinklers
-        # relay.set_sprinklers(True)
-        # time.sleep(1)
-        # relay.set_sprinklers(False)
-        
-        # # Test collector tray pump
-        # relay.set_pump_from_collector_tray_to_tank(True)
-        # time.sleep(1)
-        # relay.set_pump_from_collector_tray_to_tank(False)
-        
-        # # Test pH pumps
-        # relay.set_ph_plus_pump(True)
-        # time.sleep(1)
-        # relay.set_ph_plus_pump(False)
-        
-        # relay.set_ph_minus_pump(True)
-        # time.sleep(1)
-        # relay.set_ph_minus_pump(False)
-        
-        # # Test nutrient pumps
-        # relay.set_nutrient_pumps(True)
-        # time.sleep(1)
-        # relay.set_nutrient_pumps(False)
-        
-        # # Test tank to gutters pump
-        # relay.set_pump_from_tank_to_gutters(True)
-        # time.sleep(1)
-        # relay.set_pump_from_tank_to_gutters(False)
