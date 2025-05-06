@@ -1077,10 +1077,10 @@ class Relay:
             logger.error(f"Cannot find relay assignment for {device_name}")
             return False
             
-        relay_key = self.relay_assignments[device_name]['relay_key']
+        relay_name = self.relay_assignments[device_name]['relay_name']
         index = self.relay_assignments[device_name]['index']
         
-        return self.set_relay_at_index(relay_key, index, state)
+        return self.set_relay_at_index(relay_name, index, state)
         
     def get_relay_state(self, device_name):
         """Get the current state of a relay by its device name."""
@@ -1096,34 +1096,34 @@ class Relay:
             return None
             
         # Get relay details
-        relay_key = self.relay_assignments[device_name]['relay_key']
+        relay_name = self.relay_assignments[device_name]['relay_name']
         index = self.relay_assignments[device_name]['index']
         
         # Make sure we have status data
-        if relay_key not in self.relay_statuses or not self.relay_statuses[relay_key]:
+        if relay_name not in self.relay_statuses or not self.relay_statuses[relay_name]:
             # Try to refresh the status
             self.get_status()
             
             # Check again
-            if relay_key not in self.relay_statuses or not self.relay_statuses[relay_key]:
-                logger.warning(f"No status data available for relay {relay_key}")
+            if relay_name not in self.relay_statuses or not self.relay_statuses[relay_name]:
+                logger.warning(f"No status data available for relay {relay_name}")
                 return None
         
         # Get the current state
-        if 0 <= index < len(self.relay_statuses[relay_key]):
-            return bool(self.relay_statuses[relay_key][index])
+        if 0 <= index < len(self.relay_statuses[relay_name]):
+            return bool(self.relay_statuses[relay_name][index])
         else:
-            logger.warning(f"Index {index} out of range for relay {relay_key}")
+            logger.warning(f"Index {index} out of range for relay {relay_name}")
             return None
 
-    def set_relay_at_index(self, relay_key, index, state):
+    def set_relay_at_index(self, relay_name, index, state):
         """Set a relay at a specific index."""
         try:
-            if relay_key not in self.relay_addresses:
-                logger.error(f"Relay key {relay_key} not found in relay addresses")
+            if relay_name not in self.relay_addresses:
+                logger.error(f"Relay key {relay_name} not found in relay addresses")
                 return False
                 
-            return self.set_multiple_relays(relay_key, index, [state])
+            return self.set_multiple_relays(relay_name, index, [state])
         except Exception as e:
             logger.error(f"Error setting relay at index: {e}")
             return False
