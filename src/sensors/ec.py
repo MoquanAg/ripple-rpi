@@ -527,8 +527,6 @@ class EC:
                 
                 # Update main values for backward compatibility
                 self.ec = self.sensor_data.get('ec')
-                if self.ec is not None:
-                    self.ec *= 1000  # Convert from mS/cm to µS/cm as per the documentation
                 
                 self.temperature = self.sensor_data.get('temperature')
                 self.tds = self.sensor_data.get('tds')
@@ -539,7 +537,7 @@ class EC:
                 # Log the main values
                 main_values = f"{self.sensor_id} - "
                 if self.ec is not None:
-                    main_values += f"EC: {self.ec:.5f} µS/cm, "
+                    main_values += f"EC: {self.ec:.5f} mS/cm, "
                 if self.tds is not None:
                     main_values += f"TDS: {self.tds:.2f} ppm, "
                 if self.salinity is not None: 
