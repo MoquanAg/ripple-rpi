@@ -4,6 +4,7 @@ import os
 import sys
 import json
 import configparser
+import subprocess  # Added for system commands
 from typing import Dict, List, Optional, Union, Any
 from fastapi import FastAPI, HTTPException, Depends, status
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
@@ -386,6 +387,42 @@ async def update_action(request: dict, username: str = Depends(verify_credential
             "status": "error",
             "message": f"Error updating action: {str(e)}"
         }
+
+@app.post("/api/v1/system/reboot", tags=["System"])
+async def system_reboot(username: str = Depends(verify_credentials)):
+    """Reboot the system using sudo reboot command"""
+    try:
+        logger.info("System reboot requested by user")
+        
+        # Execute reboot command
+        subprocess.Popen(['sudo', 'reboot'], 
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE)
+        
+        return {"status": "success", "message": "System reboot initiated"}
+    except Exception as e:
+        logger.error(f"Error initiating system reboot: {e}")
+        raise HTTPException(status_code=500, detail=f"Error initiating system reboot: {str(e)}")
+
+@app.post("/api/v1/system/restart", tags=["System"])
+async def system_restart(username: str = Depends(verify_credentials)):
+    """Restart Ripple application by calling the headless restart script"""
+    try:
+        logger.info("Ripple application restart requested by user")
+        
+        # Get the path to the headless script
+        ripple_path = os.path.dirname(os.path.abspath(__file__))
+        script_path = os.path.join(ripple_path, 'start_ripple_headless.sh')
+        
+        # Execute the script in the background
+        subprocess.Popen(['bash', script_path], 
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE)
+        
+        return {"status": "success", "message": "Ripple application restart initiated"}
+    except Exception as e:
+        logger.error(f"Error restarting Ripple application: {e}")
+        raise HTTPException(status_code=500, detail=f"Error restarting Ripple application: {str(e)}")
 
 # Run the server if script is executed directly
 if __name__ == "__main__":

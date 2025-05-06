@@ -408,12 +408,12 @@ class RippleController:
             self.load_sensor_targets()
             
             # Update scheduler configuration
-            self.scheduler.update_configuration('MIXING', 'mixing_interval', 
-                self.config.get('MIXING', 'mixing_interval').split(',')[0])
-            self.scheduler.update_configuration('MIXING', 'mixing_duration', 
-                self.config.get('MIXING', 'mixing_duration').split(',')[0])
-            self.scheduler.update_configuration('MIXING', 'trigger_mixing_duration', 
-                self.config.get('MIXING', 'trigger_mixing_duration').split(',')[0])
+            self.scheduler.update_configuration('Mixing', 'mixing_interval', 
+                self.config.get('Mixing', 'mixing_interval').split(',')[0])
+            self.scheduler.update_configuration('Mixing', 'mixing_duration', 
+                self.config.get('Mixing', 'mixing_duration').split(',')[0])
+            self.scheduler.update_configuration('Mixing', 'trigger_mixing_duration', 
+                self.config.get('Mixing', 'trigger_mixing_duration').split(',')[0])
                 
             self.scheduler.update_configuration('NutrientPump', 'nutrient_pump_on_duration', 
                 self.config.get('NutrientPump', 'nutrient_pump_on_duration').split(',')[0])
@@ -428,6 +428,26 @@ class RippleController:
                 self.config.get('Sprinkler', 'sprinkler_on_duration').split(',')[0])
             self.scheduler.update_configuration('Sprinkler', 'sprinkler_wait_duration', 
                 self.config.get('Sprinkler', 'sprinkler_wait_duration').split(',')[0])
+
+            # Update EC targets
+            if 'EC' in self.config:
+                self.scheduler.update_configuration('EC', 'ec_target', 
+                    self.config.get('EC', 'ec_target').split(',')[0])
+                self.scheduler.update_configuration('EC', 'ec_deadband', 
+                    self.config.get('EC', 'ec_deadband').split(',')[0])
+                self.scheduler.update_configuration('EC', 'ec_max', 
+                    self.config.get('EC', 'ec_max').split(',')[0])
+
+            # Update pH targets
+            if 'pH' in self.config:
+                self.scheduler.update_configuration('pH', 'ph_target', 
+                    self.config.get('pH', 'ph_target').split(',')[0])
+                self.scheduler.update_configuration('pH', 'ph_deadband', 
+                    self.config.get('pH', 'ph_deadband').split(',')[0])
+                self.scheduler.update_configuration('pH', 'ph_min', 
+                    self.config.get('pH', 'ph_min').split(',')[0])
+                self.scheduler.update_configuration('pH', 'ph_max', 
+                    self.config.get('pH', 'ph_max').split(',')[0])
                 
             logger.info("Configuration reloaded successfully")
         except Exception as e:
