@@ -47,9 +47,9 @@ class RippleScheduler:
     def _initialize_mixing_schedule(self):
         """Initialize mixing pump schedule based on device.conf settings"""
         try:
-            mixing_interval = self.config.get('MIXING', 'mixing_interval').split(',')[0]
-            mixing_duration = self.config.get('MIXING', 'mixing_duration').split(',')[0]
-            trigger_duration = self.config.get('MIXING', 'trigger_mixing_duration').split(',')[0]
+            mixing_interval = self.config.get('Mixing', 'mixing_interval').split(',')[0]
+            mixing_duration = self.config.get('Mixing', 'mixing_duration').split(',')[0]
+            trigger_duration = self.config.get('Mixing', 'trigger_mixing_duration').split(',')[0]
             
             # Validate durations
             if mixing_interval == "00:00:00" or mixing_duration == "00:00:00" or trigger_duration == "00:00:00":
@@ -193,7 +193,7 @@ class RippleScheduler:
         """Execute mixing pump cycle"""
         try:
             if not self.mixing_pump_running:
-                mixing_duration = self.config.get('MIXING', 'mixing_duration').split(',')[0]
+                mixing_duration = self.config.get('Mixing', 'mixing_duration').split(',')[0]
                 mixing_duration_seconds = self._time_to_seconds(mixing_duration)
                 
                 if mixing_duration_seconds == 0:
@@ -262,9 +262,49 @@ class RippleScheduler:
     def _run_nutrient_cycle(self):
         """Execute nutrient cycle"""
         try:
+            # First check current EC value
+            from src.sensors.ec import EC
+            ec_statuses = EC.get_statuses_async()
+            
+            if ec_statuses and len(ec_statuses) > 0:
+                # Get the first available EC reading
+                current_ec = next(iter(ec_statuses.values()))
+                logger.info(f"Current EC reading: {current_ec}")
+                
+                # Get EC targets from configuration
+                try:
+                    ec_target = float(self.config.get('EC', 'ec_target').split(',')[0])
+                    ec_deadband = float(self.config.get('EC', 'ec_deadband').split(',')[0])
+                    ec_max = float(self.config.get('EC', 'ec_max').split(',')[0])
+                    ec_min = float(self.config.get('EC', 'ec_min').split(',')[0])
+                    logger.info(f"EC targets - target: {ec_target}, deadband: {ec_deadband}, min: {ec_min}, max: {ec_max}")
+                    
+                    # Check if EC is too high
+                    if current_ec > ec_max:
+                        logger.warning(f"EC value {current_ec} is above maximum threshold {ec_max}, but will continue to monitor")
+                    elif current_ec > (ec_target + ec_deadband):
+                        logger.warning(f"EC value {current_ec} is above target range, skipping nutrient cycle")
+                        return
+                    
+                    # Explicitly check if EC is too low - this is when we WANT to run the nutrient pumps
+                    if current_ec < ec_min:
+                        logger.warning(f"EC value {current_ec} is below minimum threshold {ec_min}, nutrient addition required")
+                    elif current_ec < (ec_target - ec_deadband):
+                        logger.info(f"EC value {current_ec} is below target range, nutrient addition required")
+                    else:
+                        logger.info(f"EC value {current_ec} is within target range ({ec_target}±{ec_deadband}), no nutrient addition needed")
+                        return
+                    
+                except Exception as e:
+                    logger.error(f"Failed to get EC targets from config: {e}")
+                    return
+            else:
+                logger.warning("No EC readings available, cannot determine if nutrient cycle should run")
+                return
+
             on_duration = self.config.get('NutrientPump', 'nutrient_pump_on_duration').split(',')[0]
             on_seconds = self._time_to_seconds(on_duration)
-            trigger_duration = self.config.get('MIXING', 'trigger_mixing_duration').split(',')[0]
+            trigger_duration = self.config.get('Mixing', 'trigger_mixing_duration').split(',')[0]
             trigger_seconds = self._time_to_seconds(trigger_duration)
             
             if on_seconds == 0:
@@ -338,7 +378,7 @@ class RippleScheduler:
             # Get configuration parameters
             on_duration = self.config.get('NutrientPump', 'ph_pump_on_duration').split(',')[0]
             on_seconds = self._time_to_seconds(on_duration)
-            trigger_duration = self.config.get('MIXING', 'trigger_mixing_duration').split(',')[0]
+            trigger_duration = self.config.get('Mixing', 'trigger_mixing_duration').split(',')[0]
             trigger_seconds = self._time_to_seconds(trigger_duration)
             
             if on_seconds == 0:
@@ -368,35 +408,63 @@ class RippleScheduler:
                 logger.warning("No pH readings available, cannot determine which pump to use")
                 return
                 
-            # Get target pH from configuration
+            # Get pH targets from configuration
             try:
                 target_ph = float(self.config.get('pH', 'ph_target').split(',')[0])
-                logger.info(f"Target pH: {target_ph}")
-            except Exception as e:
-                logger.error(f"Failed to get target pH from config: {e}")
-                return
+                ph_deadband = float(self.config.get('pH', 'ph_deadband').split(',')[0])
+                ph_min = float(self.config.get('pH', 'ph_min').split(',')[0])
+                ph_max = float(self.config.get('pH', 'ph_max').split(',')[0])
+                logger.info(f"pH targets - target: {target_ph}, deadband: {ph_deadband}, min: {ph_min}, max: {ph_max}")
                 
-            # Determine which pH pump to use based on sensor reading and target
-            # If current pH is lower than target, use pH Up
-            # If current pH is higher than target, use pH Down
-            if current_ph is not None:
-                if current_ph < target_ph:
-                    use_ph_up = True
-                    logger.info(f"Current pH ({current_ph}) is below target ({target_ph}), using pH Up pump")
-                else:
+                # CRITICAL FIX: Instead of skipping adjustment when pH is outside safe range,
+                # we should prioritize bringing it back into range
+                
+                # Determine which pump to use based on pH value
+                if current_ph > ph_max:
+                    # DEFINITELY use pH DOWN when above maximum
                     use_ph_up = False
-                    logger.info(f"Current pH ({current_ph}) is above target ({target_ph}), using pH Down pump")
-            else:
-                logger.warning("Invalid pH reading, cannot determine which pump to use")
+                    logger.warning(f"pH value {current_ph} is ABOVE maximum threshold {ph_max}, using pH DOWN pump")
+                elif current_ph < ph_min:
+                    # DEFINITELY use pH UP when below minimum
+                    use_ph_up = True
+                    logger.warning(f"pH value {current_ph} is BELOW minimum threshold {ph_min}, using pH UP pump")
+                elif current_ph > (target_ph + (ph_deadband / 2)):
+                    # Use pH Down within safe range but above target+deadband
+                    use_ph_up = False
+                    logger.info(f"Current pH ({current_ph}) is above high threshold ({target_ph + (ph_deadband / 2)}), using pH DOWN pump")
+                elif current_ph < (target_ph - (ph_deadband / 2)):
+                    # Use pH Up within safe range but below target-deadband
+                    use_ph_up = True
+                    logger.info(f"Current pH ({current_ph}) is below low threshold ({target_ph - (ph_deadband / 2)}), using pH UP pump")
+                else:
+                    logger.info(f"Current pH ({current_ph}) is within deadband of target ({target_ph}), no pH adjustment needed")
+                    return
+            except Exception as e:
+                logger.error(f"Failed to get pH targets from config: {e}")
                 return
+            
+            # Debug relay assignments
+            if relay.relay_assignments:
+                if 'pHDownPump' in relay.relay_assignments:
+                    logger.info(f"pHDownPump relay assignment: {relay.relay_assignments['pHDownPump']}")
+                else:
+                    found = False
+                    for key in relay.relay_assignments:
+                        if key.lower() == 'phdownpump':
+                            logger.info(f"Found pH Down pump with case-insensitive match: {key} -> {relay.relay_assignments[key]}")
+                            found = True
+                    if not found:
+                        logger.warning("pHDownPump not found in relay assignments!")
             
             # Start appropriate pH pump
             if use_ph_up:
-                relay.set_ph_plus_pump(True)
+                result = relay.set_ph_plus_pump(True)
                 pump_type = "pH Up"
+                logger.info(f"pH Up pump activation result: {result}")
             else:
-                relay.set_ph_minus_pump(True)
+                result = relay.set_ph_minus_pump(True)
                 pump_type = "pH Down"
+                logger.info(f"pH Down pump activation result: {result}")
                 
             logger.info(f"Running {pump_type} cycle for {on_duration}")
             
@@ -445,8 +513,7 @@ class RippleScheduler:
                 
                 logger.info(f"Starting mixing pump for {trigger_duration} after pH pump activation")
         except Exception as e:
-            logger.error(f"Error in pH cycle: {e}")
-            logger.exception("Full exception details:")
+            logger.exception(f"Error in pH cycle: {e}")
             
     def _run_sprinkler_cycle(self):
         """Execute sprinkler cycle"""
@@ -540,7 +607,7 @@ class RippleScheduler:
             self.config.set(section, key, value)
             
             # Determine which schedules need to be restarted
-            if section == 'MIXING':
+            if section == 'Mixing':
                 self._restart_mixing_schedule()
                 self._log_schedule_details('mixing_cycle')
                 self._log_schedule_details('uv_sterilization')
@@ -554,6 +621,20 @@ class RippleScheduler:
             elif section == 'Recirculation':
                 self._restart_recirculation_schedule()
                 self._log_schedule_details('recirculation_cycle')
+            elif section == 'EC':
+                # EC targets affect nutrient pump control
+                logger.info(f"EC target updated: {key} = {value}")
+                # Force a nutrient cycle check on next run
+                if 'nutrient_cycle' in self.jobs:
+                    self.scheduler.remove_job('nutrient_cycle')
+                    self._initialize_nutrient_schedule()
+            elif section == 'pH':
+                # pH targets affect pH pump control
+                logger.info(f"pH target updated: {key} = {value}")
+                # Force a pH cycle check on next run
+                if 'ph_cycle' in self.jobs:
+                    self.scheduler.remove_job('ph_cycle')
+                    self._initialize_nutrient_schedule()
                 
             logger.info(f"Configuration updated: {section}.{key} = {value}")
             return True
@@ -758,26 +839,60 @@ class RippleScheduler:
                                 logger.error(f"Failed to get target pH from config: {e}")
                                 return
                                 
-                            # Determine which pH pump to use based on sensor reading and target
-                            # If current pH is lower than target, use pH Up
-                            # If current pH is higher than target, use pH Down
+                            # Get deadband from configuration
+                            try:
+                                ph_deadband = float(self.config.get('pH', 'ph_deadband').split(',')[0])
+                                logger.info(f"pH deadband: {ph_deadband}")
+                            except Exception as e:
+                                logger.error(f"Failed to get pH deadband from config, using default: {e}")
+                                ph_deadband = 0.5  # Default deadband
+                            
+                            # FIXED: Consistent pH control logic
+                            # If the current pH differs from target pH by more than the deadband:
+                            # - If current pH > target pH + deadband: use pH Down
+                            # - If current pH < target pH - deadband: use pH Up
+                            
                             if current_ph is not None:
-                                if current_ph < target_ph:
-                                    use_ph_up = True
-                                    logger.info(f"Current pH ({current_ph}) is below target ({target_ph}), using pH Up pump")
+                                # Calculate how far we are from target accounting for deadband
+                                ph_high_threshold = target_ph + (ph_deadband / 2)
+                                ph_low_threshold = target_ph - (ph_deadband / 2)
+                                
+                                logger.info(f"pH thresholds: low={ph_low_threshold}, target={target_ph}, high={ph_high_threshold}")
+                                
+                                if current_ph > ph_high_threshold:
+                                    use_ph_up = False  # Use pH Down
+                                    logger.info(f"Current pH ({current_ph}) is ABOVE high threshold ({ph_high_threshold}), using pH DOWN pump")
+                                elif current_ph < ph_low_threshold:
+                                    use_ph_up = True  # Use pH Up
+                                    logger.info(f"Current pH ({current_ph}) is BELOW low threshold ({ph_low_threshold}), using pH UP pump")
                                 else:
-                                    use_ph_up = False
-                                    logger.info(f"Current pH ({current_ph}) is above target ({target_ph}), using pH Down pump")
+                                    logger.info(f"Current pH ({current_ph}) is within deadband of target ({target_ph}), no pH adjustment needed")
+                                    return
                             else:
                                 logger.warning("Invalid pH reading, cannot determine which pump to use")
                                 return
                             
+                            # Debug relay assignments
+                            if relay.relay_assignments:
+                                if 'pHDownPump' in relay.relay_assignments:
+                                    logger.info(f"pHDownPump relay assignment: {relay.relay_assignments['pHDownPump']}")
+                                else:
+                                    found = False
+                                    for key in relay.relay_assignments:
+                                        if key.lower() == 'phdownpump':
+                                            logger.info(f"Found pH Down pump with case-insensitive match: {key} -> {relay.relay_assignments[key]}")
+                                            found = True
+                                    if not found:
+                                        logger.warning("pHDownPump not found in relay assignments!")
+                            
                             if use_ph_up:
-                                relay.set_ph_plus_pump(True)
+                                result = relay.set_ph_plus_pump(True)
                                 pump_type = "pH Up"
+                                logger.info(f"pH Up pump activation result: {result}")
                             else:
-                                relay.set_ph_minus_pump(True)
+                                result = relay.set_ph_minus_pump(True)
                                 pump_type = "pH Down"
+                                logger.info(f"pH Down pump activation result: {result}")
                                 
                             # Schedule to stop after duration
                             self.scheduler.add_job(
