@@ -34,23 +34,6 @@ class RippleScheduler:
             # Log initial schedule status
             self._log_all_schedules()
             
-            # Immediately run initial checks to evaluate system state
-            logger.info("Running initial system checks...")
-            try:
-                # Trigger immediate pH check
-                self._run_ph_cycle()
-                
-                # Trigger immediate EC check
-                self._run_nutrient_cycle()
-                
-                # Trigger immediate water level check
-                self._check_water_level()
-                
-                logger.info("Initial system checks completed")
-            except Exception as e:
-                logger.error(f"Error during initial system checks: {e}")
-                logger.exception("Full exception details:")
-            
     def shutdown(self):
         """Safely shutdown the scheduler"""
         if self.scheduler.running:
@@ -406,29 +389,22 @@ class RippleScheduler:
             try:
                 # Get ratio value (could be index 0 or 1 depending on config format)
                 abc_ratio = self.config.get('NutrientPump', 'abc_ratio')
-                logger.info(f"Raw abc_ratio from config: '{abc_ratio}'")
                 
                 # First try to use the second value (after comma) if available
                 if ',' in abc_ratio:
                     abc_ratio_parts = abc_ratio.split(',')
                     if len(abc_ratio_parts) >= 2:
                         abc_ratio_str = abc_ratio_parts[1].strip()
-                        logger.info(f"Using second part (after comma): '{abc_ratio_str}'")
                     else:
                         abc_ratio_str = abc_ratio_parts[0].strip()
-                        logger.info(f"Using first part (only one found): '{abc_ratio_str}'")
                 else:
                     abc_ratio_str = abc_ratio.strip()
-                    logger.info(f"No comma in ratio, using: '{abc_ratio_str}'")
                 
                 # Strip any quotes that might be present
                 abc_ratio_str = abc_ratio_str.strip('"\'')
-                logger.info(f"After stripping quotes: '{abc_ratio_str}'")
                 
                 # Parse the ratio (e.g., "1:1:0" or 1:1:0)
                 ratio_parts = abc_ratio_str.split(':')
-                logger.info(f"Ratio parts: {ratio_parts}")
-                
                 if len(ratio_parts) != 3:
                     logger.warning(f"Invalid ABC ratio format: {abc_ratio_str}. Expected format like '1:1:0'")
                     # Default to equal ratios if format is invalid
@@ -438,7 +414,6 @@ class RippleScheduler:
                         ratio_a = float(ratio_parts[0]) if ratio_parts[0] else 0
                         ratio_b = float(ratio_parts[1]) if ratio_parts[1] else 0
                         ratio_c = float(ratio_parts[2]) if ratio_parts[2] else 0
-                        logger.info(f"Parsed ratio values - A: {ratio_a}, B: {ratio_b}, C: {ratio_c}")
                         
                         # Make sure we have at least one non-zero ratio
                         if ratio_a == 0 and ratio_b == 0 and ratio_c == 0:
@@ -470,10 +445,7 @@ class RippleScheduler:
                 # Start all pumps with non-zero durations at the same time
                 activated_pumps = []
                 
-                # CRITICAL FIX: Only activate pumps with STRICTLY POSITIVE ratio values
-                # This ensures pumps with ratio=0 are never activated
-                logger.info(f"Pump A - ratio: {ratio_a}, duration: {duration_a}, activate: {ratio_a > 0 and duration_a > 0}")
-                if ratio_a > 0 and duration_a > 0:
+                if duration_a > 0:
                     relay.set_nutrient_pump("A", True)
                     activated_pumps.append("A")
                     # Schedule to stop after its calculated duration
@@ -485,8 +457,7 @@ class RippleScheduler:
                         replace_existing=True
                     )
                 
-                logger.info(f"Pump B - ratio: {ratio_b}, duration: {duration_b}, activate: {ratio_b > 0 and duration_b > 0}")
-                if ratio_b > 0 and duration_b > 0:
+                if duration_b > 0:
                     relay.set_nutrient_pump("B", True)
                     activated_pumps.append("B")
                     # Schedule to stop after its calculated duration
@@ -498,8 +469,7 @@ class RippleScheduler:
                         replace_existing=True
                     )
                 
-                logger.info(f"Pump C - ratio: {ratio_c}, duration: {duration_c}, activate: {ratio_c > 0 and duration_c > 0}")
-                if ratio_c > 0 and duration_c > 0:
+                if duration_c > 0:
                     relay.set_nutrient_pump("C", True)
                     activated_pumps.append("C")
                     # Schedule to stop after its calculated duration
@@ -519,63 +489,17 @@ class RippleScheduler:
             except Exception as e:
                 logger.error(f"Error applying nutrient ratio: {e}")
                 logger.exception("Full exception details:")
-                # Fall back to turning on pumps individually with the parsed ratios if available
-                if 'ratio_a' in locals() and 'ratio_b' in locals() and 'ratio_c' in locals():
-                    logger.info("Using parsed ratios for fallback pump activation")
-                    if ratio_a > 0:
-                        relay.set_nutrient_pump("A", True)
-                        self.scheduler.add_job(
-                            lambda: self._stop_single_nutrient_pump("A"),
-                            'date',
-                            run_date=datetime.now() + timedelta(seconds=on_seconds),
-                            id='fallback_nutrient_a_stop',
-                            replace_existing=True
-                        )
-                    
-                    if ratio_b > 0:
-                        relay.set_nutrient_pump("B", True)
-                        self.scheduler.add_job(
-                            lambda: self._stop_single_nutrient_pump("B"),
-                            'date',
-                            run_date=datetime.now() + timedelta(seconds=on_seconds),
-                            id='fallback_nutrient_b_stop',
-                            replace_existing=True
-                        )
-                    
-                    if ratio_c > 0:
-                        relay.set_nutrient_pump("C", True)
-                        self.scheduler.add_job(
-                            lambda: self._stop_single_nutrient_pump("C"),
-                            'date',
-                            run_date=datetime.now() + timedelta(seconds=on_seconds),
-                            id='fallback_nutrient_c_stop',
-                            replace_existing=True
-                        )
-                    
-                    logger.info(f"Fallback: Running pumps with non-zero ratios for {on_duration}")
-                else:
-                    # If all else fails, use the original method but still respect the default 1:1:0 ratio
-                    logger.info("Unable to determine ratios from config, using default 1:1:0 ratio")
-                    # Default 1:1:0 ratio - only activate pumps A and B
-                    relay.set_nutrient_pump("A", True)
-                    self.scheduler.add_job(
-                        lambda: self._stop_single_nutrient_pump("A"),
-                        'date',
-                        run_date=datetime.now() + timedelta(seconds=on_seconds),
-                        id='fallback_nutrient_a_stop',
-                        replace_existing=True
-                    )
-                    
-                    relay.set_nutrient_pump("B", True)
-                    self.scheduler.add_job(
-                        lambda: self._stop_single_nutrient_pump("B"),
-                        'date',
-                        run_date=datetime.now() + timedelta(seconds=on_seconds),
-                        id='fallback_nutrient_b_stop',
-                        replace_existing=True
-                    )
-                    
-                    logger.info(f"Fallback: Running pumps A and B for {on_duration} with default 1:1:0 ratio")
+                # Fall back to turning on all pumps together
+                relay.set_nutrient_pumps(True)
+                # Schedule to stop after on_duration
+                self.scheduler.add_job(
+                    self._stop_nutrient_pump,
+                    'date',
+                    run_date=datetime.now() + timedelta(seconds=on_seconds),
+                    id='scheduled_nutrient_stop',
+                    replace_existing=True
+                )
+                logger.info(f"Fallback: Running all nutrient pumps together for {on_duration}")
             
             # Check if mixing pump is running and has less than trigger duration remaining
             if self.mixing_pump_running and self.mixing_pump_end_time:
