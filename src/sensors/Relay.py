@@ -1204,14 +1204,7 @@ if __name__ == "__main__":
         time.sleep(0.5)  # Wait 2 seconds for initialization
     
 
-        relay.set_nutrient_pumps(True)
-        time.sleep(2)
-        relay.set_nutrient_pump("A", False)
-        # Final delay before exiting
-        time.sleep(0.5)
-        relay.set_nutrient_pump("B", False)
-        time.sleep(0.5)
-        relay.set_nutrient_pump("C", False)
+        relay.test_relay_control_sequential()
 
         
         # Final delay before exiting
