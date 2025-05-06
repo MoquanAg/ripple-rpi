@@ -442,44 +442,117 @@ class RippleScheduler:
                 
                 logger.info(f"Nutrient pump durations: A={duration_a}s, B={duration_b}s, C={duration_c}s")
                 
-                # Start all pumps with non-zero durations at the same time
+                # Get the relay assignments for all nutrient pumps
+                indices = []
+                relay_group = None
+                consecutive_pumps = True
+                start_index = None
+                
+                # Find the relay configuration for the nutrient pumps
+                for pump in ["NutrientPumpA", "NutrientPumpB", "NutrientPumpC"]:
+                    if pump in relay.relay_assignments:
+                        info = relay.relay_assignments[pump]
+                        if relay_group is None:
+                            relay_group = info.get('relay_name')
+                        indices.append(info.get('index'))
+                
+                # Check if pumps are in consecutive order
+                if len(indices) == 3:
+                    indices.sort()
+                    if indices[2] - indices[0] == 2:  # Check if they are consecutive
+                        start_index = indices[0]
+                        logger.info(f"Nutrient pumps are consecutive starting at index {start_index}")
+                    else:
+                        consecutive_pumps = False
+                        logger.info(f"Nutrient pumps are not consecutive: {indices}")
+                else:
+                    consecutive_pumps = False
+                    logger.info(f"Could not find all three nutrient pumps: {indices}")
+                
+                # Start all pumps with appropriate states using set_multiple_relays if possible
                 activated_pumps = []
                 
-                if duration_a > 0:
-                    relay.set_nutrient_pump("A", True)
-                    activated_pumps.append("A")
-                    # Schedule to stop after its calculated duration
-                    self.scheduler.add_job(
-                        lambda: self._stop_single_nutrient_pump("A"),
-                        'date',
-                        run_date=datetime.now() + timedelta(seconds=duration_a),
-                        id='scheduled_nutrient_a_stop',
-                        replace_existing=True
-                    )
-                
-                if duration_b > 0:
-                    relay.set_nutrient_pump("B", True)
-                    activated_pumps.append("B")
-                    # Schedule to stop after its calculated duration
-                    self.scheduler.add_job(
-                        lambda: self._stop_single_nutrient_pump("B"),
-                        'date',
-                        run_date=datetime.now() + timedelta(seconds=duration_b),
-                        id='scheduled_nutrient_b_stop',
-                        replace_existing=True
-                    )
-                
-                if duration_c > 0:
-                    relay.set_nutrient_pump("C", True)
-                    activated_pumps.append("C")
-                    # Schedule to stop after its calculated duration
-                    self.scheduler.add_job(
-                        lambda: self._stop_single_nutrient_pump("C"),
-                        'date',
-                        run_date=datetime.now() + timedelta(seconds=duration_c),
-                        id='scheduled_nutrient_c_stop',
-                        replace_existing=True
-                    )
+                if consecutive_pumps and relay_group and start_index is not None:
+                    # Create status array based on durations
+                    pump_states = [
+                        duration_a > 0,  # NutrientPumpA state
+                        duration_b > 0,  # NutrientPumpB state
+                        duration_c > 0   # NutrientPumpC state
+                    ]
+                    
+                    # Log which pumps are being activated
+                    for i, state in enumerate(pump_states):
+                        if state:
+                            pump_letter = chr(65 + i)  # A, B, or C
+                            activated_pumps.append(pump_letter)
+                    
+                    # Use set_multiple_relays to control all pumps together
+                    relay.set_multiple_relays(relay_group, start_index, pump_states)
+                    logger.info(f"Using set_multiple_relays with states {pump_states} at index {start_index}")
+                    
+                    # Schedule to stop each active pump after its calculated duration
+                    if duration_a > 0:
+                        self.scheduler.add_job(
+                            lambda: self._stop_single_nutrient_pump("A"),
+                            'date',
+                            run_date=datetime.now() + timedelta(seconds=duration_a),
+                            id='scheduled_nutrient_a_stop',
+                            replace_existing=True
+                        )
+                    
+                    if duration_b > 0:
+                        self.scheduler.add_job(
+                            lambda: self._stop_single_nutrient_pump("B"),
+                            'date',
+                            run_date=datetime.now() + timedelta(seconds=duration_b),
+                            id='scheduled_nutrient_b_stop',
+                            replace_existing=True
+                        )
+                    
+                    if duration_c > 0:
+                        self.scheduler.add_job(
+                            lambda: self._stop_single_nutrient_pump("C"),
+                            'date',
+                            run_date=datetime.now() + timedelta(seconds=duration_c),
+                            id='scheduled_nutrient_c_stop',
+                            replace_existing=True
+                        )
+                else:
+                    # Fall back to individual control if pumps are not consecutive
+                    logger.info("Using individual control for nutrient pumps")
+                    
+                    if duration_a > 0:
+                        relay.set_nutrient_pump("A", True)
+                        activated_pumps.append("A")
+                        self.scheduler.add_job(
+                            lambda: self._stop_single_nutrient_pump("A"),
+                            'date',
+                            run_date=datetime.now() + timedelta(seconds=duration_a),
+                            id='scheduled_nutrient_a_stop',
+                            replace_existing=True
+                        )
+                    
+                    if duration_b > 0:
+                        relay.set_nutrient_pump("B", True)
+                        activated_pumps.append("B")
+                        self.scheduler.add_job(
+                            lambda: self._stop_single_nutrient_pump("B"),
+                            'date',
+                            run_date=datetime.now() + timedelta(seconds=duration_b),
+                            id='scheduled_nutrient_b_stop',
+                            replace_existing=True
+                        )
+                    
+                    if duration_c > 0:
+                        relay.set_nutrient_pump("C", True)
+                        activated_pumps.append("C")
+                        self.scheduler.add_job(
+                            lambda: self._stop_single_nutrient_pump("C"),
+                            'date',
+                            run_date=datetime.now() + timedelta(seconds=duration_c),
+                            id='scheduled_nutrient_c_stop',
+                            replace_existing=True
+                        )
                 
                 if activated_pumps:
                     logger.info(f"Activated nutrient pumps {', '.join(activated_pumps)} according to configured ratio")
@@ -490,7 +563,39 @@ class RippleScheduler:
                 logger.error(f"Error applying nutrient ratio: {e}")
                 logger.exception("Full exception details:")
                 # Fall back to turning on all pumps together
-                relay.set_nutrient_pumps(True)
+                try:
+                    # Check if we can use set_multiple_relays for optimized control
+                    indices = []
+                    relay_group = None
+                    start_index = None
+                    
+                    # Find the relay configuration for the nutrient pumps
+                    for pump in ["NutrientPumpA", "NutrientPumpB", "NutrientPumpC"]:
+                        if pump in relay.relay_assignments:
+                            info = relay.relay_assignments[pump]
+                            if relay_group is None:
+                                relay_group = info.get('relay_name')
+                            indices.append(info.get('index'))
+                    
+                    # Check if pumps are in consecutive order
+                    if len(indices) == 3:
+                        indices.sort()
+                        if indices[2] - indices[0] == 2:  # Check if they are consecutive
+                            start_index = indices[0]
+                            # Turn on all pumps together
+                            relay.set_multiple_relays(relay_group, start_index, [True, True, True])
+                            logger.info("Fallback: Started all nutrient pumps using set_multiple_relays")
+                        else:
+                            # Use standard method if not consecutive
+                            relay.set_nutrient_pumps(True)
+                    else:
+                        # Use standard method if not all pumps were found
+                        relay.set_nutrient_pumps(True)
+                except Exception as fallback_error:
+                    logger.error(f"Error in optimized fallback: {fallback_error}, using standard method")
+                    # Final fallback - use standard method
+                    relay.set_nutrient_pumps(True)
+                    
                 # Schedule to stop after on_duration
                 self.scheduler.add_job(
                     self._stop_nutrient_pump,
@@ -1069,7 +1174,31 @@ class RippleScheduler:
             from src.sensors.Relay import Relay
             relay = Relay()
             if relay:
-                # Stop all three nutrient pumps (A, B, C)
+                # Check if we can use set_multiple_relays for optimized control
+                indices = []
+                relay_group = None
+                consecutive_pumps = True
+                start_index = None
+                
+                # Find the relay configuration for the nutrient pumps
+                for pump in ["NutrientPumpA", "NutrientPumpB", "NutrientPumpC"]:
+                    if pump in relay.relay_assignments:
+                        info = relay.relay_assignments[pump]
+                        if relay_group is None:
+                            relay_group = info.get('relay_name')
+                        indices.append(info.get('index'))
+                
+                # Check if pumps are in consecutive order
+                if len(indices) == 3:
+                    indices.sort()
+                    if indices[2] - indices[0] == 2:  # Check if they are consecutive
+                        start_index = indices[0]
+                        # Use set_multiple_relays to stop all pumps together
+                        relay.set_multiple_relays(relay_group, start_index, [False, False, False])
+                        logger.info("Stopped all nutrient pumps using set_multiple_relays")
+                        return
+                
+                # Fallback to using the standard method if not consecutive
                 relay.set_nutrient_pumps(False)
                 logger.info("Nutrient pumps stopped")
             else:
