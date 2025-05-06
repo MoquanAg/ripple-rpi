@@ -335,6 +335,7 @@ class RippleScheduler:
     def _run_ph_cycle(self):
         """Execute pH adjustment cycle"""
         try:
+            # Get configuration parameters
             on_duration = self.config.get('NutrientPump', 'ph_pump_on_duration').split(',')[0]
             on_seconds = self._time_to_seconds(on_duration)
             trigger_duration = self.config.get('MIXING', 'trigger_mixing_duration').split(',')[0]
@@ -354,9 +355,40 @@ class RippleScheduler:
             # Record the time when pH pump starts
             self.last_nutrient_pump_time = datetime.now()
             
-            # Determine which pH pump to use based on sensor reading
-            # For now, let's assume we need pH up (can be refined with actual logic)
-            use_ph_up = True
+            # Get current pH reading and target pH
+            from src.sensors.pH import pH
+            current_ph = None
+            ph_statuses = pH.get_statuses_async()
+            
+            if ph_statuses and len(ph_statuses) > 0:
+                # Use the first available pH sensor reading
+                current_ph = next(iter(ph_statuses.values()))
+                logger.info(f"Current pH reading: {current_ph}")
+            else:
+                logger.warning("No pH readings available, cannot determine which pump to use")
+                return
+                
+            # Get target pH from configuration
+            try:
+                target_ph = float(self.config.get('pH', 'ph_target').split(',')[0])
+                logger.info(f"Target pH: {target_ph}")
+            except Exception as e:
+                logger.error(f"Failed to get target pH from config: {e}")
+                return
+                
+            # Determine which pH pump to use based on sensor reading and target
+            # If current pH is lower than target, use pH Up
+            # If current pH is higher than target, use pH Down
+            if current_ph is not None:
+                if current_ph < target_ph:
+                    use_ph_up = True
+                    logger.info(f"Current pH ({current_ph}) is below target ({target_ph}), using pH Up pump")
+                else:
+                    use_ph_up = False
+                    logger.info(f"Current pH ({current_ph}) is above target ({target_ph}), using pH Down pump")
+            else:
+                logger.warning("Invalid pH reading, cannot determine which pump to use")
+                return
             
             # Start appropriate pH pump
             if use_ph_up:
@@ -414,6 +446,7 @@ class RippleScheduler:
                 logger.info(f"Starting mixing pump for {trigger_duration} after pH pump activation")
         except Exception as e:
             logger.error(f"Error in pH cycle: {e}")
+            logger.exception("Full exception details:")
             
     def _run_sprinkler_cycle(self):
         """Execute sprinkler cycle"""
@@ -704,9 +737,40 @@ class RippleScheduler:
                         from src.sensors.Relay import Relay
                         relay = Relay()
                         if relay:
-                            # Determine which pH pump to use based on latest sensor reading
-                            # For now, let's assume we need pH up (can be changed with actual logic)
-                            use_ph_up = True
+                            # Get current pH reading and target pH
+                            from src.sensors.pH import pH
+                            current_ph = None
+                            ph_statuses = pH.get_statuses_async()
+                            
+                            if ph_statuses and len(ph_statuses) > 0:
+                                # Use the first available pH sensor reading
+                                current_ph = next(iter(ph_statuses.values()))
+                                logger.info(f"Current pH reading: {current_ph}")
+                            else:
+                                logger.warning("No pH readings available, cannot determine which pump to use")
+                                return
+                                
+                            # Get target pH from configuration
+                            try:
+                                target_ph = float(self.config.get('pH', 'ph_target').split(',')[0])
+                                logger.info(f"Target pH: {target_ph}")
+                            except Exception as e:
+                                logger.error(f"Failed to get target pH from config: {e}")
+                                return
+                                
+                            # Determine which pH pump to use based on sensor reading and target
+                            # If current pH is lower than target, use pH Up
+                            # If current pH is higher than target, use pH Down
+                            if current_ph is not None:
+                                if current_ph < target_ph:
+                                    use_ph_up = True
+                                    logger.info(f"Current pH ({current_ph}) is below target ({target_ph}), using pH Up pump")
+                                else:
+                                    use_ph_up = False
+                                    logger.info(f"Current pH ({current_ph}) is above target ({target_ph}), using pH Down pump")
+                            else:
+                                logger.warning("Invalid pH reading, cannot determine which pump to use")
+                                return
                             
                             if use_ph_up:
                                 relay.set_ph_plus_pump(True)

@@ -527,14 +527,20 @@ class RippleController:
     def check_sensor_ranges(self, ph_statuses: Dict[str, float], ec_statuses: Dict[str, float], water_levels: Dict[str, float]):
         """Check if sensor values are within configured ranges from device.conf."""
         try:
+            # Track if we need automatic pH correction
+            needs_ph_correction = False
+            ph_value = None
+            
             # Check pH values
             if ph_statuses:
                 ph_targets = self.sensor_targets['pH']
                 for sensor_name, ph_value in ph_statuses.items():
                     if ph_value < ph_targets['min'] or ph_value > ph_targets['max']:
                         logger.warning(f"pH sensor {sensor_name} value {ph_value} is outside safe range ({ph_targets['min']}-{ph_targets['max']})")
+                        needs_ph_correction = True
                     elif abs(ph_value - ph_targets['target']) > ph_targets['deadband']:
                         logger.info(f"pH sensor {sensor_name} value {ph_value} is outside target range ({ph_targets['target']}±{ph_targets['deadband']})")
+                        needs_ph_correction = True
             
             # Check EC values
             if ec_statuses:
@@ -554,17 +560,30 @@ class RippleController:
                     elif abs(water_level - water_level_targets['target']) > water_level_targets['deadband']:
                         logger.info(f"Water level sensor {sensor_name} value {water_level} is outside target range ({water_level_targets['target']}±{water_level_targets['deadband']})")
             
-            # Note: DO sensor checking is commented out since DO readings are currently disabled
-            # if do_statuses:
-            #     for sensor_name, do_value in do_statuses.items():
-            #         if do_value < 0 or do_value > 15:
-            #             logger.warning(f"DO sensor {sensor_name} value {do_value} is outside safe range (0-15)")
-            #         elif abs(do_value - 10) > 0.1:  # Check against deadband
-            #             logger.info(f"DO sensor {sensor_name} value {do_value} is outside target range (10±0.1)")
-                    
+            # Trigger automatic pH correction if needed
+            if needs_ph_correction and ph_value is not None:
+                self._trigger_ph_correction(ph_value)
+                
         except Exception as e:
             logger.error(f"Error checking sensor ranges: {e}")
             
+    def _trigger_ph_correction(self, current_ph):
+        """Trigger automatic pH correction if not already running"""
+        try:
+            # Use the scheduler to run pH correction
+            if hasattr(self, 'scheduler') and self.scheduler:
+                # Check if the scheduler has a method to check if pH correction is already running
+                if hasattr(self.scheduler, '_run_ph_cycle'):
+                    logger.info(f"Triggering automatic pH correction, current pH: {current_ph}")
+                    self.scheduler._run_ph_cycle()
+                else:
+                    logger.warning("Cannot trigger pH correction: Scheduler missing _run_ph_cycle method")
+            else:
+                logger.warning("Cannot trigger pH correction: Scheduler not available")
+        except Exception as e:
+            logger.error(f"Error triggering pH correction: {e}")
+            logger.exception("Full exception details:")
+
     def process_events(self):
         """Process any pending events or commands."""
         # This method can be expanded to handle scheduled tasks,
