@@ -385,18 +385,100 @@ class RippleScheduler:
             # Record the time when nutrient pump starts
             self.last_nutrient_pump_time = datetime.now()
             
-            # Start nutrient pump
-            relay.set_nutrient_pumps(True)
-            logger.info(f"Running nutrient cycle for {on_duration}")
-            
-            # Schedule to stop after on_duration
-            self.scheduler.add_job(
-                self._stop_nutrient_pump,
-                'date',
-                run_date=datetime.now() + timedelta(seconds=on_seconds),
-                id='scheduled_nutrient_stop',
-                replace_existing=True
-            )
+            # Get the A:B:C ratio from configuration
+            try:
+                abc_ratio_str = self.config.get('NutrientPump', 'abc_ratio').split(',')[0].strip('"\'')
+                # Parse the ratio (e.g., "1:1:0")
+                ratio_parts = abc_ratio_str.split(':')
+                if len(ratio_parts) != 3:
+                    logger.warning(f"Invalid ABC ratio format: {abc_ratio_str}. Expected format like '1:1:0'")
+                    # Default to equal ratios if format is invalid
+                    ratio_a = ratio_b = ratio_c = 1
+                else:
+                    try:
+                        ratio_a = float(ratio_parts[0]) if ratio_parts[0] else 0
+                        ratio_b = float(ratio_parts[1]) if ratio_parts[1] else 0
+                        ratio_c = float(ratio_parts[2]) if ratio_parts[2] else 0
+                        
+                        # Make sure we have at least one non-zero ratio
+                        if ratio_a == 0 and ratio_b == 0 and ratio_c == 0:
+                            logger.warning("All ABC ratios are zero, defaulting to 1:1:0")
+                            ratio_a = ratio_b = 1
+                            ratio_c = 0
+                    except ValueError:
+                        logger.warning(f"Could not parse ABC ratio values: {abc_ratio_str}")
+                        # Default to equal ratios if parsing fails
+                        ratio_a = ratio_b = 1
+                        ratio_c = 0
+                
+                logger.info(f"Using nutrient pump ratio A:B:C = {ratio_a}:{ratio_b}:{ratio_c}")
+                
+                # Apply the ratio by controlling each pump individually
+                # We'll run pumps sequentially to avoid power issues
+                
+                # Only activate pumps with non-zero ratios
+                if ratio_a > 0:
+                    logger.info(f"Activating nutrient pump A for {on_duration}")
+                    relay.set_nutrient_pump("A", True)
+                    # Schedule to stop after on_duration
+                    self.scheduler.add_job(
+                        lambda: self._stop_single_nutrient_pump("A"),
+                        'date',
+                        run_date=datetime.now() + timedelta(seconds=on_seconds),
+                        id='scheduled_nutrient_a_stop',
+                        replace_existing=True
+                    )
+                
+                # If pump B has a non-zero ratio, schedule it to start after pump A
+                if ratio_b > 0:
+                    # Calculate delay for pump B start: if ratio_a > 0, start after A finishes, otherwise start now
+                    b_start_delay = on_seconds if ratio_a > 0 else 0
+                    
+                    self.scheduler.add_job(
+                        lambda: self._start_nutrient_pump_b(on_seconds),
+                        'date',
+                        run_date=datetime.now() + timedelta(seconds=b_start_delay),
+                        id='scheduled_nutrient_b_start',
+                        replace_existing=True
+                    )
+                    logger.info(f"Scheduled nutrient pump B to start in {b_start_delay} seconds")
+                
+                # If pump C has a non-zero ratio, schedule it to start after pump B
+                if ratio_c > 0:
+                    # Calculate delay for pump C start:
+                    # If both A and B are active, start after both finish
+                    # If only A is active, start after A finishes
+                    # If only B is active, start after B finishes
+                    # If neither A nor B are active, start now
+                    c_start_delay = 0
+                    if ratio_a > 0 and ratio_b > 0:
+                        c_start_delay = on_seconds * 2  # Both A and B have run
+                    elif ratio_a > 0 or ratio_b > 0:
+                        c_start_delay = on_seconds  # Either A or B has run
+                    
+                    self.scheduler.add_job(
+                        lambda: self._start_nutrient_pump_c(on_seconds),
+                        'date',
+                        run_date=datetime.now() + timedelta(seconds=c_start_delay),
+                        id='scheduled_nutrient_c_start',
+                        replace_existing=True
+                    )
+                    logger.info(f"Scheduled nutrient pump C to start in {c_start_delay} seconds")
+                
+            except Exception as e:
+                logger.error(f"Error applying nutrient ratio: {e}")
+                logger.exception("Full exception details:")
+                # Fall back to turning on all pumps together
+                relay.set_nutrient_pumps(True)
+                # Schedule to stop after on_duration
+                self.scheduler.add_job(
+                    self._stop_nutrient_pump,
+                    'date',
+                    run_date=datetime.now() + timedelta(seconds=on_seconds),
+                    id='scheduled_nutrient_stop',
+                    replace_existing=True
+                )
+                logger.info(f"Fallback: Running all nutrient pumps together for {on_duration}")
             
             # Check if mixing pump is running and has less than trigger duration remaining
             if self.mixing_pump_running and self.mixing_pump_end_time:
@@ -1208,3 +1290,60 @@ class RippleScheduler:
         except Exception as e:
             logger.error(f"Failed to handle manual command: {e}")
             return False 
+
+    def _start_nutrient_pump_b(self, duration_seconds):
+        """Start nutrient pump B and schedule it to stop after the specified duration"""
+        try:
+            from src.sensors.Relay import Relay
+            relay = Relay()
+            if relay:
+                logger.info(f"Starting nutrient pump B for {duration_seconds} seconds")
+                relay.set_nutrient_pump("B", True)
+                
+                # Schedule to stop after duration
+                self.scheduler.add_job(
+                    lambda: self._stop_single_nutrient_pump("B"),
+                    'date',
+                    run_date=datetime.now() + timedelta(seconds=duration_seconds),
+                    id='scheduled_nutrient_b_stop',
+                    replace_existing=True
+                )
+            else:
+                logger.warning("Failed to start nutrient pump B: relay not available")
+        except Exception as e:
+            logger.error(f"Error starting nutrient pump B: {e}")
+            
+    def _start_nutrient_pump_c(self, duration_seconds):
+        """Start nutrient pump C and schedule it to stop after the specified duration"""
+        try:
+            from src.sensors.Relay import Relay
+            relay = Relay()
+            if relay:
+                logger.info(f"Starting nutrient pump C for {duration_seconds} seconds")
+                relay.set_nutrient_pump("C", True)
+                
+                # Schedule to stop after duration
+                self.scheduler.add_job(
+                    lambda: self._stop_single_nutrient_pump("C"),
+                    'date',
+                    run_date=datetime.now() + timedelta(seconds=duration_seconds),
+                    id='scheduled_nutrient_c_stop',
+                    replace_existing=True
+                )
+            else:
+                logger.warning("Failed to start nutrient pump C: relay not available")
+        except Exception as e:
+            logger.error(f"Error starting nutrient pump C: {e}")
+            
+    def _stop_single_nutrient_pump(self, pump_letter):
+        """Stop a specific nutrient pump (A, B, or C)"""
+        try:
+            from src.sensors.Relay import Relay
+            relay = Relay()
+            if relay:
+                relay.set_nutrient_pump(pump_letter, False)
+                logger.info(f"Nutrient pump {pump_letter} stopped")
+            else:
+                logger.warning(f"Failed to stop nutrient pump {pump_letter}: relay not available")
+        except Exception as e:
+            logger.error(f"Error stopping nutrient pump {pump_letter}: {e}") 
