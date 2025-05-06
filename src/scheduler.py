@@ -34,6 +34,23 @@ class RippleScheduler:
             # Log initial schedule status
             self._log_all_schedules()
             
+            # Immediately run initial checks to evaluate system state
+            logger.info("Running initial system checks...")
+            try:
+                # Trigger immediate pH check
+                self._run_ph_cycle()
+                
+                # Trigger immediate EC check
+                self._run_nutrient_cycle()
+                
+                # Trigger immediate water level check
+                self._check_water_level()
+                
+                logger.info("Initial system checks completed")
+            except Exception as e:
+                logger.error(f"Error during initial system checks: {e}")
+                logger.exception("Full exception details:")
+            
     def shutdown(self):
         """Safely shutdown the scheduler"""
         if self.scheduler.running:
