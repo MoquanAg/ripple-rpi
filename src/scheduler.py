@@ -265,6 +265,8 @@ class RippleScheduler:
         try:
             # Get EC data from saved sensor data file instead of directly from sensors
             ec_value = None
+            data_timestamp = None
+            max_data_age = timedelta(minutes=5)  # Maximum age of data to consider valid (5 minutes)
             sensor_data_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'data', 'saved_sensor_data.json')
             
             try:
@@ -281,12 +283,29 @@ class RippleScheduler:
                             points = data['data']['water_metrics']['ec']['measurements']['points']
                             if points and len(points) > 0 and 'fields' in points[0] and 'value' in points[0]['fields']:
                                 ec_value = points[0]['fields']['value']
-                                logger.info(f"Current EC reading from saved data: {ec_value}")
+                                
+                                # Check if the data has a timestamp and is not too old
+                                if 'timestamp' in points[0]:
+                                    try:
+                                        # Parse timestamp (handle different formats)
+                                        timestamp_str = points[0]['timestamp']
+                                        data_timestamp = datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
+                                        
+                                        # Check if data is too old
+                                        if datetime.now() - data_timestamp > max_data_age:
+                                            logger.warning(f"EC data is too old (from {timestamp_str}), not using for control decisions")
+                                            ec_value = None
+                                        else:
+                                            logger.info(f"Current EC reading from saved data: {ec_value} (from {timestamp_str})")
+                                    except Exception as e:
+                                        logger.error(f"Error parsing timestamp from EC data: {e}")
+                                else:
+                                    logger.info(f"Current EC reading from saved data: {ec_value} (timestamp not available)")
             except Exception as e:
                 logger.error(f"Error reading saved EC data: {e}")
                 
             if ec_value is None:
-                logger.warning("No EC readings available, cannot determine if nutrient cycle should run")
+                logger.warning("No recent EC readings available, cannot determine if nutrient cycle should run")
                 return
             
             # Now proceed with the original logic but using ec_value instead of reading from sensors
@@ -392,6 +411,8 @@ class RippleScheduler:
         try:
             # Get pH data from saved sensor data file instead of directly from sensors
             ph_value = None
+            data_timestamp = None
+            max_data_age = timedelta(minutes=5)  # Maximum age of data to consider valid (5 minutes)
             sensor_data_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'data', 'saved_sensor_data.json')
             
             try:
@@ -408,12 +429,29 @@ class RippleScheduler:
                             points = data['data']['water_metrics']['ph']['measurements']['points']
                             if points and len(points) > 0 and 'fields' in points[0] and 'value' in points[0]['fields']:
                                 ph_value = points[0]['fields']['value']
-                                logger.info(f"Current pH reading from saved data: {ph_value}")
+                                
+                                # Check if the data has a timestamp and is not too old
+                                if 'timestamp' in points[0]:
+                                    try:
+                                        # Parse timestamp (handle different formats)
+                                        timestamp_str = points[0]['timestamp']
+                                        data_timestamp = datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
+                                        
+                                        # Check if data is too old
+                                        if datetime.now() - data_timestamp > max_data_age:
+                                            logger.warning(f"pH data is too old (from {timestamp_str}), not using for control decisions")
+                                            ph_value = None
+                                        else:
+                                            logger.info(f"Current pH reading from saved data: {ph_value} (from {timestamp_str})")
+                                    except Exception as e:
+                                        logger.error(f"Error parsing timestamp from pH data: {e}")
+                                else:
+                                    logger.info(f"Current pH reading from saved data: {ph_value} (timestamp not available)")
             except Exception as e:
                 logger.error(f"Error reading saved pH data: {e}")
                 
             if ph_value is None:
-                logger.warning("No pH readings available, cannot determine which pump to use")
+                logger.warning("No recent pH readings available, cannot determine which pump to use")
                 return
                 
             # Get configuration parameters
