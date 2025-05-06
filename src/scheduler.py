@@ -413,57 +413,63 @@ class RippleScheduler:
                 
                 logger.info(f"Using nutrient pump ratio A:B:C = {ratio_a}:{ratio_b}:{ratio_c}")
                 
-                # Apply the ratio by controlling each pump individually
-                # We'll run pumps sequentially to avoid power issues
+                # Find the largest ratio value - this will be our base for timing
+                base_ratio = max(ratio_a, ratio_b, ratio_c)
+                if base_ratio <= 0:
+                    logger.warning("No positive ratios found, skipping nutrient cycle")
+                    return
+                    
+                # Calculate run durations for each pump proportional to their ratio
+                # The base duration (on_seconds) corresponds to the highest ratio value
+                duration_a = int(on_seconds * ratio_a / base_ratio) if ratio_a > 0 else 0
+                duration_b = int(on_seconds * ratio_b / base_ratio) if ratio_b > 0 else 0
+                duration_c = int(on_seconds * ratio_c / base_ratio) if ratio_c > 0 else 0
                 
-                # Only activate pumps with non-zero ratios
-                if ratio_a > 0:
-                    logger.info(f"Activating nutrient pump A for {on_duration}")
+                logger.info(f"Nutrient pump durations: A={duration_a}s, B={duration_b}s, C={duration_c}s")
+                
+                # Start all pumps with non-zero durations at the same time
+                activated_pumps = []
+                
+                if duration_a > 0:
                     relay.set_nutrient_pump("A", True)
-                    # Schedule to stop after on_duration
+                    activated_pumps.append("A")
+                    # Schedule to stop after its calculated duration
                     self.scheduler.add_job(
                         lambda: self._stop_single_nutrient_pump("A"),
                         'date',
-                        run_date=datetime.now() + timedelta(seconds=on_seconds),
+                        run_date=datetime.now() + timedelta(seconds=duration_a),
                         id='scheduled_nutrient_a_stop',
                         replace_existing=True
                     )
                 
-                # If pump B has a non-zero ratio, schedule it to start after pump A
-                if ratio_b > 0:
-                    # Calculate delay for pump B start: if ratio_a > 0, start after A finishes, otherwise start now
-                    b_start_delay = on_seconds if ratio_a > 0 else 0
-                    
+                if duration_b > 0:
+                    relay.set_nutrient_pump("B", True)
+                    activated_pumps.append("B")
+                    # Schedule to stop after its calculated duration
                     self.scheduler.add_job(
-                        lambda: self._start_nutrient_pump_b(on_seconds),
+                        lambda: self._stop_single_nutrient_pump("B"),
                         'date',
-                        run_date=datetime.now() + timedelta(seconds=b_start_delay),
-                        id='scheduled_nutrient_b_start',
+                        run_date=datetime.now() + timedelta(seconds=duration_b),
+                        id='scheduled_nutrient_b_stop',
                         replace_existing=True
                     )
-                    logger.info(f"Scheduled nutrient pump B to start in {b_start_delay} seconds")
                 
-                # If pump C has a non-zero ratio, schedule it to start after pump B
-                if ratio_c > 0:
-                    # Calculate delay for pump C start:
-                    # If both A and B are active, start after both finish
-                    # If only A is active, start after A finishes
-                    # If only B is active, start after B finishes
-                    # If neither A nor B are active, start now
-                    c_start_delay = 0
-                    if ratio_a > 0 and ratio_b > 0:
-                        c_start_delay = on_seconds * 2  # Both A and B have run
-                    elif ratio_a > 0 or ratio_b > 0:
-                        c_start_delay = on_seconds  # Either A or B has run
-                    
+                if duration_c > 0:
+                    relay.set_nutrient_pump("C", True)
+                    activated_pumps.append("C")
+                    # Schedule to stop after its calculated duration
                     self.scheduler.add_job(
-                        lambda: self._start_nutrient_pump_c(on_seconds),
+                        lambda: self._stop_single_nutrient_pump("C"),
                         'date',
-                        run_date=datetime.now() + timedelta(seconds=c_start_delay),
-                        id='scheduled_nutrient_c_start',
+                        run_date=datetime.now() + timedelta(seconds=duration_c),
+                        id='scheduled_nutrient_c_stop',
                         replace_existing=True
                     )
-                    logger.info(f"Scheduled nutrient pump C to start in {c_start_delay} seconds")
+                
+                if activated_pumps:
+                    logger.info(f"Activated nutrient pumps {', '.join(activated_pumps)} according to configured ratio")
+                else:
+                    logger.warning("No nutrient pumps were activated")
                 
             except Exception as e:
                 logger.error(f"Error applying nutrient ratio: {e}")
@@ -1291,50 +1297,6 @@ class RippleScheduler:
             logger.error(f"Failed to handle manual command: {e}")
             return False 
 
-    def _start_nutrient_pump_b(self, duration_seconds):
-        """Start nutrient pump B and schedule it to stop after the specified duration"""
-        try:
-            from src.sensors.Relay import Relay
-            relay = Relay()
-            if relay:
-                logger.info(f"Starting nutrient pump B for {duration_seconds} seconds")
-                relay.set_nutrient_pump("B", True)
-                
-                # Schedule to stop after duration
-                self.scheduler.add_job(
-                    lambda: self._stop_single_nutrient_pump("B"),
-                    'date',
-                    run_date=datetime.now() + timedelta(seconds=duration_seconds),
-                    id='scheduled_nutrient_b_stop',
-                    replace_existing=True
-                )
-            else:
-                logger.warning("Failed to start nutrient pump B: relay not available")
-        except Exception as e:
-            logger.error(f"Error starting nutrient pump B: {e}")
-            
-    def _start_nutrient_pump_c(self, duration_seconds):
-        """Start nutrient pump C and schedule it to stop after the specified duration"""
-        try:
-            from src.sensors.Relay import Relay
-            relay = Relay()
-            if relay:
-                logger.info(f"Starting nutrient pump C for {duration_seconds} seconds")
-                relay.set_nutrient_pump("C", True)
-                
-                # Schedule to stop after duration
-                self.scheduler.add_job(
-                    lambda: self._stop_single_nutrient_pump("C"),
-                    'date',
-                    run_date=datetime.now() + timedelta(seconds=duration_seconds),
-                    id='scheduled_nutrient_c_stop',
-                    replace_existing=True
-                )
-            else:
-                logger.warning("Failed to start nutrient pump C: relay not available")
-        except Exception as e:
-            logger.error(f"Error starting nutrient pump C: {e}")
-            
     def _stop_single_nutrient_pump(self, pump_letter):
         """Stop a specific nutrient pump (A, B, or C)"""
         try:
