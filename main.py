@@ -33,61 +33,227 @@ class ConfigFileHandler(FileSystemEventHandler):
         self.last_action_state = {}
         
     def on_modified(self, event):
-        if event.src_path == self.controller.config_file:
-            logger.info("Configuration file modified, reloading settings")
-            self.controller.reload_configuration()
-        elif event.src_path == os.path.abspath('config/action.json'):
-            logger.info("Action file modified, processing new actions")
-            self.process_actions()
+        try:
+            # Normalize paths for comparison
+            config_file_path = os.path.abspath(self.controller.config_file)
+            action_file_path = os.path.abspath('config/action.json')
+            event_path = os.path.abspath(event.src_path)
+            
+            logger.info(f"File modified: {event_path}")
+            
+            if event_path == config_file_path:
+                logger.info("Configuration file modified, reloading settings")
+                self.controller.reload_configuration()
+            elif event_path == action_file_path:
+                logger.info("Action file modified, processing new actions")
+                # Add a small delay to ensure file writing is complete
+                time.sleep(0.1)
+                self.process_actions()
+        except Exception as e:
+            logger.error(f"Error in on_modified handler: {e}")
+            logger.exception("Full exception details:")
             
     def process_actions(self):
         try:
+            # Check if file exists and is not empty before trying to read it
+            if not os.path.exists('config/action.json') or os.path.getsize('config/action.json') == 0:
+                logger.warning("Action file does not exist or is empty")
+                return
+                
             # Read the action file
-            with open('config/action.json', 'r') as f:
-                new_actions = json.load(f)
+            try:
+                with open('config/action.json', 'r') as f:
+                    file_content = f.read().strip()
+                    if not file_content:
+                        logger.warning("Action file is empty")
+                        return
+                    new_actions = json.loads(file_content)
+            except json.JSONDecodeError as e:
+                logger.error(f"Invalid JSON in action file: {e}")
+                # Try to reset the file to empty JSON object
+                with open('config/action.json', 'w') as f:
+                    json.dump({}, f)
+                return
                 
             # Check if actions are different from last state
             if new_actions != self.last_action_state:
                 logger.info(f"New actions detected: {new_actions}")
                 
-                # Map API field names to relay names
-                relay_mapping = {
-                    'nutrient_pump_a': 'NutrientPumpA',
-                    'nutrient_pump_b': 'NutrientPumpB',
-                    'nutrient_pump_c': 'NutrientPumpC',
-                    'ph_up_pump': 'pHUpPump',
-                    'ph_down_pump': 'pHDownPump',
-                    'valve_outside_to_tank': 'ValveOutsideToTank',
-                    'valve_tank_to_outside': 'ValveTankToOutside',
-                    'mixing_pump': 'MixingPump',
-                    'pump_from_tank_to_gutters': 'PumpFromTankToGutters',
-                    'sprinkler_a': 'SprinklerA',
-                    'sprinkler_b': 'SprinklerB',
-                    'pump_from_collector_tray_to_tank': 'PumpFromCollectorTrayToTank'
-                }
+                # Get relay instance first
+                relay_instance = Relay()
+                if not relay_instance:
+                    logger.warning("Failed to get relay instance, cannot process actions")
+                    return
+                
+                # First, clear the action file to acknowledge receipt
+                # This helps prevent race conditions
+                with open('config/action.json', 'w') as f:
+                    json.dump({}, f)
+                logger.info("Action file cleared before processing to prevent race conditions")
+                
+                # Read dynamic mappings from config file
+                # Make sure config is up-to-date
+                self.controller.config.read(self.controller.config_file)
+                config = self.controller.config
+                
+                # Log available sections for debugging
+                logger.info(f"Available config sections: {config.sections()}")
+                
+                action_mapping = {}
+                
+                # Create mapping function for a relay device
+                def create_relay_action(device_name):
+                    # Check if it's a single relay device or a group
+                    if ',' in device_name:
+                        # Handle group of devices using set_multiple_relays where possible
+                        devices = [d.strip() for d in device_name.split(',')]
+                        
+                        # For special group cases where we know relay indices
+                        if all(d in ["SprinklerA", "SprinklerB"] for d in devices) and len(devices) == 2:
+                            # Sprinklers are on adjacent indices (typically 9 and 10)
+                            logger.info(f"Using optimized set_multiple_relays for sprinklers")
+                            # Get the first relay key
+                            relay_key = list(relay_instance.relay_addresses.keys())[0]
+                            # Get indices from relay_assignments
+                            indices = []
+                            for device in devices:
+                                if device in relay_instance.relay_assignments:
+                                    indices.append(relay_instance.relay_assignments[device]['index'])
+                            if len(indices) == 2 and abs(indices[0] - indices[1]) == 1:
+                                # They're adjacent, use set_multiple_relays
+                                start_index = min(indices)
+                                return lambda status: relay_instance.set_multiple_relays(relay_key, start_index, [status, status])
+                        
+                        elif all(d.startswith("NutrientPump") for d in devices) and len(devices) == 3:
+                            # Nutrient pumps are on adjacent indices (typically 0, 1, 2)
+                            logger.info(f"Using optimized set_multiple_relays for nutrient pumps")
+                            # Get the first relay key
+                            relay_key = list(relay_instance.relay_addresses.keys())[0]
+                            # Get indices from relay_assignments
+                            indices = []
+                            for device in devices:
+                                if device in relay_instance.relay_assignments:
+                                    indices.append(relay_instance.relay_assignments[device]['index'])
+                            if len(indices) == 3 and max(indices) - min(indices) == 2:
+                                # They're adjacent, use set_multiple_relays
+                                start_index = min(indices)
+                                return lambda status: relay_instance.set_multiple_relays(relay_key, start_index, [status, status, status])
+                        
+                        # Fallback to individual relay control if optimization not possible
+                        logger.info(f"Using individual relay control for group: {devices}")
+                        return lambda status: [relay_instance.set_relay(device, status) for device in devices]
+                    else:
+                        # IMPORTANT: All controls should use set_relay directly
+                        # This ensures we correctly use case-insensitive relay lookup
+                        logger.info(f"Creating direct relay action for: {device_name}")
+                        return lambda status: relay_instance.set_relay(device_name, status)
+                
+                # First check if RELAY_CONTROLS is in config (standard way)
+                if 'RELAY_CONTROLS' in config:
+                    logger.info("Using RELAY_CONTROLS section from config")
+                    for api_name, device_name in config['RELAY_CONTROLS'].items():
+                        action_mapping[api_name] = create_relay_action(device_name)
+                        logger.info(f"Loaded action mapping: {api_name} -> {device_name}")
+                # If not found, try direct file reading
+                else:
+                    logger.info("Trying to read RELAY_CONTROLS directly from config file")
+                    try:
+                        # Direct parsing to maintain case sensitivity
+                        with open(self.controller.config_file, 'r') as f:
+                            in_relay_controls = False
+                            relay_controls = {}
+                            
+                            for line in f:
+                                line = line.strip()
+                                if not line or line.startswith('#'):
+                                    continue
+                                    
+                                if line == '[RELAY_CONTROLS]':
+                                    in_relay_controls = True
+                                    continue
+                                elif line.startswith('[') and line.endswith(']'):
+                                    in_relay_controls = False
+                                    continue
+                                    
+                                if in_relay_controls and '=' in line:
+                                    key, value = [x.strip() for x in line.split('=', 1)]
+                                    relay_controls[key] = value
+                                    
+                            if relay_controls:
+                                logger.info(f"Found {len(relay_controls)} relay controls by direct reading")
+                                for api_name, device_name in relay_controls.items():
+                                    action_mapping[api_name] = create_relay_action(device_name)
+                                    logger.info(f"Loaded action mapping: {api_name} -> {device_name}")
+                            else:
+                                raise ValueError("No relay controls found in file")
+                    except Exception as e:
+                        logger.error(f"Error reading config file directly: {e}")
+                        # Fall back to hardcoded mappings
+                        logger.warning("Falling back to hardcoded mappings")
+                        default_mappings = {
+                            'nutrient_pump_a': 'NutrientPumpA',
+                            'nutrient_pump_b': 'NutrientPumpB',
+                            'nutrient_pump_c': 'NutrientPumpC',
+                            'ph_up_pump': 'pHUpPump',
+                            'ph_down_pump': 'pHDownPump',
+                            'valve_outside_to_tank': 'ValveOutsideToTank',
+                            'valve_tank_to_outside': 'ValveTankToOutside',
+                            'mixing_pump': 'MixingPump',
+                            'pump_from_tank_to_gutters': 'PumpFromTankToGutters',
+                            'sprinkler_a': 'SprinklerA',
+                            'sprinkler_b': 'SprinklerB',
+                            'pump_from_collector_tray_to_tank': 'PumpFromCollectorTrayToTank'
+                        }
+                        for api_name, device_name in default_mappings.items():
+                            action_mapping[api_name] = create_relay_action(device_name)
+                            logger.info(f"Using default mapping: {api_name} -> {device_name}")
                 
                 # Process each action
                 for action, state in new_actions.items():
-                    relay_name = relay_mapping.get(action)
-                    if relay_name:
-                        logger.info(f"Setting {relay_name} to {state}")
-                        # Get relay instance
-                        relay_instance = Relay()
-                        if relay_instance:
-                            relay_instance.set_relay(relay_name, state)
-                        else:
-                            logger.warning(f"Failed to get relay instance for {relay_name}")
+                    action_handler = action_mapping.get(action)
+                    if action_handler:
+                        logger.info(f"Processing action {action} with state {state}")
+                        try:
+                            # Debug the action handler
+                            logger.info(f"Action handler type: {type(action_handler).__name__}")
+                            logger.info(f"Action handler object: {action_handler}")
+                            
+                            # Get device name from the mapping we loaded earlier
+                            device_name = "unknown"
+                            for key, value in config.items():
+                                if key == 'RELAY_CONTROLS':
+                                    device_name = value.get(action, "unknown")
+                                    logger.info(f"Found device mapping in config: {action} -> {device_name}")
+                            
+                            logger.info(f"Executing action handler for {action} -> {device_name}")
+                            
+                            # Call the appropriate action handler function - with detailed error trapping
+                            try:
+                                result = action_handler(state)
+                                logger.info(f"Action handler result: {result}")
+                            except TypeError as te:
+                                logger.error(f"TypeError in action handler: {te}")
+                                logger.error(f"Action handler arguments might be incorrect: {action_handler}, state={state}")
+                            except AttributeError as ae:
+                                logger.error(f"AttributeError in action handler: {ae}")
+                                logger.error(f"Object might be missing expected method: {action_handler}")
+                            
+                            # Add a delay after each action to ensure hardware responds
+                            time.sleep(0.2)
+                            
+                            # Log success
+                            logger.info(f"Action {action} successfully executed")
+                        except Exception as e:
+                            logger.error(f"Error applying action {action}: {e}")
+                            logger.exception("Full exception details:")
                     else:
                         logger.warning(f"Unknown action: {action}")
                 
                 # Update last state
                 self.last_action_state = new_actions.copy()
                 
-                # Clear the action file
-                with open('config/action.json', 'w') as f:
-                    json.dump({}, f)
-                    
-                logger.info("Actions processed and file cleared")
+                # Only clear the action file if we've finished processing all actions
+                logger.info("All actions processed")
             else:
                 logger.info("No new actions detected")
                 
@@ -113,7 +279,8 @@ class RippleController:
         os.makedirs(self.data_dir, exist_ok=True)
         
         self.config_file = os.path.join(self.config_dir, 'device.conf')
-        self.config = configparser.ConfigParser()
+        # Create config parser with case sensitivity
+        self.config = configparser.ConfigParser(empty_lines_in_values=False, interpolation=None)
         self.sensor_data_file = os.path.join(self.data_dir, 'saved_sensor_data.json')
         
         self.initialize_sensors()
@@ -131,6 +298,17 @@ class RippleController:
             logger.warning(f"Action file {action_file} does not exist. Creating an empty JSON file.")
             with open(action_file, 'w') as f:
                 json.dump({}, f)
+        else:
+            # Ensure action file has valid JSON format
+            try:
+                with open(action_file, 'r') as f:
+                    content = f.read().strip()
+                    if content:
+                        json.loads(content)
+            except (json.JSONDecodeError, Exception) as e:
+                logger.warning(f"Action file has invalid JSON format: {e}. Resetting to empty object.")
+                with open(action_file, 'w') as f:
+                    json.dump({}, f)
         
         # Initialize watchdog observer
         self.event_handler = ConfigFileHandler(self)
