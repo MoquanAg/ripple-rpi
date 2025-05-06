@@ -7,6 +7,7 @@ from globals import logger
 import configparser
 import os
 import time
+import json
 
 class RippleScheduler:
     def __init__(self):
@@ -262,44 +263,58 @@ class RippleScheduler:
     def _run_nutrient_cycle(self):
         """Execute nutrient cycle"""
         try:
-            # First check current EC value
-            from src.sensors.ec import EC
-            ec_statuses = EC.get_statuses_async()
+            # Get EC data from saved sensor data file instead of directly from sensors
+            ec_value = None
+            sensor_data_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'data', 'saved_sensor_data.json')
             
-            if ec_statuses and len(ec_statuses) > 0:
-                # Get the first available EC reading
-                current_ec = next(iter(ec_statuses.values()))
-                logger.info(f"Current EC reading: {current_ec}")
+            try:
+                if os.path.exists(sensor_data_path):
+                    with open(sensor_data_path, 'r') as f:
+                        data = json.load(f)
+                        # Extract EC value from saved data
+                        if ('data' in data 
+                            and 'water_metrics' in data['data'] 
+                            and 'ec' in data['data']['water_metrics'] 
+                            and 'measurements' in data['data']['water_metrics']['ec'] 
+                            and 'points' in data['data']['water_metrics']['ec']['measurements']):
+                            
+                            points = data['data']['water_metrics']['ec']['measurements']['points']
+                            if points and len(points) > 0 and 'fields' in points[0] and 'value' in points[0]['fields']:
+                                ec_value = points[0]['fields']['value']
+                                logger.info(f"Current EC reading from saved data: {ec_value}")
+            except Exception as e:
+                logger.error(f"Error reading saved EC data: {e}")
                 
-                # Get EC targets from configuration
-                try:
-                    ec_target = float(self.config.get('EC', 'ec_target').split(',')[0])
-                    ec_deadband = float(self.config.get('EC', 'ec_deadband').split(',')[0])
-                    ec_max = float(self.config.get('EC', 'ec_max').split(',')[0])
-                    ec_min = float(self.config.get('EC', 'ec_min').split(',')[0])
-                    logger.info(f"EC targets - target: {ec_target}, deadband: {ec_deadband}, min: {ec_min}, max: {ec_max}")
-                    
-                    # Check if EC is too high
-                    if current_ec > ec_max:
-                        logger.warning(f"EC value {current_ec} is above maximum threshold {ec_max}, but will continue to monitor")
-                    elif current_ec > (ec_target + ec_deadband):
-                        logger.warning(f"EC value {current_ec} is above target range, skipping nutrient cycle")
-                        return
-                    
-                    # Explicitly check if EC is too low - this is when we WANT to run the nutrient pumps
-                    if current_ec < ec_min:
-                        logger.warning(f"EC value {current_ec} is below minimum threshold {ec_min}, nutrient addition required")
-                    elif current_ec < (ec_target - ec_deadband):
-                        logger.info(f"EC value {current_ec} is below target range, nutrient addition required")
-                    else:
-                        logger.info(f"EC value {current_ec} is within target range ({ec_target}±{ec_deadband}), no nutrient addition needed")
-                        return
-                    
-                except Exception as e:
-                    logger.error(f"Failed to get EC targets from config: {e}")
-                    return
-            else:
+            if ec_value is None:
                 logger.warning("No EC readings available, cannot determine if nutrient cycle should run")
+                return
+            
+            # Now proceed with the original logic but using ec_value instead of reading from sensors
+            try:
+                ec_target = float(self.config.get('EC', 'ec_target').split(',')[0])
+                ec_deadband = float(self.config.get('EC', 'ec_deadband').split(',')[0])
+                ec_max = float(self.config.get('EC', 'ec_max').split(',')[0])
+                ec_min = float(self.config.get('EC', 'ec_min').split(',')[0])
+                logger.info(f"EC targets - target: {ec_target}, deadband: {ec_deadband}, min: {ec_min}, max: {ec_max}")
+                
+                # Check if EC is too high
+                if ec_value > ec_max:
+                    logger.warning(f"EC value {ec_value} is above maximum threshold {ec_max}, but will continue to monitor")
+                elif ec_value > (ec_target + ec_deadband):
+                    logger.warning(f"EC value {ec_value} is above target range, skipping nutrient cycle")
+                    return
+                
+                # Explicitly check if EC is too low - this is when we WANT to run the nutrient pumps
+                if ec_value < ec_min:
+                    logger.warning(f"EC value {ec_value} is below minimum threshold {ec_min}, nutrient addition required")
+                elif ec_value < (ec_target - ec_deadband):
+                    logger.info(f"EC value {ec_value} is below target range, nutrient addition required")
+                else:
+                    logger.info(f"EC value {ec_value} is within target range ({ec_target}±{ec_deadband}), no nutrient addition needed")
+                    return
+                
+            except Exception as e:
+                logger.error(f"Failed to get EC targets from config: {e}")
                 return
 
             on_duration = self.config.get('NutrientPump', 'nutrient_pump_on_duration').split(',')[0]
@@ -375,6 +390,32 @@ class RippleScheduler:
     def _run_ph_cycle(self):
         """Execute pH adjustment cycle"""
         try:
+            # Get pH data from saved sensor data file instead of directly from sensors
+            ph_value = None
+            sensor_data_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'data', 'saved_sensor_data.json')
+            
+            try:
+                if os.path.exists(sensor_data_path):
+                    with open(sensor_data_path, 'r') as f:
+                        data = json.load(f)
+                        # Extract pH value from saved data
+                        if ('data' in data 
+                            and 'water_metrics' in data['data'] 
+                            and 'ph' in data['data']['water_metrics'] 
+                            and 'measurements' in data['data']['water_metrics']['ph'] 
+                            and 'points' in data['data']['water_metrics']['ph']['measurements']):
+                            
+                            points = data['data']['water_metrics']['ph']['measurements']['points']
+                            if points and len(points) > 0 and 'fields' in points[0] and 'value' in points[0]['fields']:
+                                ph_value = points[0]['fields']['value']
+                                logger.info(f"Current pH reading from saved data: {ph_value}")
+            except Exception as e:
+                logger.error(f"Error reading saved pH data: {e}")
+                
+            if ph_value is None:
+                logger.warning("No pH readings available, cannot determine which pump to use")
+                return
+                
             # Get configuration parameters
             on_duration = self.config.get('NutrientPump', 'ph_pump_on_duration').split(',')[0]
             on_seconds = self._time_to_seconds(on_duration)
@@ -384,7 +425,7 @@ class RippleScheduler:
             if on_seconds == 0:
                 logger.warning("Skipping pH cycle: zero duration")
                 return
-            
+                
             # Get relay instance
             from src.sensors.Relay import Relay
             relay = Relay()
@@ -395,19 +436,6 @@ class RippleScheduler:
             # Record the time when pH pump starts
             self.last_nutrient_pump_time = datetime.now()
             
-            # Get current pH reading and target pH
-            from src.sensors.pH import pH
-            current_ph = None
-            ph_statuses = pH.get_statuses_async()
-            
-            if ph_statuses and len(ph_statuses) > 0:
-                # Use the first available pH sensor reading
-                current_ph = next(iter(ph_statuses.values()))
-                logger.info(f"Current pH reading: {current_ph}")
-            else:
-                logger.warning("No pH readings available, cannot determine which pump to use")
-                return
-                
             # Get pH targets from configuration
             try:
                 target_ph = float(self.config.get('pH', 'ph_target').split(',')[0])
@@ -420,24 +448,24 @@ class RippleScheduler:
                 # we should prioritize bringing it back into range
                 
                 # Determine which pump to use based on pH value
-                if current_ph > ph_max:
+                if ph_value > ph_max:
                     # DEFINITELY use pH DOWN when above maximum
                     use_ph_up = False
-                    logger.warning(f"pH value {current_ph} is ABOVE maximum threshold {ph_max}, using pH DOWN pump")
-                elif current_ph < ph_min:
+                    logger.warning(f"pH value {ph_value} is ABOVE maximum threshold {ph_max}, using pH DOWN pump")
+                elif ph_value < ph_min:
                     # DEFINITELY use pH UP when below minimum
                     use_ph_up = True
-                    logger.warning(f"pH value {current_ph} is BELOW minimum threshold {ph_min}, using pH UP pump")
-                elif current_ph > (target_ph + (ph_deadband / 2)):
+                    logger.warning(f"pH value {ph_value} is BELOW minimum threshold {ph_min}, using pH UP pump")
+                elif ph_value > (target_ph + (ph_deadband / 2)):
                     # Use pH Down within safe range but above target+deadband
                     use_ph_up = False
-                    logger.info(f"Current pH ({current_ph}) is above high threshold ({target_ph + (ph_deadband / 2)}), using pH DOWN pump")
-                elif current_ph < (target_ph - (ph_deadband / 2)):
+                    logger.info(f"Current pH ({ph_value}) is above high threshold ({target_ph + (ph_deadband / 2)}), using pH DOWN pump")
+                elif ph_value < (target_ph - (ph_deadband / 2)):
                     # Use pH Up within safe range but below target-deadband
                     use_ph_up = True
-                    logger.info(f"Current pH ({current_ph}) is below low threshold ({target_ph - (ph_deadband / 2)}), using pH UP pump")
+                    logger.info(f"Current pH ({ph_value}) is below low threshold ({target_ph - (ph_deadband / 2)}), using pH UP pump")
                 else:
-                    logger.info(f"Current pH ({current_ph}) is within deadband of target ({target_ph}), no pH adjustment needed")
+                    logger.info(f"Current pH ({ph_value}) is within deadband of target ({target_ph}), no pH adjustment needed")
                     return
             except Exception as e:
                 logger.error(f"Failed to get pH targets from config: {e}")
