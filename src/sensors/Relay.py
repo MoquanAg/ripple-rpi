@@ -797,15 +797,17 @@ class Relay:
             return
         return self.set_multiple_relays(device_name, starting_relay_index, states)
 
-    def set_valve_from_outside_to_tank(self, status):
-        """Control valve for flow from outside to tank."""
-        logger.info(f"Setting outside-to-tank valve to {status}")
-        self.set_relay("ValveOutsideToTank", status)
-
-    def set_valve_from_tank_to_outside(self, status):
-        """Control valve for flow from tank to outside."""
-        logger.info(f"Setting tank-to-outside valve to {status}")
-        self.set_relay("ValveTankToOutside", status)
+    def set_valve_outside_to_tank(self, state):
+        """Control the valve from outside to the tank."""
+        return self.set_relay("ValveOutsideToTank", state)
+        
+    def get_valve_outside_to_tank_state(self):
+        """Get the current state of the valve from outside to the tank."""
+        return self.get_relay_state("ValveOutsideToTank")
+        
+    def set_valve_tank_to_outside(self, state):
+        """Control the valve from the tank to outside."""
+        return self.set_relay("ValveTankToOutside", state)
 
     def set_pump_recirculation(self, status):
         """Control recirculation pump.
@@ -1060,43 +1062,70 @@ class Relay:
         logger.info(f"Setting mixing pump to {status}")
         self.set_relay("MixingPump", status)
 
-    def set_relay(self, device_name, status):
-        """Control a relay by device name from assignments.
+    def set_relay(self, device_name, state):
+        """Set a relay by its device name."""
+        # Find the relay device based on its name (case-insensitive)
+        device_name_lower = device_name.lower()
+        for name, details in self.relay_assignments.items():
+            if name.lower() == device_name_lower:
+                device_name = name  # Use the correct case
+                break
+                
+        logger.info(f"Setting relay {device_name} to {state}")
         
-        Args:
-            device_name (str): Name of the device in relay assignments
-            status (bool): True to turn on, False to turn off
-        """
-        logger.info(f"Setting {device_name} to {status}")
-        # Debug info
-        logger.info(f"Available relay assignments: {list(self.relay_assignments.keys())}")
-        # Try case-insensitive lookup
-        relay_group, index = None, None
-        
-        # Try exact match first
-        if device_name in self.relay_assignments:
-            relay_group = self.relay_assignments[device_name].get('relay_name', None)
-            index = self.relay_assignments[device_name].get('index', None)
-            logger.info(f"Exact match found: {device_name} -> {relay_group}[{index}]")
-        else:
-            # Try case-insensitive match
-            device_lower = device_name.lower()
-            for key, info in self.relay_assignments.items():
-                if key.lower() == device_lower:
-                    relay_group = info.get('relay_name', None)
-                    index = info.get('index', None)
-                    logger.info(f"Case-insensitive match found: {device_name} -> {key} -> {relay_group}[{index}]")
-                    break
+        if device_name not in self.relay_assignments:
+            logger.error(f"Cannot find relay assignment for {device_name}")
+            return False
             
-            if relay_group is None:
-                logger.warning(f"No match found for {device_name} in relay assignments")
+        relay_key = self.relay_assignments[device_name]['relay_key']
+        index = self.relay_assignments[device_name]['index']
         
-        if relay_group and index is not None:
-            # Use set_multiple_relays with a single relay for better code reuse
-            result = self.set_multiple_relays(relay_group, index, [status])
-            return result
+        return self.set_relay_at_index(relay_key, index, state)
+        
+    def get_relay_state(self, device_name):
+        """Get the current state of a relay by its device name."""
+        # Find the relay device based on its name (case-insensitive)
+        device_name_lower = device_name.lower()
+        for name, details in self.relay_assignments.items():
+            if name.lower() == device_name_lower:
+                device_name = name  # Use the correct case
+                break
+                
+        if device_name not in self.relay_assignments:
+            logger.warning(f"Cannot find relay assignment for {device_name}")
+            return None
+            
+        # Get relay details
+        relay_key = self.relay_assignments[device_name]['relay_key']
+        index = self.relay_assignments[device_name]['index']
+        
+        # Make sure we have status data
+        if relay_key not in self.relay_statuses or not self.relay_statuses[relay_key]:
+            # Try to refresh the status
+            self.get_status()
+            
+            # Check again
+            if relay_key not in self.relay_statuses or not self.relay_statuses[relay_key]:
+                logger.warning(f"No status data available for relay {relay_key}")
+                return None
+        
+        # Get the current state
+        if 0 <= index < len(self.relay_statuses[relay_key]):
+            return bool(self.relay_statuses[relay_key][index])
         else:
-            logger.warning(f"{device_name} not found in relay assignments")
+            logger.warning(f"Index {index} out of range for relay {relay_key}")
+            return None
+
+    def set_relay_at_index(self, relay_key, index, state):
+        """Set a relay at a specific index."""
+        try:
+            if relay_key not in self.relay_addresses:
+                logger.error(f"Relay key {relay_key} not found in relay addresses")
+                return False
+                
+            return self.set_multiple_relays(relay_key, index, [state])
+        except Exception as e:
+            logger.error(f"Error setting relay at index: {e}")
             return False
 
     def _save_null_metrics_data(self):

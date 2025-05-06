@@ -181,14 +181,14 @@ class RippleScheduler:
         try:
             # Auto refill checks every minute by default
             self.scheduler.add_job(
-                self._check_auto_refill,
-                IntervalTrigger(seconds=60),  # Check every minute
-                id='auto_refill',
+                self._check_water_level,
+                IntervalTrigger(seconds=30),  # Check every 30 seconds
+                id='check_water_level',
                 max_instances=1
             )
-            logger.info("Auto refill monitoring initialized")
+            logger.info("Water level monitoring initialized")
         except Exception as e:
-            logger.error(f"Failed to initialize auto refill monitoring: {e}")
+            logger.error(f"Failed to initialize water level monitoring: {e}")
             
     def _run_mixing_cycle(self):
         """Execute mixing pump cycle"""
@@ -681,13 +681,142 @@ class RippleScheduler:
         except Exception as e:
             logger.error(f"Error in fresh water dilution check: {e}")
             
-    def _check_auto_refill(self):
-        """Check if auto refill is needed"""
+    def _check_water_level(self):
+        """Check water level and open valve to refill if needed"""
         try:
-            # Implement auto refill check logic here
-            logger.info("Checking if auto refill is needed")
+            # Get water level data from saved sensor data file
+            import json
+            import os
+            from datetime import datetime, timedelta
+            
+            water_level = None
+            data_timestamp = None
+            max_data_age = timedelta(minutes=5)  # Maximum age of data to consider valid (5 minutes)
+            refresh_threshold = timedelta(seconds=30)  # If data is older than 30 seconds, trigger a refresh
+            sensor_data_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'data', 'saved_sensor_data.json')
+            
+            # Function to read water level data from file
+            def read_water_level_from_file():
+                nonlocal water_level, data_timestamp
+                try:
+                    if os.path.exists(sensor_data_path):
+                        with open(sensor_data_path, 'r') as f:
+                            data = json.load(f)
+                            # Extract water level value from saved data
+                            if ('data' in data 
+                                and 'water_metrics' in data['data'] 
+                                and 'water_level' in data['data']['water_metrics'] 
+                                and 'measurements' in data['data']['water_metrics']['water_level'] 
+                                and 'points' in data['data']['water_metrics']['water_level']['measurements']):
+                                
+                                points = data['data']['water_metrics']['water_level']['measurements']['points']
+                                if points and len(points) > 0 and 'fields' in points[0] and 'value' in points[0]['fields']:
+                                    water_level = points[0]['fields']['value']
+                                    
+                                    # Check if the data has a timestamp and is not too old
+                                    if 'timestamp' in points[0]:
+                                        try:
+                                            # Parse timestamp (handle different formats)
+                                            timestamp_str = points[0]['timestamp']
+                                            data_timestamp = datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
+                                            
+                                            # Calculate data age
+                                            data_age = datetime.now() - data_timestamp
+                                            
+                                            # Check if data is too old
+                                            if data_age > max_data_age:
+                                                logger.warning(f"Water level data is too old (from {timestamp_str}), not using for control decisions")
+                                                water_level = None
+                                                return False
+                                            elif data_age > refresh_threshold:
+                                                logger.info(f"Water level data is {data_age.total_seconds():.1f} seconds old, will refresh")
+                                                return False
+                                            else:
+                                                logger.info(f"Current water level reading from saved data: {water_level} (from {timestamp_str})")
+                                                return True
+                                        except Exception as e:
+                                            logger.error(f"Error parsing timestamp from water level data: {e}")
+                                            return False
+                                    else:
+                                        logger.info(f"Current water level reading from saved data: {water_level} (timestamp not available)")
+                                        return True
+                except Exception as e:
+                    logger.error(f"Error reading saved water level data: {e}")
+                return False
+                
+            # First attempt to read from file
+            data_fresh = read_water_level_from_file()
+            
+            # If data is not fresh enough, trigger a refresh and try again
+            if not data_fresh and water_level is not None:
+                logger.info("Triggering refresh of water level sensor data")
+                from src.sensors.water_level import WaterLevel
+                WaterLevel.get_statuses_async()  # Request fresh data
+                
+                # Wait for the asynchronous operation to complete
+                time.sleep(5)
+                
+                # Try reading again
+                data_fresh = read_water_level_from_file()
+                
+            if water_level is None:
+                logger.warning("No recent water level readings available, cannot determine if refill is needed")
+                return
+                
+            # Get water level targets from configuration
+            try:
+                water_level_target = float(self.config.get('WaterLevel', 'water_level_target').split(',')[0])
+                water_level_deadband = float(self.config.get('WaterLevel', 'water_level_deadband').split(',')[0])
+                water_level_min = float(self.config.get('WaterLevel', 'water_level_min').split(',')[0])
+                water_level_max = float(self.config.get('WaterLevel', 'water_level_max').split(',')[0])
+                
+                logger.info(f"Water level targets - target: {water_level_target}, deadband: {water_level_deadband}, min: {water_level_min}, max: {water_level_max}")
+                
+                # Check if water level is below threshold
+                low_threshold = water_level_target - water_level_deadband
+                
+                # Get relay instance
+                from src.sensors.Relay import Relay
+                relay = Relay()
+                if not relay:
+                    logger.warning("Failed to access relay for valve control: relay not available")
+                    return
+                
+                # Control the valve based on water level
+                valve_should_be_open = False
+                
+                if water_level < water_level_min:
+                    # Water level is critically low, definitely open valve
+                    logger.warning(f"Water level {water_level} is BELOW minimum threshold {water_level_min}, opening valve")
+                    valve_should_be_open = True
+                elif water_level < low_threshold:
+                    # Water level is below target range, open valve
+                    logger.info(f"Water level {water_level} is below target range ({water_level_target}±{water_level_deadband}), opening valve")
+                    valve_should_be_open = True
+                elif water_level > water_level_max:
+                    # Water level is above maximum, make sure valve is closed
+                    logger.warning(f"Water level {water_level} is ABOVE maximum threshold {water_level_max}, ensuring valve is closed")
+                    valve_should_be_open = False
+                else:
+                    # Water level is within acceptable range, close valve
+                    logger.info(f"Water level {water_level} is within acceptable range, ensuring valve is closed")
+                    valve_should_be_open = False
+                
+                # Set the valve state
+                current_valve_state = relay.get_valve_outside_to_tank_state()
+                
+                if current_valve_state != valve_should_be_open:
+                    relay.set_valve_outside_to_tank(valve_should_be_open)
+                    state_text = "open" if valve_should_be_open else "closed"
+                    logger.info(f"Changed ValveOutsideToTank to {state_text}")
+                
+            except Exception as e:
+                logger.error(f"Error in water level control: {e}")
+                logger.exception("Full exception details:")
+                
         except Exception as e:
-            logger.error(f"Error in auto refill check: {e}")
+            logger.error(f"Error checking water level: {e}")
+            logger.exception("Full exception details:")
             
     def get_scheduled_jobs(self):
         """Get information about all scheduled jobs"""
@@ -761,6 +890,13 @@ class RippleScheduler:
                 if 'ph_cycle' in self.jobs:
                     self.scheduler.remove_job('ph_cycle')
                     self._initialize_nutrient_schedule()
+            elif section == 'WaterLevel':
+                # Water level targets affect valve control
+                logger.info(f"Water level target updated: {key} = {value}")
+                # Force a water level check on next run
+                if 'check_water_level' in self.jobs:
+                    self.scheduler.remove_job('check_water_level')
+                    self._initialize_auto_refill()
                 
             logger.info(f"Configuration updated: {section}.{key} = {value}")
             return True
