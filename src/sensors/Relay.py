@@ -121,8 +121,8 @@ class Relay:
 
     def _process_control_response(self, data, command_info):
         """Process response from turn on/off commands."""
-        logger.debug(f"Processing control response - Data: {[hex(b) for b in data] if data else None}")
-        logger.debug(f"Command info: {command_info}")
+        logger.info(f"Processing control response - Data: {[hex(b) for b in data] if data else None}")
+        logger.info(f"Command info: {command_info}")
         
         if not data:
             logger.warning("No data received in control response")
@@ -135,9 +135,26 @@ class Relay:
         try:
             # Get the correct address for the device
             device_name = command_info.get('device', '').upper()
-            expected_address = self.relay_addresses.get(device_name, self.address)
+            expected_address = None
+            
+            # Try exact match first
+            if device_name in self.relay_addresses:
+                expected_address = self.relay_addresses[device_name]
+            else:
+                # Try case-insensitive match
+                for key, value in self.relay_addresses.items():
+                    if key.upper() == device_name:
+                        expected_address = value
+                        device_name = key  # Use the correct case for the key
+                        break
+            
+            # Fall back to default address if still not found
+            if expected_address is None:
+                expected_address = self.address
             
             # Verify response format
+            logger.info(f"Verifying response: Device: {device_name}, Expected address: 0x{expected_address:02X}")
+            
             if data[0] != expected_address:
                 logger.warning(f"Address mismatch - Expected: 0x{expected_address:02X}, Got: 0x{data[0]:02X}")
                 return
@@ -198,8 +215,32 @@ class Relay:
     def turn_on(self, device_name, relay_index):
         """Queue a turn on command with the modbus client."""
         # Get the correct address for the device from relay_addresses
-        address = self.relay_addresses.get(device_name.upper(), self.address)
+        device_upper = device_name.upper()
+        address = None
+        
+        # Try exact match first
+        if device_name in self.relay_addresses:
+            address = self.relay_addresses[device_name]
+            logger.info(f"Using exact address match for {device_name}: 0x{address:02X}")
+        else:
+            # Try case-insensitive match
+            for key, value in self.relay_addresses.items():
+                if key.upper() == device_upper:
+                    address = value
+                    device_name = key  # Use the correct case for the key
+                    logger.info(f"Using case-insensitive address match: {device_upper} -> {key}: 0x{address:02X}")
+                    break
+        
+        # Fall back to default if no match found
+        if address is None:
+            address = self.address
+            logger.warning(f"No matching relay found for {device_name}, using default address {address}")
+            
+        logger.info(f"TURNING ON: device={device_name}, address=0x{address:02X}, relay_index={relay_index}")
+        
         command = bytearray([address, 0x05, 0x00, relay_index, 0xFF, 0x00])
+        logger.info(f"ON Command bytes: {[f'0x{b:02X}' for b in command]}")
+        
         command_id = self.modbus_client.send_command(
             device_type="relay",
             port=self.port,  # Use the port from config
@@ -213,15 +254,39 @@ class Relay:
             "device": device_name,
             "relay": relay_index,
         }
-        logger.debug(
-            f"Sent turn on command for relay {relay_index} with UUID: {command_id}"
+        logger.info(
+            f"Sent turn on command for {device_name}, relay {relay_index} with UUID: {command_id}"
         )
 
     def turn_off(self, device_name, relay_index):
         """Queue a turn off command with the modbus client."""
         # Get the correct address for the device from relay_addresses
-        address = self.relay_addresses.get(device_name.upper(), self.address)
+        device_upper = device_name.upper()
+        address = None
+        
+        # Try exact match first
+        if device_name in self.relay_addresses:
+            address = self.relay_addresses[device_name]
+            logger.info(f"Using exact address match for {device_name}: 0x{address:02X}")
+        else:
+            # Try case-insensitive match
+            for key, value in self.relay_addresses.items():
+                if key.upper() == device_upper:
+                    address = value
+                    device_name = key  # Use the correct case for the key
+                    logger.info(f"Using case-insensitive address match: {device_upper} -> {key}: 0x{address:02X}")
+                    break
+        
+        # Fall back to default if no match found
+        if address is None:
+            address = self.address
+            logger.warning(f"No matching relay found for {device_name}, using default address {address}")
+            
+        logger.info(f"TURNING OFF: device={device_name}, address=0x{address:02X}, relay_index={relay_index}")
+        
         command = bytearray([address, 0x05, 0x00, relay_index, 0x00, 0x00])
+        logger.info(f"OFF Command bytes: {[f'0x{b:02X}' for b in command]}")
+        
         command_id = self.modbus_client.send_command(
             device_type="relay",
             port=self.port,  # Use the port from config
@@ -235,8 +300,8 @@ class Relay:
             "device": device_name,
             "relay": relay_index,
         }
-        logger.debug(
-            f"Sent turn off command for relay {relay_index} with UUID: {command_id}"
+        logger.info(
+            f"Sent turn off command for {device_name}, relay {relay_index} with UUID: {command_id}"
         )
 
     def load_addresses(self):
@@ -329,9 +394,19 @@ class Relay:
 
     def _get_relay_info(self, device_name):
         """Get relay name and index for a device name."""
+        # Try exact match first
         if device_name in self.relay_assignments:
             info = self.relay_assignments[device_name]
             return info.get('relay_name', None), info.get('index', None)
+            
+        # Try case-insensitive match
+        device_lower = device_name.lower()
+        for key, info in self.relay_assignments.items():
+            if key.lower() == device_lower:
+                logger.info(f"Case-insensitive match found: {device_name} -> {key}")
+                return info.get('relay_name', None), info.get('index', None)
+                
+        logger.warning(f"No match found for {device_name} in relay assignments")
         return None, None
 
     def save_null_data(self):
@@ -642,7 +717,25 @@ class Relay:
             return
         
         # Get the correct address for the device from relay_addresses
-        address = self.relay_addresses.get(device_name.upper(), self.address)
+        # Convert to uppercase for case-insensitive matching
+        device_upper = device_name.upper()
+        address = None
+        
+        # Try exact match first
+        if device_name in self.relay_addresses:
+            address = self.relay_addresses[device_name]
+        else:
+            # Try case-insensitive match
+            for key, value in self.relay_addresses.items():
+                if key.upper() == device_upper:
+                    address = value
+                    device_name = key  # Use the correct case for the key
+                    break
+        
+        # Fall back to default if no match found
+        if address is None:
+            address = self.address
+            logger.warning(f"No matching relay found for {device_name}, using default address {address}")
         
         num_registers = len(states)
         byte_count = num_registers * 2  # Each register needs 2 bytes
@@ -707,26 +800,12 @@ class Relay:
     def set_valve_from_outside_to_tank(self, status):
         """Control valve for flow from outside to tank."""
         logger.info(f"Setting outside-to-tank valve to {status}")
-        relay_group, index = self._get_relay_info("ValveOutsideToTank")
-        if relay_group and index:
-            if status:
-                self.turn_on(relay_group, index)
-            else:
-                self.turn_off(relay_group, index)
-        else:
-            logger.warning("ValveOutsideToTank not found in relay assignments")
+        self.set_relay("ValveOutsideToTank", status)
 
     def set_valve_from_tank_to_outside(self, status):
         """Control valve for flow from tank to outside."""
         logger.info(f"Setting tank-to-outside valve to {status}")
-        relay_group, index = self._get_relay_info("ValveTankToOutside")
-        if relay_group and index:
-            if status:
-                self.turn_on(relay_group, index)
-            else:
-                self.turn_off(relay_group, index)
-        else:
-            logger.warning("ValveTankToOutside not found in relay assignments")
+        self.set_relay("ValveTankToOutside", status)
 
     def set_pump_recirculation(self, status):
         """Control recirculation pump.
@@ -734,33 +813,65 @@ class Relay:
         Args:
             status (bool): True to turn on pump, False to turn off
         """
-        if not any(key in self.relay_addresses for key in ['RELAYTWO']):
-            logger.info("No recirculation pump hardware present in RELAY_TWO")
+        # Case-insensitive check for relay hardware - FIXED to use proper case comparison
+        relay_found = False
+        for key in self.relay_addresses.keys():
+            if key.upper() == 'RELAYTWO' or key.lower() == 'relaytwo':
+                relay_found = True
+                break
+                
+        if not relay_found:
+            logger.info("No recirculation pump hardware present in relay addresses")
+            logger.info(f"Available relay addresses: {self.relay_addresses}")
             return
 
         logger.info(f"Setting recirculation pump to {status}")
         try:
             # Get the relay assignments from config
             assignments = globals.DEVICE_CONFIG_FILE['RELAY_ASSIGNMENTS']
-            relay_two_assignments = assignments.get('Relay_TWO_0_to_3', '').split(',')
+            relay_two_assignments = None
+            
+            # Look for relay_two assignments with case insensitivity
+            for key, value in assignments.items():
+                if key.lower() == 'relay_two_0_to_3':
+                    relay_two_assignments = value.split(',')
+                    break
+                    
+            if not relay_two_assignments:
+                raise KeyError("relay_two_0_to_3 not found in RELAY_ASSIGNMENTS")
             
             # Find the index of PumpRecirculation in the assignments
+            pump_index = None
             for i, device in enumerate(relay_two_assignments):
                 if device.strip() == 'PumpRecirculation':
                     pump_index = i
                     break
-            else:
-                raise KeyError("PumpRecirculation not found in RELAY_TWO_0_to_3 assignments")
+                    
+            if pump_index is None:
+                raise KeyError("PumpRecirculation not found in relay_two_0_to_3 assignments")
+            
+            # Find the correct relay key with case-insensitivity
+            relay_key = None
+            for key in self.relay_addresses.keys():
+                if key.upper() == 'RELAYTWO' or key.lower() == 'relaytwo':
+                    relay_key = key
+                    break
+                    
+            if not relay_key:
+                raise KeyError("Cannot find RELAYTWO in relay addresses")
+                
+            logger.info(f"Using relay key {relay_key} with index {pump_index}")
             
             if status:
-                self.turn_on("RELAYTWO", pump_index)
+                self.turn_on(relay_key, pump_index)
             else:
-                self.turn_off("RELAYTWO", pump_index)
+                self.turn_off(relay_key, pump_index)
                 
         except KeyError as e:
             logger.warning(f"Missing configuration for recirculation pump: {e}")
         except Exception as e:
             logger.error(f"Error controlling recirculation pump: {e}")
+            logger.exception("Full exception details:")
 
     def set_pump_from_tank_to_gutters(self, status):
         """Control pump from tank to gutters.
@@ -768,55 +879,53 @@ class Relay:
         Args:
             status (bool): True to turn on pump, False to turn off
         """
-        if not any(key in self.relay_addresses for key in ['RELAYONE']):
-            logger.info("No tank-to-gutters pump hardware present in RELAY_ONE")
+        # Case-insensitive check for relay hardware - FIXED to use proper case comparison
+        if not any(key.upper() == 'RELAYONE' or key.lower() == 'relayone' for key in self.relay_addresses.keys()):
+            logger.info("No tank-to-gutters pump hardware present in relay addresses")
+            logger.info(f"Available relay addresses: {self.relay_addresses}")
             return
 
         logger.info(f"Setting tank-to-gutters pump to {status}")
         try:
-            # Get all relay assignments from config
-            assignments = globals.DEVICE_CONFIG_FILE['RELAY_ASSIGNMENTS']
-            
-            # Search through all relay groups for PumpFromTankToGutters
-            for group_name, devices in assignments.items():
-                if not group_name.startswith('Relay_'):
-                    continue
-                    
-                device_list = devices.split(',')
-                for i, device in enumerate(device_list):
-                    if device.strip() == 'PumpFromTankToGutters':
-                        # Extract the base index from group name
-                        base_index = int(group_name.split('_')[2])
-                        pump_index = i + base_index
-                        
-                        if status:
-                            self.turn_on("RELAYONE", pump_index)
-                        else:
-                            self.turn_off("RELAYONE", pump_index)
-                        return
-                        
-            raise KeyError("PumpFromTankToGutters not found in any relay assignments")
-                
-        except KeyError as e:
-            logger.warning(f"Missing configuration for tank-to-gutters pump: {e}")
+            # Use the generic set_relay method which has case-insensitive matching
+            result = self.set_relay("PumpFromTankToGutters", status)
+            logger.info(f"set_relay result: {result}")
         except Exception as e:
             logger.error(f"Error controlling tank-to-gutters pump: {e}")
 
     def set_sprinklers(self, status):
         """Control both sprinkler A and B together."""
         logger.info(f"Setting sprinklers to {status}")
-        relay_group_a, index_a = self._get_relay_info("SprinklerA")
-        relay_group_b, index_b = self._get_relay_info("SprinklerB")
-        
-        if relay_group_a and index_a and relay_group_b and index_b:
-            if status:
-                self.turn_on(relay_group_a, index_a)
-                self.turn_on(relay_group_b, index_b)
-            else:
-                self.turn_off(relay_group_a, index_a)
-                self.turn_off(relay_group_b, index_b)
-        else:
-            logger.warning("SprinklerA or SprinklerB not found in relay assignments")
+        try:
+            # Find the relay assignments for both sprinklers
+            indices = []
+            relay_group = None
+            
+            for sprinkler in ["SprinklerA", "SprinklerB"]:
+                if sprinkler in self.relay_assignments:
+                    info = self.relay_assignments[sprinkler]
+                    if relay_group is None:
+                        relay_group = info.get('relay_name')
+                    indices.append(info.get('index'))
+            
+            if relay_group and len(indices) == 2:
+                # Check if they're adjacent indices
+                if abs(indices[0] - indices[1]) == 1:
+                    # Use set_multiple_relays for efficiency
+                    start_index = min(indices)
+                    logger.info(f"Using optimized set_multiple_relays for sprinklers at indices {indices}")
+                    return self.set_multiple_relays(relay_group, start_index, [status, status])
+            
+            # Fallback to individual control
+            logger.info("Using individual control for sprinklers")
+            result_a = self.set_relay("SprinklerA", status)
+            result_b = self.set_relay("SprinklerB", status)
+            return result_a and result_b
+            
+        except Exception as e:
+            logger.error(f"Error controlling sprinklers: {e}")
+            logger.exception("Exception details:")
+            return False
 
     def set_pump_from_collector_tray_to_tank(self, status):
         """Control pump from collector tray to tank.
@@ -824,31 +933,17 @@ class Relay:
         Args:
             status (bool): True to turn on pump, False to turn off
         """
-        if not any(key in self.relay_addresses for key in ['RELAYONE']):
-            logger.info("No collector tray pump hardware present in RELAY_ONE")
+        # Case-insensitive check for relay hardware - FIXED to use proper case comparison
+        if not any(key.upper() == 'RELAYONE' or key.lower() == 'relayone' for key in self.relay_addresses.keys()):
+            logger.info("No collector tray pump hardware present in relay addresses")
+            logger.info(f"Available relay addresses: {self.relay_addresses}")
             return
 
         logger.info(f"Setting collector tray pump to {status}")
         try:
-            # Get the relay assignments from config
-            assignments = globals.DEVICE_CONFIG_FILE['RELAY_ASSIGNMENTS']
-            relay_one_assignments = assignments.get('Relay_ONE_8_to_11', '').split(',')
-            
-            # Find the index of PumpFromCollectorTrayToTank
-            for i, device in enumerate(relay_one_assignments):
-                if device.strip() == 'PumpFromCollectorTrayToTank':
-                    pump_index = i + 8  # Offset by 8 since this is 8_to_11 group
-                    break
-            else:
-                raise KeyError("PumpFromCollectorTrayToTank not found in RELAY_ONE_8_to_11 assignments")
-            
-            if status:
-                self.turn_on("RELAYONE", pump_index)
-            else:
-                self.turn_off("RELAYONE", pump_index)
-                
-        except KeyError as e:
-            logger.warning(f"Missing configuration for collector tray pump: {e}")
+            # Use the generic set_relay method which has case-insensitive matching
+            result = self.set_relay("PumpFromCollectorTrayToTank", status)
+            logger.info(f"set_relay result: {result}")
         except Exception as e:
             logger.error(f"Error controlling collector tray pump: {e}")
 
@@ -858,37 +953,17 @@ class Relay:
         Args:
             status (bool): True to turn on pump, False to turn off
         """
-        if not any(key in self.relay_addresses for key in ['RELAYONE']):
-            logger.info("No pH plus pump hardware present in RELAY_ONE")
+        # Case-insensitive check for relay hardware - FIXED to use proper case comparison
+        if not any(key.upper() == 'RELAYONE' or key.lower() == 'relayone' for key in self.relay_addresses.keys()):
+            logger.info("No pH plus pump hardware present in relay addresses")
+            logger.info(f"Available relay addresses: {self.relay_addresses}")
             return
 
         logger.info(f"Setting pH plus pump to {status}")
         try:
-            # Get all relay assignments from config
-            assignments = globals.DEVICE_CONFIG_FILE['RELAY_ASSIGNMENTS']
-            
-            # Search through all relay groups for pHUpPump
-            for group_name, devices in assignments.items():
-                if not group_name.startswith('Relay_'):
-                    continue
-                    
-                device_list = devices.split(',')
-                for i, device in enumerate(device_list):
-                    if device.strip() == 'pHUpPump':
-                        # Extract the base index from group name (e.g., 0 from "Relay_ONE_0_to_3")
-                        base_index = int(group_name.split('_')[2])
-                        pump_index = i + base_index
-                        
-                        if status:
-                            self.turn_on("RELAYONE", pump_index)
-                        else:
-                            self.turn_off("RELAYONE", pump_index)
-                        return
-                        
-            raise KeyError("pHUpPump not found in any relay assignments")
-                
-        except KeyError as e:
-            logger.warning(f"Missing configuration for pH plus pump: {e}")
+            # Use the generic set_relay method which has case-insensitive matching
+            result = self.set_relay("pHUpPump", status)
+            logger.info(f"set_relay result: {result}")
         except Exception as e:
             logger.error(f"Error controlling pH plus pump: {e}")
 
@@ -898,37 +973,17 @@ class Relay:
         Args:
             status (bool): True to turn on pump, False to turn off
         """
-        if not any(key in self.relay_addresses for key in ['RELAYONE']):
-            logger.info("No pH minus pump hardware present in RELAY_ONE")
+        # Case-insensitive check for relay hardware - FIXED to use proper case comparison
+        if not any(key.upper() == 'RELAYONE' or key.lower() == 'relayone' for key in self.relay_addresses.keys()):
+            logger.info("No pH minus pump hardware present in relay addresses")
+            logger.info(f"Available relay addresses: {self.relay_addresses}")
             return
 
         logger.info(f"Setting pH minus pump to {status}")
         try:
-            # Get all relay assignments from config
-            assignments = globals.DEVICE_CONFIG_FILE['RELAY_ASSIGNMENTS']
-            
-            # Search through all relay groups for pHDownPump
-            for group_name, devices in assignments.items():
-                if not group_name.startswith('Relay_'):
-                    continue
-                    
-                device_list = devices.split(',')
-                for i, device in enumerate(device_list):
-                    if device.strip() == 'pHDownPump':
-                        # Extract the base index from group name (e.g., 4 from "Relay_ONE_4_to_7")
-                        base_index = int(group_name.split('_')[2])
-                        pump_index = i + base_index
-                        
-                        if status:
-                            self.turn_on("RELAYONE", pump_index)
-                        else:
-                            self.turn_off("RELAYONE", pump_index)
-                        return
-                        
-            raise KeyError("pHDownPump not found in any relay assignments")
-                
-        except KeyError as e:
-            logger.warning(f"Missing configuration for pH minus pump: {e}")
+            # Use the generic set_relay method which has case-insensitive matching
+            result = self.set_relay("pHDownPump", status)
+            logger.info(f"set_relay result: {result}")
         except Exception as e:
             logger.error(f"Error controlling pH minus pump: {e}")
 
@@ -938,43 +993,44 @@ class Relay:
         Args:
             status (bool): True to turn on all pumps, False to turn off all
         """
-        if not any(key in self.relay_addresses for key in ['RELAYONE']):
-            logger.info("No nutrient pump hardware present in RELAY_ONE")
-            return
+        # Case-insensitive check for relay hardware - FIXED to use proper case comparison
+        if not any(key.upper() == 'RELAYONE' or key.lower() == 'relayone' for key in self.relay_addresses.keys()):
+            logger.info("No nutrient pump hardware present in relay addresses")
+            logger.info(f"Available relay addresses: {self.relay_addresses}")
+            return False
 
         logger.info(f"Setting all nutrient pumps to {status}")
         try:
-            # Get all relay assignments from config
-            assignments = globals.DEVICE_CONFIG_FILE['RELAY_ASSIGNMENTS']
+            # Get all relay assignments for nutrient pumps
+            indices = []
+            relay_group = None
             
-            # Find indices for all nutrient pumps
-            pump_indices = []
-            for group_name, devices in assignments.items():
-                if not group_name.startswith('Relay_'):
-                    continue
-                    
-                device_list = devices.split(',')
-                base_index = int(group_name.split('_')[2])
+            for pump in ["NutrientPumpA", "NutrientPumpB", "NutrientPumpC"]:
+                if pump in self.relay_assignments:
+                    info = self.relay_assignments[pump]
+                    if relay_group is None:
+                        relay_group = info.get('relay_name')
+                    indices.append(info.get('index'))
+            
+            if relay_group and len(indices) == 3:
+                # Check if they're consecutive indices
+                if max(indices) - min(indices) == 2:
+                    # Use set_multiple_relays for efficiency
+                    start_index = min(indices)
+                    logger.info(f"Using optimized set_multiple_relays for nutrient pumps at indices {indices}")
+                    return self.set_multiple_relays(relay_group, start_index, [status, status, status])
+            
+            # Fallback to individual control
+            logger.info("Using individual control for nutrient pumps")
+            result_a = self.set_nutrient_pump("A", status)
+            result_b = self.set_nutrient_pump("B", status)
+            result_c = self.set_nutrient_pump("C", status)
+            return result_a and result_b and result_c
                 
-                for i, device in enumerate(device_list):
-                    device = device.strip()
-                    if device in ['NutrientPumpA', 'NutrientPumpB', 'NutrientPumpC']:
-                        pump_indices.append(i + base_index)
-            
-            if len(pump_indices) != 3:
-                raise KeyError("Could not find all three nutrient pumps in relay assignments")
-            
-            # Control all three pumps together using set_three_relays
-            self.set_three_relays(
-                "RELAYONE",
-                min(pump_indices),
-                [status, status, status]  # Same status for all three pumps
-            )
-                
-        except KeyError as e:
-            logger.warning(f"Missing configuration for nutrient pumps: {e}")
         except Exception as e:
             logger.error(f"Error controlling nutrient pumps: {e}")
+            logger.exception("Exception details:")
+            return False
 
     def set_nutrient_pump(self, pump_letter, status):
         """Control individual nutrient pump (A/B/C).
@@ -983,53 +1039,26 @@ class Relay:
             pump_letter (str): Pump letter (A, B, or C)
             status (bool): True to turn on pump, False to turn off
         """
-        if not any(key in self.relay_addresses for key in ['RELAYONE']):
-            logger.info("No nutrient pump hardware present in RELAY_ONE")
+        # Case-insensitive check for relay hardware - FIXED to use proper case comparison
+        if not any(key.upper() == 'RELAYONE' or key.lower() == 'relayone' for key in self.relay_addresses.keys()):
+            logger.info("No nutrient pump hardware present in relay addresses")
+            logger.info(f"Available relay addresses: {self.relay_addresses}")
             return
 
         logger.info(f"Setting nutrient pump {pump_letter} to {status}")
         try:
-            # Get all relay assignments from config
-            assignments = globals.DEVICE_CONFIG_FILE['RELAY_ASSIGNMENTS']
-            
-            # Search through all relay groups for the specified nutrient pump
-            for group_name, devices in assignments.items():
-                if not group_name.startswith('Relay_'):
-                    continue
-                    
-                device_list = devices.split(',')
-                pump_name = f'NutrientPump{pump_letter}'
-                
-                for i, device in enumerate(device_list):
-                    if device.strip() == pump_name:
-                        # Extract the base index from group name
-                        base_index = int(group_name.split('_')[2])
-                        pump_index = i + base_index
-                        
-                        if status:
-                            self.turn_on("RELAYONE", pump_index)
-                        else:
-                            self.turn_off("RELAYONE", pump_index)
-                        return
-                        
-            raise KeyError(f"{pump_name} not found in any relay assignments")
-                
-        except KeyError as e:
-            logger.warning(f"Missing configuration for nutrient pump {pump_letter}: {e}")
+            # Use the generic set_relay method which has case-insensitive matching
+            pump_name = f'NutrientPump{pump_letter}'
+            result = self.set_relay(pump_name, status)
+            logger.info(f"set_relay result: {result}")
         except Exception as e:
             logger.error(f"Error controlling nutrient pump {pump_letter}: {e}")
+            logger.exception("Full exception details:")
 
     def set_mixing_pump(self, status):
         """Control mixing pump."""
         logger.info(f"Setting mixing pump to {status}")
-        relay_group, index = self._get_relay_info("MixingPump")
-        if relay_group and index:
-            if status:
-                self.turn_on(relay_group, index)
-            else:
-                self.turn_off(relay_group, index)
-        else:
-            logger.warning("MixingPump not found in relay assignments")
+        self.set_relay("MixingPump", status)
 
     def set_relay(self, device_name, status):
         """Control a relay by device name from assignments.
@@ -1039,13 +1068,33 @@ class Relay:
             status (bool): True to turn on, False to turn off
         """
         logger.info(f"Setting {device_name} to {status}")
-        relay_group, index = self._get_relay_info(device_name)
-        if relay_group and index:
-            if status:
-                self.turn_on(relay_group, index)
-            else:
-                self.turn_off(relay_group, index)
-            return True
+        # Debug info
+        logger.info(f"Available relay assignments: {list(self.relay_assignments.keys())}")
+        # Try case-insensitive lookup
+        relay_group, index = None, None
+        
+        # Try exact match first
+        if device_name in self.relay_assignments:
+            relay_group = self.relay_assignments[device_name].get('relay_name', None)
+            index = self.relay_assignments[device_name].get('index', None)
+            logger.info(f"Exact match found: {device_name} -> {relay_group}[{index}]")
+        else:
+            # Try case-insensitive match
+            device_lower = device_name.lower()
+            for key, info in self.relay_assignments.items():
+                if key.lower() == device_lower:
+                    relay_group = info.get('relay_name', None)
+                    index = info.get('index', None)
+                    logger.info(f"Case-insensitive match found: {device_name} -> {key} -> {relay_group}[{index}]")
+                    break
+            
+            if relay_group is None:
+                logger.warning(f"No match found for {device_name} in relay assignments")
+        
+        if relay_group and index is not None:
+            # Use set_multiple_relays with a single relay for better code reuse
+            result = self.set_multiple_relays(relay_group, index, [status])
+            return result
         else:
             logger.warning(f"{device_name} not found in relay assignments")
             return False
@@ -1120,13 +1169,7 @@ class Relay:
         helpers.save_sensor_data(["data", "relay_metrics", "configuration"], config_data)
 
 
-if __name__ == "__main__":
-    relay = Relay()
-    if relay is not None:  # Only proceed if device is enabled
-        # Add initialization delay to ensure stable connection
-        print("Initializing relay connection...")
-        time.sleep(1)  # Wait 2 seconds for initialization
-        
+    def test_relay_control_sequential(self):
         # Test each relay port one by one
         for port in range(16):
             print(f"Turning on port {port}")
@@ -1137,14 +1180,13 @@ if __name__ == "__main__":
             # Turn off the current port
             relay.turn_off("RELAYONE", port)
             time.sleep(1)  # Wait 1 second before next port
-        
+            
+    def test_relay_control_multiple(self):
         # Test multiple relay control
         print("\nTesting multiple relay control")
         print("Turning on first 5 ports (0-4)")
         # Turn on ports 0-4 simultaneously
         relay.set_multiple_relays("RELAYONE", 0, [True, True, True, True, True])
-        
-        # Wait 2 seconds before turning off ports 3 and 4
         time.sleep(2)
         print("Turning off ports 3 and 4")
         relay.set_multiple_relays("RELAYONE", 3, [False, False])
@@ -1153,6 +1195,24 @@ if __name__ == "__main__":
         time.sleep(2)
         print("Turning off remaining ports")
         relay.set_multiple_relays("RELAYONE", 0, [False, False, False])
+
+if __name__ == "__main__":
+    relay = Relay()
+    if relay is not None:  # Only proceed if device is enabled
+        # Add initialization delay to ensure stable connection
+        print("Initializing relay connection...")
+        time.sleep(0.5)  # Wait 2 seconds for initialization
+    
+
+        relay.set_nutrient_pumps(True)
+        time.sleep(2)
+        relay.set_nutrient_pump("A", False)
+        # Final delay before exiting
+        time.sleep(0.5)
+        relay.set_nutrient_pump("B", False)
+        time.sleep(0.5)
+        relay.set_nutrient_pump("C", False)
+
         
         # Final delay before exiting
         time.sleep(1)
