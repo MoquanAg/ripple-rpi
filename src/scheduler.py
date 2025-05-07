@@ -280,6 +280,11 @@ class RippleScheduler:
     def _run_nutrient_cycle(self):
         """Execute nutrient cycle"""
         try:
+            # Make sure we're reading the latest config
+            config_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'config', 'device.conf')
+            logger.info(f"Loading config from: {config_path}")
+            self.config.read(config_path)
+            
             # Get EC data from saved sensor data file instead of directly from sensors
             ec_value = None
             data_timestamp = None
@@ -312,8 +317,9 @@ class RippleScheduler:
                                             timestamp_str = points[0]['timestamp']
                                             data_timestamp = datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
                                             
-                                            # Calculate data age
-                                            data_age = datetime.now() - data_timestamp
+                                            # Calculate data age - ensure both datetimes are timezone-aware
+                                            now = datetime.now().astimezone()
+                                            data_age = now - data_timestamp
                                             
                                             # Check if data is too old
                                             if data_age > max_data_age:
@@ -383,8 +389,35 @@ class RippleScheduler:
                 logger.error(f"Failed to get EC targets from config: {e}")
                 return
 
-            on_duration = self.config.get('NutrientPump', 'nutrient_pump_on_duration').split(',')[0]
+            # Force-reload the config file to make sure we get the latest values
+            config_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'config', 'device.conf')
+            self.config = configparser.ConfigParser(empty_lines_in_values=False, interpolation=None)
+            logger.info(f"Force-reloading config from: {config_path}")
+            self.config.read(config_path)
+            
+            # Get the nutrient pump duration from config - READ THE FIRST ELEMENT if it's a comma-separated list
+            on_duration_raw = self.config.get('NutrientPump', 'nutrient_pump_on_duration')
+            logger.info(f"Raw nutrient_pump_on_duration from config: '{on_duration_raw}'")
+            
+            # Handle comma-separated values correctly - USE THE SECOND ELEMENT if available (operational value)
+            if ',' in on_duration_raw:
+                on_duration_parts = on_duration_raw.split(',')
+                if len(on_duration_parts) >= 2:
+                    on_duration = on_duration_parts[1].strip()
+                    logger.info(f"Using OPERATIONAL value from config: '{on_duration}'")
+                else:
+                    on_duration = on_duration_parts[0].strip()
+                    logger.info(f"Using first value (no second value found): '{on_duration}'")
+            else:
+                on_duration = on_duration_raw.strip()
+                logger.info(f"Using single value (no comma): '{on_duration}'")
+            
+            # Strip any quotes
+            on_duration = on_duration.strip('"\'')
+            
             on_seconds = self._time_to_seconds(on_duration)
+            logger.info(f"Parsed nutrient duration: {on_duration} = {on_seconds} seconds")
+            
             trigger_duration = self.config.get('Mixing', 'trigger_mixing_duration').split(',')[0]
             trigger_seconds = self._time_to_seconds(trigger_duration)
             
@@ -404,7 +437,7 @@ class RippleScheduler:
             
             # Get the A:B:C ratio from configuration
             try:
-                # Get ratio value (could be index 0 or 1 depending on config format)
+                # Get ratio value from configuration
                 abc_ratio = self.config.get('NutrientPump', 'abc_ratio')
                 
                 # First try to use the second value (after comma) if available
@@ -419,6 +452,9 @@ class RippleScheduler:
                 
                 # Strip any quotes that might be present
                 abc_ratio_str = abc_ratio_str.strip('"\'')
+                
+                # Log the raw value read from config
+                logger.info(f"Raw ABC ratio from config: '{abc_ratio}' -> using '{abc_ratio_str}'")
                 
                 # Parse the ratio (e.g., "1:1:0" or 1:1:0)
                 ratio_parts = abc_ratio_str.split(':')
@@ -450,14 +486,56 @@ class RippleScheduler:
                 if base_ratio <= 0:
                     logger.warning("No positive ratios found, skipping nutrient cycle")
                     return
-                    
-                # Calculate run durations for each pump proportional to their ratio
-                # The base duration (on_seconds) corresponds to the highest ratio value
-                duration_a = int(on_seconds * ratio_a / base_ratio) if ratio_a > 0 else 0
-                duration_b = int(on_seconds * ratio_b / base_ratio) if ratio_b > 0 else 0
-                duration_c = int(on_seconds * ratio_c / base_ratio) if ratio_c > 0 else 0
                 
-                logger.info(f"Nutrient pump durations: A={duration_a}s, B={duration_b}s, C={duration_c}s")
+                # Calculate durations directly proportional to the ratio
+                # The base_ratio (usually 1.0) pump gets the full on_seconds
+                raw_duration_a = on_seconds * (ratio_a / base_ratio)
+                raw_duration_b = on_seconds * (ratio_b / base_ratio)
+                raw_duration_c = on_seconds * (ratio_c / base_ratio)
+                
+                duration_a = int(raw_duration_a) if ratio_a > 0 else 0
+                duration_b = int(raw_duration_b) if ratio_b > 0 else 0
+                duration_c = int(raw_duration_c) if ratio_c > 0 else 0
+                
+                # Log raw calculation values before any adjustments
+                logger.info("==== NUTRIENT PUMP DURATION CALCULATION ====")
+                logger.info(f"Total configured duration: {on_duration} ({on_seconds} seconds)")
+                logger.info(f"ABC ratio: {ratio_a}:{ratio_b}:{ratio_c} (base ratio: {base_ratio})")
+                logger.info(f"Raw calculated durations (before rounding/adjustments):")
+                logger.info(f"  Pump A: {on_seconds} × ({ratio_a}/{base_ratio}) = {raw_duration_a:.2f} seconds")
+                logger.info(f"  Pump B: {on_seconds} × ({ratio_b}/{base_ratio}) = {raw_duration_b:.2f} seconds")
+                logger.info(f"  Pump C: {on_seconds} × ({ratio_c}/{base_ratio}) = {raw_duration_c:.2f} seconds")
+                logger.info(f"Rounded durations: A={duration_a}s, B={duration_b}s, C={duration_c}s")
+                
+                # Ensure minimum runtime for very small ratios (enforce at least 5 seconds for any active pump)
+                min_runtime = 5  # Minimum runtime in seconds for any ratio > 0
+                
+                # Record original values for logging
+                original_duration_a = duration_a
+                original_duration_b = duration_b
+                original_duration_c = duration_c
+                
+                if ratio_a > 0 and duration_a < min_runtime:
+                    duration_a = min_runtime
+                
+                if ratio_b > 0 and duration_b < min_runtime:
+                    duration_b = min_runtime
+                
+                if ratio_c > 0 and duration_c < min_runtime:
+                    duration_c = min_runtime
+                
+                # Log final adjusted values
+                if original_duration_a != duration_a or original_duration_b != duration_b or original_duration_c != duration_c:
+                    logger.info("Minimum runtime adjustments applied:")
+                    if original_duration_a != duration_a:
+                        logger.info(f"  Pump A: {original_duration_a}s → {duration_a}s (min runtime: {min_runtime}s)")
+                    if original_duration_b != duration_b:
+                        logger.info(f"  Pump B: {original_duration_b}s → {duration_b}s (min runtime: {min_runtime}s)")
+                    if original_duration_c != duration_c:
+                        logger.info(f"  Pump C: {original_duration_c}s → {duration_c}s (min runtime: {min_runtime}s)")
+                
+                logger.info(f"FINAL PUMP DURATIONS: A={duration_a}s, B={duration_b}s, C={duration_c}s")
+                logger.info("===========================================")
                 
                 # Get the relay assignments for all nutrient pumps
                 indices = []
@@ -664,6 +742,9 @@ class RippleScheduler:
     def _run_ph_cycle(self):
         """Execute pH adjustment cycle"""
         try:
+            # Make sure we're reading the latest config
+            self.config.read(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'config', 'device.conf'))
+            
             # Get pH data from saved sensor data file instead of directly from sensors
             ph_value = None
             data_timestamp = None
@@ -696,8 +777,9 @@ class RippleScheduler:
                                             timestamp_str = points[0]['timestamp']
                                             data_timestamp = datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
                                             
-                                            # Calculate data age
-                                            data_age = datetime.now() - data_timestamp
+                                            # Calculate data age - ensure both datetimes are timezone-aware
+                                            now = datetime.now().astimezone()
+                                            data_age = now - data_timestamp
                                             
                                             # Check if data is too old
                                             if data_age > max_data_age:
@@ -869,8 +951,40 @@ class RippleScheduler:
     def _run_sprinkler_cycle(self):
         """Execute sprinkler cycle"""
         try:
-            on_duration = self.config.get('Sprinkler', 'sprinkler_on_duration').split(',')[0]
+            # Make sure we're reading the latest config
+            self.config.read(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'config', 'device.conf'))
+            
+            # Read ALL possible values - use the first one for configuration, but consider the second (operational) one
+            on_duration_raw = self.config.get('Sprinkler', 'sprinkler_on_duration')
+            
+            # First get the configuration value for updating the scheduler
+            on_duration = on_duration_raw.split(',')[0].strip()
             on_seconds = self._time_to_seconds(on_duration)
+            
+            # Now check if there's an operational value
+            operational_duration = None
+            if ',' in on_duration_raw:
+                on_duration_parts = on_duration_raw.split(',')
+                if len(on_duration_parts) >= 2:
+                    operational_duration = on_duration_parts[1].strip()
+                    operational_seconds = self._time_to_seconds(operational_duration)
+                    logger.info(f"Using operational sprinkler duration for activation: {operational_duration} ({operational_seconds}s)")
+                    # Use the operational value for actual control
+                    on_duration = operational_duration
+                    on_seconds = operational_seconds
+            
+            # Clean up any existing sprinkler stop jobs
+            try:
+                for job_id in ['immediate_sprinkler_stop', 'startup_sprinkler_stop', 
+                               'scheduled_sprinkler_stop', 'config_sprinkler_stop']:
+                    try:
+                        self.scheduler.remove_job(job_id)
+                        logger.info(f"Removed existing sprinkler stop job: {job_id}")
+                    except Exception:
+                        # Job might not exist
+                        pass
+            except Exception as e:
+                logger.warning(f"Error cleaning up sprinkler jobs: {e}")
             
             if on_seconds == 0:
                 logger.warning("Skipping sprinkler cycle: zero duration")
@@ -885,7 +999,7 @@ class RippleScheduler:
                 
             # Start sprinkler
             relay.set_sprinklers(True)
-            logger.info(f"Running sprinkler cycle for {on_duration}")
+            logger.info(f"Running sprinkler cycle for {on_duration} ({on_seconds}s)")
             
             # Schedule to stop after on_duration
             self.scheduler.add_job(
@@ -895,6 +1009,7 @@ class RippleScheduler:
                 id='scheduled_sprinkler_stop',
                 replace_existing=True
             )
+            logger.info(f"Scheduled sprinkler stop job ID: scheduled_sprinkler_stop for {on_seconds}s from now")
         except Exception as e:
             logger.error(f"Error in sprinkler cycle: {e}")
             
@@ -909,11 +1024,10 @@ class RippleScheduler:
     def _check_water_level(self):
         """Check water level and open valve to refill if needed"""
         try:
-            # Get water level data from saved sensor data file
-            import json
-            import os
-            from datetime import datetime, timedelta
+            # Make sure we're reading the latest config
+            self.config.read(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'config', 'device.conf'))
             
+            # Get water level data from saved sensor data file
             water_level = None
             data_timestamp = None
             max_data_age = timedelta(minutes=5)  # Maximum age of data to consider valid (5 minutes)
@@ -945,8 +1059,9 @@ class RippleScheduler:
                                             timestamp_str = points[0]['timestamp']
                                             data_timestamp = datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
                                             
-                                            # Calculate data age
-                                            data_age = datetime.now() - data_timestamp
+                                            # Calculate data age - ensure both datetimes are timezone-aware
+                                            now = datetime.now().astimezone()
+                                            data_age = now - data_timestamp
                                             
                                             # Check if data is too old
                                             if data_age > max_data_age:
