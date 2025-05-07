@@ -9,7 +9,7 @@ from typing import Dict, List, Optional, Union, Any
 import configparser
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
-from datetime import datetime
+from datetime import datetime, timedelta
 
 # Add the src directory to the Python path
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -31,19 +31,68 @@ class ConfigFileHandler(FileSystemEventHandler):
     def __init__(self, controller):
         self.controller = controller
         self.last_action_state = {}
+        self.last_config_state = {}  # Store the last known state of the config file
+        self.last_event_time = {}    # Track last event time for each file to prevent duplicates
+        self.event_debounce_seconds = 1.0  # Minimum seconds between same-file events
+        # Load initial config state
+        self._load_current_config()
+        
+    def _load_current_config(self):
+        """Load the current state of the config file for comparison"""
+        try:
+            if os.path.exists(self.controller.config_file):
+                config = configparser.ConfigParser(empty_lines_in_values=False, interpolation=None)
+                config.read(self.controller.config_file)
+                
+                # Store a copy of the current config state
+                self.last_config_state = {}
+                for section in config.sections():
+                    self.last_config_state[section] = {}
+                    for key, value in config[section].items():
+                        self.last_config_state[section][key] = value
+                        
+                logger.debug(f"Loaded current config state with {len(self.last_config_state)} sections")
+        except Exception as e:
+            logger.error(f"Error loading current config state: {e}")
         
     def on_modified(self, event):
         try:
             # Normalize paths for comparison
             config_file_path = os.path.abspath(self.controller.config_file)
-            action_file_path = os.path.abspath('config/action.json')
+            action_file_path = os.path.abspath(os.path.join(self.controller.config_dir, 'action.json'))
             event_path = os.path.abspath(event.src_path)
+            
+            # Implement debouncing to prevent duplicate events
+            current_time = time.time()
+            if event_path in self.last_event_time:
+                # If we've seen this event recently, check if enough time has passed
+                time_since_last = current_time - self.last_event_time[event_path]
+                if time_since_last < self.event_debounce_seconds:
+                    logger.info(f"Ignoring duplicate event for {event_path} - only {time_since_last:.2f}s since last event")
+                    return
+            
+            # Update the last event time for this path
+            self.last_event_time[event_path] = current_time
             
             logger.info(f"File modified: {event_path}")
             
-            if event_path == config_file_path:
-                logger.info("Configuration file modified, reloading settings")
-                self.controller.reload_configuration()
+            # Check if device.conf was modified
+            if os.path.basename(event_path) == 'device.conf' or event_path == config_file_path:
+                logger.info("Configuration file (device.conf) modified, detecting changes")
+                
+                # Identify which sections were changed
+                changed_sections = self._identify_changed_sections()
+                
+                if changed_sections:
+                    logger.info(f"Changed sections detected: {changed_sections}")
+                    # Reload specific sections and trigger relevant checks
+                    self.controller.reload_specific_sections(changed_sections)
+                else:
+                    logger.info("No significant changes detected in config file")
+                
+                # Update our stored config state for next comparison
+                self._load_current_config()
+                
             elif event_path == action_file_path:
                 logger.info("Action file modified, processing new actions")
                 # Add a small delay to ensure file writing is complete
@@ -52,7 +101,40 @@ class ConfigFileHandler(FileSystemEventHandler):
         except Exception as e:
             logger.error(f"Error in on_modified handler: {e}")
             logger.exception("Full exception details:")
+    
+    def _identify_changed_sections(self):
+        """Identify which sections in the config file have changed"""
+        changed_sections = set()
+        
+        try:
+            # Load the current config state
+            current_config = configparser.ConfigParser(empty_lines_in_values=False, interpolation=None)
+            current_config.read(self.controller.config_file)
             
+            # Check for new or modified sections
+            for section in current_config.sections():
+                # If this is a new section
+                if section not in self.last_config_state:
+                    changed_sections.add(section)
+                    continue
+                
+                # Check for modified keys in existing sections
+                for key, value in current_config[section].items():
+                    if key not in self.last_config_state[section] or self.last_config_state[section][key] != value:
+                        changed_sections.add(section)
+                        break
+            
+            # Check for deleted sections
+            for section in self.last_config_state:
+                if section not in current_config.sections():
+                    changed_sections.add(section)
+            
+            return changed_sections
+            
+        except Exception as e:
+            logger.error(f"Error identifying changed sections: {e}")
+            return set()  # Return empty set if there's an error
+    
     def process_actions(self):
         try:
             # Check if file exists and is not empty before trying to read it
@@ -401,9 +483,307 @@ class RippleController:
                 'WaterLevel': {'target': 80.0, 'deadband': 10.0, 'min': 50.0, 'max': 100.0}
             }
 
-    def reload_configuration(self):
-        """Reload configuration from device.conf"""
+    def reload_specific_sections(self, changed_sections):
+        """Reload only the specific sections that have changed"""
         try:
+            # Reload the config file
+            self.config.read(self.config_file)
+            
+            # Track if we've made any changes that require a full reload of sensor targets
+            need_reload_targets = False
+            
+            # Process each changed section
+            for section in changed_sections:
+                logger.info(f"Reloading configuration for section: {section}")
+                
+                if section == 'Mixing':
+                    self.scheduler.update_configuration('Mixing', 'mixing_interval', 
+                        self.config.get('Mixing', 'mixing_interval').split(',')[0])
+                    self.scheduler.update_configuration('Mixing', 'mixing_duration', 
+                        self.config.get('Mixing', 'mixing_duration').split(',')[0])
+                    self.scheduler.update_configuration('Mixing', 'trigger_mixing_duration', 
+                        self.config.get('Mixing', 'trigger_mixing_duration').split(',')[0])
+                    
+                    # Check if mixing_duration is set to zero
+                    mixing_duration = self.config.get('Mixing', 'mixing_duration').split(',')[0]
+                    mixing_seconds = self._time_to_seconds(mixing_duration)
+                    
+                    if mixing_seconds == 0:
+                        # Turn off mixing pump if duration is set to zero
+                        from src.sensors.Relay import Relay
+                        relay = Relay()
+                        if relay:
+                            relay.set_mixing_pump(False)
+                            logger.info("Mixing pump turned off due to zero duration configuration")
+                            
+                            # Make sure scheduler knows the pump is off
+                            if hasattr(self.scheduler, 'mixing_pump_running'):
+                                self.scheduler.mixing_pump_running = False
+                                self.scheduler.mixing_pump_end_time = None
+                                
+                            # Remove any scheduled mixing pump stop jobs
+                            try:
+                                if hasattr(self.scheduler, 'scheduler'):
+                                    self.scheduler.scheduler.remove_job('mixing_stop_job')
+                                    logger.info("Removed scheduled mixing pump stop job")
+                            except Exception as e:
+                                # Job might not exist, which is fine
+                                logger.debug(f"No mixing stop job to remove: {e}")
+                                pass
+                        else:
+                            logger.warning("Failed to turn off mixing pump: relay not available")
+                            
+                    logger.info("Mixing configuration updated")
+                
+                elif section == 'NutrientPump':
+                    self.scheduler.update_configuration('NutrientPump', 'nutrient_pump_on_duration', 
+                        self.config.get('NutrientPump', 'nutrient_pump_on_duration').split(',')[0])
+                    self.scheduler.update_configuration('NutrientPump', 'nutrient_pump_wait_duration', 
+                        self.config.get('NutrientPump', 'nutrient_pump_wait_duration').split(',')[0])
+                    self.scheduler.update_configuration('NutrientPump', 'ph_pump_on_duration', 
+                        self.config.get('NutrientPump', 'ph_pump_on_duration').split(',')[0])
+                    self.scheduler.update_configuration('NutrientPump', 'ph_pump_wait_duration', 
+                        self.config.get('NutrientPump', 'ph_pump_wait_duration').split(',')[0])
+                    
+                    # Initialize Relay connection
+                    from src.sensors.Relay import Relay
+                    relay = Relay()
+                    
+                    # Check nutrient pump duration
+                    nutrient_duration = self.config.get('NutrientPump', 'nutrient_pump_on_duration').split(',')[0]
+                    nutrient_seconds = self._time_to_seconds(nutrient_duration)
+                    
+                    if nutrient_seconds == 0:
+                        # Turn off nutrient pumps if duration is set to zero
+                        if relay:
+                            relay.set_nutrient_pumps(False)
+                            logger.info("Nutrient pumps turned off due to zero duration configuration")
+                            
+                            # Remove any scheduled nutrient pump stop jobs
+                            try:
+                                if hasattr(self.scheduler, 'scheduler'):
+                                    for job_id in ['scheduled_nutrient_stop', 'scheduled_nutrient_a_stop', 
+                                                'scheduled_nutrient_b_stop', 'scheduled_nutrient_c_stop', 
+                                                'nutrient_stop_job']:
+                                        try:
+                                            self.scheduler.scheduler.remove_job(job_id)
+                                        except Exception:
+                                            # Individual job might not exist
+                                            pass
+                                    logger.info("Removed scheduled nutrient pump stop jobs")
+                            except Exception as e:
+                                logger.debug(f"Error removing nutrient stop jobs: {e}")
+                                pass
+                        else:
+                            logger.warning("Failed to turn off nutrient pumps: relay not available")
+                    
+                    # Check pH pump duration
+                    ph_duration = self.config.get('NutrientPump', 'ph_pump_on_duration').split(',')[0]
+                    ph_seconds = self._time_to_seconds(ph_duration)
+                    
+                    if ph_seconds == 0:
+                        # Turn off pH pumps if duration is set to zero
+                        if relay:
+                            relay.set_ph_plus_pump(False)
+                            relay.set_ph_minus_pump(False)
+                            logger.info("pH pumps turned off due to zero duration configuration")
+                            
+                            # Remove any scheduled pH pump stop jobs
+                            try:
+                                if hasattr(self.scheduler, 'scheduler'):
+                                    for job_id in ['scheduled_ph_stop', 'ph_stop_job']:
+                                        try:
+                                            self.scheduler.scheduler.remove_job(job_id)
+                                        except Exception:
+                                            # Individual job might not exist
+                                            pass
+                                    logger.info("Removed scheduled pH pump stop jobs")
+                            except Exception as e:
+                                logger.debug(f"Error removing pH stop jobs: {e}")
+                                pass
+                        else:
+                            logger.warning("Failed to turn off pH pumps: relay not available")
+                    
+                    # Only trigger nutrient cycle check if we're not turning things off
+                    if nutrient_seconds > 0:
+                        # Trigger immediate EC check for nutrient adjustments
+                        logger.info("Triggering immediate nutrient cycle check due to NutrientPump config change")
+                        self.scheduler._run_nutrient_cycle()
+                    
+                    logger.info("NutrientPump configuration updated")
+                
+                elif section == 'Sprinkler':
+                    # First, ensure sprinklers are turned off before doing anything else
+                    # This guarantees that changing any sprinkler setting will always reset the sprinkler state
+                    try:
+                        from src.sensors.Relay import Relay
+                        relay = Relay()
+                        if relay:
+                            relay.set_sprinklers(False)
+                            logger.info("Sprinklers turned off as part of configuration change procedure")
+                    except Exception as e:
+                        logger.error(f"Error turning off sprinklers: {e}")
+                        
+                    # Now update the configuration values
+                    self.scheduler.update_configuration('Sprinkler', 'sprinkler_on_duration', 
+                        self.config.get('Sprinkler', 'sprinkler_on_duration').split(',')[0])
+                    self.scheduler.update_configuration('Sprinkler', 'sprinkler_wait_duration', 
+                        self.config.get('Sprinkler', 'sprinkler_wait_duration').split(',')[0])
+                    
+                    # Only proceed to potentially turning them back on if not in an error state
+                    try:
+                        # IMPORTANT: Clean up ALL possible sprinkler-related jobs first
+                        try:
+                            if hasattr(self.scheduler, 'scheduler'):
+                                # Stop any sprinkler stop jobs regardless of their ID
+                                for job_id in ['immediate_sprinkler_stop', 'startup_sprinkler_stop', 
+                                              'scheduled_sprinkler_stop', 'config_sprinkler_stop',
+                                              'sprinkler_cycle']:
+                                    try:
+                                        self.scheduler.scheduler.remove_job(job_id)
+                                        logger.info(f"[Startup] Removed existing sprinkler job with ID: {job_id}")
+                                    except Exception:
+                                        # Job might not exist
+                                        pass
+                        except Exception as e:
+                            logger.warning(f"[Startup] Error cleaning up sprinkler jobs: {e}")
+                            
+                        # Get sprinkler on_duration from config - USING THE SECOND VALUE (operational value)
+                        sprinkler_on_duration_raw = self.config.get('Sprinkler', 'sprinkler_on_duration')
+                        logger.info(f"Raw sprinkler_on_duration from config: '{sprinkler_on_duration_raw}'")
+                        
+                        # Properly parse the value to get the second element (operational value)
+                        sprinkler_on_duration = ""
+                        if ',' in sprinkler_on_duration_raw:
+                            sprinkler_on_duration_parts = sprinkler_on_duration_raw.split(',')
+                            if len(sprinkler_on_duration_parts) >= 2:
+                                sprinkler_on_duration = sprinkler_on_duration_parts[1].strip()
+                                logger.info(f"[Startup] Using OPERATIONAL value from config: '{sprinkler_on_duration}'")
+                            else:
+                                sprinkler_on_duration = sprinkler_on_duration_parts[0].strip()
+                                logger.info(f"[Startup] Using first value (no second value found): '{sprinkler_on_duration}'")
+                        else:
+                            sprinkler_on_duration = sprinkler_on_duration_raw.strip()
+                            logger.info(f"[Startup] Using single value (no comma): '{sprinkler_on_duration}'")
+                        
+                        # Strip any quotes
+                        sprinkler_on_duration = sprinkler_on_duration.strip('"\'')
+                        
+                        sprinkler_on_seconds = self._time_to_seconds(sprinkler_on_duration)
+                        logger.info(f"[Startup] Parsed sprinkler duration: {sprinkler_on_duration} = {sprinkler_on_seconds} seconds")
+                        
+                        # Only activate the sprinkler if duration is positive
+                        if sprinkler_on_seconds > 0:
+                            from src.sensors.Relay import Relay
+                            relay = Relay()
+                            if relay:
+                                logger.info(f"[Startup] Sprinkler duration > 0 ({sprinkler_on_duration}), activating sprinklers")
+                                # Turn on sprinklers directly
+                                relay.set_sprinklers(True)
+                                
+                                # Schedule to stop after the configured duration
+                                try:
+                                    # First try to use the scheduler (preferred method)
+                                    if hasattr(self.scheduler, 'scheduler') and hasattr(self.scheduler.scheduler, 'add_job'):
+                                        # Create a copy of the duration for the lambda to avoid variable capture issues
+                                        duration_copy = sprinkler_on_seconds
+                                        stop_time = datetime.now() + timedelta(seconds=duration_copy)
+                                        
+                                        # Add a job that directly calls set_sprinklers(False)
+                                        job = self.scheduler.scheduler.add_job(
+                                            lambda: self._direct_stop_sprinklers(),
+                                            'date',
+                                            run_date=stop_time,
+                                            id='config_sprinkler_stop',  # CONSISTENT JOB ID
+                                            replace_existing=True
+                                        )
+                                        logger.info(f"Scheduled sprinkler stop via scheduler for: {stop_time.strftime('%H:%M:%S')} - job ID: config_sprinkler_stop")
+                                        # Log all scheduled jobs to verify
+                                        self._log_all_scheduler_jobs()
+                                    else:
+                                        # Fallback to a thread-based timer if scheduler is unavailable
+                                        logger.warning("[Startup] Scheduler unavailable, using thread-based timer as fallback")
+                                        self._create_backup_sprinkler_timer(sprinkler_on_seconds)
+                                except Exception as e:
+                                    logger.error(f"[Startup] Error scheduling sprinkler stop via scheduler: {e}")
+                                    logger.exception("Full exception details:")
+                                    # Try the backup method if scheduler failed
+                                    logger.info("[Startup] Attempting to use thread-based timer as fallback after scheduler failure")
+                                    self._create_backup_sprinkler_timer(sprinkler_on_seconds)
+                            else:
+                                logger.warning("[Startup] Failed to activate sprinklers: relay not available")
+                        else:
+                            logger.info("[Startup] Sprinkler duration set to zero, keeping sprinklers off")
+                    except Exception as e:
+                        logger.error(f"Error in sprinkler control: {e}")
+                        logger.exception("Full exception details:")
+                        
+                    logger.info("Sprinkler configuration updated")
+                
+                elif section == 'EC':
+                    if 'EC' in self.config:
+                        self.scheduler.update_configuration('EC', 'ec_target', 
+                            self.config.get('EC', 'ec_target').split(',')[0])
+                        self.scheduler.update_configuration('EC', 'ec_deadband', 
+                            self.config.get('EC', 'ec_deadband').split(',')[0])
+                        self.scheduler.update_configuration('EC', 'ec_max', 
+                            self.config.get('EC', 'ec_max').split(',')[0])
+                        
+                        # Update sensor targets
+                        need_reload_targets = True
+                        
+                        # Trigger immediate EC check
+                        logger.info("Triggering immediate EC check due to EC config change")
+                        self.scheduler._run_nutrient_cycle()
+                        logger.info("EC configuration updated")
+                
+                elif section == 'pH':
+                    if 'pH' in self.config:
+                        self.scheduler.update_configuration('pH', 'ph_target', 
+                            self.config.get('pH', 'ph_target').split(',')[0])
+                        self.scheduler.update_configuration('pH', 'ph_deadband', 
+                            self.config.get('pH', 'ph_deadband').split(',')[0])
+                        self.scheduler.update_configuration('pH', 'ph_min', 
+                            self.config.get('pH', 'ph_min').split(',')[0])
+                        self.scheduler.update_configuration('pH', 'ph_max', 
+                            self.config.get('pH', 'ph_max').split(',')[0])
+                        
+                        # Update sensor targets
+                        need_reload_targets = True
+                        
+                        # Trigger immediate pH check
+                        logger.info("Triggering immediate pH check due to pH config change")
+                        self.scheduler._run_ph_cycle()
+                        logger.info("pH configuration updated")
+                
+                elif section == 'WaterLevel':
+                    # Water level targets affect valve control
+                    need_reload_targets = True
+                    
+                    # Trigger immediate water level check
+                    logger.info("Triggering immediate water level check due to WaterLevel config change")
+                    self.scheduler._check_water_level()
+                    logger.info("WaterLevel configuration updated")
+            
+            # Reload sensor targets if needed
+            if need_reload_targets:
+                self.load_sensor_targets()
+                logger.info("Sensor targets reloaded")
+            
+            logger.info("Specific configuration sections reloaded successfully")
+            
+        except Exception as e:
+            logger.error(f"Error reloading specific sections: {e}")
+            # Fall back to full reload if specific reload fails
+            logger.info("Falling back to full configuration reload")
+            self.reload_configuration()
+    
+    def reload_configuration(self):
+        """Reload complete configuration from device.conf (fallback method)"""
+        try:
+            # Reload the config file
+            self.config.read(self.config_file)
+            
             # Reload sensor targets
             self.load_sensor_targets()
             
@@ -449,7 +829,38 @@ class RippleController:
                 self.scheduler.update_configuration('pH', 'ph_max', 
                     self.config.get('pH', 'ph_max').split(',')[0])
                 
-            logger.info("Configuration reloaded successfully")
+            logger.info("Full configuration reloaded successfully")
+            
+            # Immediately run scheduler checks when configuration changes
+            logger.info("Running immediate scheduler checks due to configuration change...")
+            
+            # Trigger immediate pH check
+            self.scheduler._run_ph_cycle()
+            
+            # Trigger immediate EC check
+            self.scheduler._run_nutrient_cycle()
+            
+            # Trigger immediate water level check
+            self.scheduler._check_water_level()
+            
+            # Trigger immediate sprinkler check
+            # Check if it's time to run the sprinkler based on the current configuration
+            try:
+                # Get sprinkler on_duration from config
+                sprinkler_on_duration = self.config.get('Sprinkler', 'sprinkler_on_duration').split(',')[0]
+                sprinkler_on_seconds = self._time_to_seconds(sprinkler_on_duration)
+                
+                # Only run the sprinkler if the duration is not zero
+                if sprinkler_on_seconds > 0:
+                    logger.info("Running immediate sprinkler check due to configuration change")
+                    self.scheduler._run_sprinkler_cycle()
+                else:
+                    logger.info("Sprinkler cycle skipped: zero duration configured")
+            except Exception as e:
+                logger.error(f"Error in immediate sprinkler check: {e}")
+            
+            logger.info("Immediate scheduler checks completed")
+            
         except Exception as e:
             logger.error(f"Error reloading configuration: {e}")
 
@@ -458,11 +869,180 @@ class RippleController:
         try:
             logger.info("Starting Ripple controller")
             self.scheduler.start()
+            
+            # Run immediate checks for all systems at startup
+            self._run_startup_checks()
+            
             self.run_main_loop()
         except Exception as e:
             logger.error(f"Error starting Ripple controller: {e}")
             self.shutdown()
             
+    def _run_startup_checks(self):
+        """Run all system checks and activations at startup"""
+        try:
+            logger.info("==== RUNNING STARTUP CHECKS AND ACTIVATIONS ====")
+            
+            # Make sure we have the latest config
+            self.config.read(self.config_file)
+            
+            # 1. Check and activate water level monitoring
+            try:
+                logger.info("[Startup] Running initial water level check")
+                self.scheduler._check_water_level()
+            except Exception as e:
+                logger.error(f"[Startup] Error during water level check: {e}")
+                
+            # 2. Run an initial pH check
+            try:
+                logger.info("[Startup] Running initial pH check")
+                self.scheduler._run_ph_cycle()
+            except Exception as e:
+                logger.error(f"[Startup] Error during pH check: {e}")
+                
+            # 3. Run an initial nutrient (EC) check
+            try:
+                logger.info("[Startup] Running initial nutrient cycle check")
+                self.scheduler._run_nutrient_cycle()
+            except Exception as e:
+                logger.error(f"[Startup] Error during nutrient cycle check: {e}")
+                
+            # 4. Check and activate mixing pump if needed
+            try:
+                logger.info("[Startup] Running initial mixing pump check")
+                # Read mixing duration from config
+                mixing_duration_raw = self.config.get('Mixing', 'mixing_duration')
+                
+                # Handle comma-separated values - use second value if available
+                if ',' in mixing_duration_raw:
+                    mixing_duration_parts = mixing_duration_raw.split(',')
+                    if len(mixing_duration_parts) >= 2:
+                        mixing_duration = mixing_duration_parts[1].strip()
+                    else:
+                        mixing_duration = mixing_duration_parts[0].strip()
+                else:
+                    mixing_duration = mixing_duration_raw.strip()
+                
+                # Strip any quotes
+                mixing_duration = mixing_duration.strip('"\'')
+                
+                # Convert to seconds
+                mixing_seconds = self._time_to_seconds(mixing_duration)
+                
+                if mixing_seconds > 0:
+                    logger.info(f"[Startup] Running mixing pump cycle with duration: {mixing_duration}")
+                    self.scheduler._run_mixing_cycle()
+                else:
+                    logger.info("[Startup] Mixing pump duration is zero, not activating")
+            except Exception as e:
+                logger.error(f"[Startup] Error during mixing pump check: {e}")
+                
+            # 5. Check and activate sprinklers if needed
+            try:
+                self._activate_sprinklers_on_startup()
+            except Exception as e:
+                logger.error(f"[Startup] Error during sprinkler activation: {e}")
+                
+            logger.info("==== STARTUP CHECKS AND ACTIVATIONS COMPLETE ====")
+            
+        except Exception as e:
+            logger.error(f"Error running startup checks: {e}")
+            logger.exception("Full exception details:")
+
+    def _activate_sprinklers_on_startup(self):
+        """Check and activate sprinklers on system startup if configured"""
+        try:
+            logger.info("Checking if sprinklers should be activated on startup")
+            
+            # Make sure we have the latest config
+            self.config.read(self.config_file)
+            
+            # IMPORTANT: Clean up ALL possible sprinkler-related jobs first
+            try:
+                if hasattr(self.scheduler, 'scheduler'):
+                    # Stop any sprinkler stop jobs regardless of their ID
+                    for job_id in ['immediate_sprinkler_stop', 'startup_sprinkler_stop', 
+                                  'scheduled_sprinkler_stop', 'config_sprinkler_stop',
+                                  'sprinkler_cycle']:
+                        try:
+                            self.scheduler.scheduler.remove_job(job_id)
+                            logger.info(f"[Startup] Removed existing sprinkler job with ID: {job_id}")
+                        except Exception:
+                            # Job might not exist
+                            pass
+            except Exception as e:
+                logger.warning(f"[Startup] Error cleaning up sprinkler jobs: {e}")
+            
+            # Get sprinkler on_duration from config - USING THE SECOND VALUE (operational value)
+            sprinkler_on_duration_raw = self.config.get('Sprinkler', 'sprinkler_on_duration')
+            logger.info(f"Raw sprinkler_on_duration from config: '{sprinkler_on_duration_raw}'")
+            
+            # Properly parse the value to get the second element (operational value)
+            sprinkler_on_duration = ""
+            if ',' in sprinkler_on_duration_raw:
+                sprinkler_on_duration_parts = sprinkler_on_duration_raw.split(',')
+                if len(sprinkler_on_duration_parts) >= 2:
+                    sprinkler_on_duration = sprinkler_on_duration_parts[1].strip()
+                    logger.info(f"[Startup] Using OPERATIONAL value from config: '{sprinkler_on_duration}'")
+                else:
+                    sprinkler_on_duration = sprinkler_on_duration_parts[0].strip()
+                    logger.info(f"[Startup] Using first value (no second value found): '{sprinkler_on_duration}'")
+            else:
+                sprinkler_on_duration = sprinkler_on_duration_raw.strip()
+                logger.info(f"[Startup] Using single value (no comma): '{sprinkler_on_duration}'")
+            
+            # Strip any quotes
+            sprinkler_on_duration = sprinkler_on_duration.strip('"\'')
+            
+            sprinkler_on_seconds = self._time_to_seconds(sprinkler_on_duration)
+            logger.info(f"[Startup] Parsed sprinkler duration: {sprinkler_on_duration} = {sprinkler_on_seconds} seconds")
+            
+            # Only activate the sprinkler if duration is positive
+            if sprinkler_on_seconds > 0:
+                from src.sensors.Relay import Relay
+                relay = Relay()
+                if relay:
+                    logger.info(f"[Startup] Sprinkler duration > 0 ({sprinkler_on_duration}), activating sprinklers")
+                    # Turn on sprinklers directly
+                    relay.set_sprinklers(True)
+                    
+                    # Schedule to stop after the configured duration
+                    try:
+                        # First try to use the scheduler (preferred method)
+                        if hasattr(self.scheduler, 'scheduler') and hasattr(self.scheduler.scheduler, 'add_job'):
+                            # Create a copy of the duration for the lambda to avoid variable capture issues
+                            duration_copy = sprinkler_on_seconds
+                            stop_time = datetime.now() + timedelta(seconds=duration_copy)
+                            
+                            # Add a job that directly calls set_sprinklers(False)
+                            self.scheduler.scheduler.add_job(
+                                lambda: self._direct_stop_sprinklers(),
+                                'date',
+                                run_date=stop_time,
+                                id='startup_sprinkler_stop',
+                                replace_existing=True
+                            )
+                            logger.info(f"[Startup] Scheduled sprinkler stop via scheduler for: {stop_time.strftime('%H:%M:%S')} - job ID: startup_sprinkler_stop")
+                            # Log all scheduled jobs to verify
+                            self._log_all_scheduler_jobs()
+                        else:
+                            # Fallback to a thread-based timer if scheduler is unavailable
+                            logger.warning("[Startup] Scheduler unavailable, using thread-based timer as fallback")
+                            self._create_backup_sprinkler_timer(sprinkler_on_seconds)
+                    except Exception as e:
+                        logger.error(f"[Startup] Error scheduling sprinkler stop via scheduler: {e}")
+                        logger.exception("Full exception details:")
+                        # Try the backup method if scheduler failed
+                        logger.info("[Startup] Attempting to use thread-based timer as fallback after scheduler failure")
+                        self._create_backup_sprinkler_timer(sprinkler_on_seconds)
+                else:
+                    logger.warning("[Startup] Failed to activate sprinklers: relay not available")
+            else:
+                logger.info("[Startup] Sprinkler duration set to zero, keeping sprinklers off")
+        except Exception as e:
+            logger.error(f"Error activating sprinklers on startup: {e}")
+            logger.exception("Full exception details:")
+
     def shutdown(self):
         """Shutdown the Ripple controller"""
         try:
@@ -780,6 +1360,88 @@ class RippleController:
             logger.debug("Sensor data saved successfully")
         except Exception as e:
             logger.error(f"Error saving sensor data: {e}")
+
+    def _direct_stop_sprinklers(self):
+        """Direct method to stop sprinklers - called by the scheduler job"""
+        try:
+            logger.info("Scheduler job triggered to stop sprinklers")
+            from src.sensors.Relay import Relay
+            relay = Relay()
+            if relay:
+                # First check if sprinklers are actually on
+                logger.info("Checking sprinkler state before turning off")
+                # Then, forcefully turn them off
+                relay.set_sprinklers(False)
+                logger.info("Sprinklers turned off by scheduler job")
+                
+                # Double check: Clean up any other sprinkler jobs to avoid conflicts
+                try:
+                    if hasattr(self.scheduler, 'scheduler'):
+                        for job_id in ['immediate_sprinkler_stop', 'startup_sprinkler_stop', 
+                                      'scheduled_sprinkler_stop', 'config_sprinkler_stop']:
+                            if job_id != 'config_sprinkler_stop':  # Don't remove the current job
+                                try:
+                                    self.scheduler.scheduler.remove_job(job_id)
+                                    logger.info(f"Removed additional sprinkler job with ID: {job_id}")
+                                except Exception:
+                                    # Job might not exist
+                                    pass
+                except Exception as e:
+                    logger.warning(f"Error cleaning up additional sprinkler jobs: {e}")
+            else:
+                logger.error("Failed to get relay instance in scheduler job")
+        except Exception as e:
+            logger.error(f"Error in _direct_stop_sprinklers: {e}")
+            logger.exception("Full exception details:")
+            
+    def _log_all_scheduler_jobs(self):
+        """Log all currently scheduled jobs for debugging"""
+        try:
+            if hasattr(self.scheduler, 'scheduler'):
+                jobs = self.scheduler.scheduler.get_jobs()
+                logger.info(f"==== CURRENT SCHEDULER JOBS ({len(jobs)}) ====")
+                for job in jobs:
+                    run_time = job.next_run_time.strftime('%H:%M:%S') if job.next_run_time else "None"
+                    logger.info(f"Job ID: {job.id}, Next run: {run_time}, Function: {job.func}")
+                logger.info("=======================================")
+            else:
+                logger.warning("Could not access scheduler to list jobs")
+        except Exception as e:
+            logger.error(f"Error listing scheduler jobs: {e}")
+
+    def _create_backup_sprinkler_timer(self, duration_seconds):
+        """Create a backup thread-based timer to stop sprinklers"""
+        try:
+            logger.info(f"Setting up backup thread to stop sprinklers in {duration_seconds} seconds")
+            import threading
+            
+            def stop_sprinklers_thread():
+                logger.info(f"Backup thread-based sprinkler timer started - will stop in {duration_seconds} seconds")
+                time.sleep(duration_seconds)
+                try:
+                    logger.info("Backup thread timer elapsed - turning off sprinklers now")
+                    # Create a new relay instance within this thread to ensure a fresh connection
+                    from src.sensors.Relay import Relay
+                    relay = Relay()
+                    if relay:
+                        relay.set_sprinklers(False)
+                        logger.info("Sprinklers turned off by backup thread timer")
+                    else:
+                        logger.error("Failed to get relay instance in backup timer thread")
+                except Exception as e:
+                    logger.error(f"Error turning off sprinklers in backup timer thread: {e}")
+                    logger.exception("Full thread exception details:")
+            
+            # Start the timer thread
+            stop_thread = threading.Thread(target=stop_sprinklers_thread)
+            stop_thread.daemon = True
+            stop_thread.start()
+            logger.info(f"Backup sprinkler stop thread started with ID: {stop_thread.ident}")
+            return True
+        except Exception as e:
+            logger.error(f"Error creating backup sprinkler timer: {e}")
+            logger.exception("Full exception details:")
+            return False
 
 if __name__ == "__main__":
     try:
