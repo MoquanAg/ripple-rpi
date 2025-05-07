@@ -106,10 +106,17 @@ class RippleScheduler:
     def _initialize_nutrient_schedule(self):
         """Initialize nutrient pump schedule based on device.conf settings"""
         try:
-            wait_duration = self.config.get('NutrientPump', 'nutrient_pump_wait_duration').split(',')[0]
-            on_duration = self.config.get('NutrientPump', 'nutrient_pump_on_duration').split(',')[0]
-            ph_wait_duration = self.config.get('NutrientPump', 'ph_pump_wait_duration').split(',')[0]
-            ph_on_duration = self.config.get('NutrientPump', 'ph_pump_on_duration').split(',')[0]
+            # Get raw configuration values
+            wait_duration_raw = self.config.get('NutrientPump', 'nutrient_pump_wait_duration')
+            on_duration_raw = self.config.get('NutrientPump', 'nutrient_pump_on_duration')
+            ph_wait_duration_raw = self.config.get('NutrientPump', 'ph_pump_wait_duration')
+            ph_on_duration_raw = self.config.get('NutrientPump', 'ph_pump_on_duration')
+            
+            # Parse values, use second value (operational) if available, otherwise use first value
+            wait_duration = self._parse_config_value(wait_duration_raw, 1)  # Index 1 for second value
+            on_duration = self._parse_config_value(on_duration_raw, 1)
+            ph_wait_duration = self._parse_config_value(ph_wait_duration_raw, 1)
+            ph_on_duration = self._parse_config_value(ph_on_duration_raw, 1)
             
             # Validate durations
             if (wait_duration == "00:00:00" or on_duration == "00:00:00" or 
@@ -126,6 +133,12 @@ class RippleScheduler:
             if wait_seconds == 0 or on_seconds == 0 or ph_wait_seconds == 0 or ph_on_seconds == 0:
                 logger.warning("Nutrient schedule not initialized: zero duration after conversion")
                 return
+            
+            # Log the actual values being used
+            logger.info(f"Nutrient cycle using wait duration: {wait_duration} ({wait_seconds} seconds)")
+            logger.info(f"Nutrient cycle using on duration: {on_duration} ({on_seconds} seconds)")
+            logger.info(f"pH cycle using wait duration: {ph_wait_duration} ({ph_wait_seconds} seconds)")
+            logger.info(f"pH cycle using on duration: {ph_on_duration} ({ph_on_seconds} seconds)")
             
             # Add nutrient pump job
             self.scheduler.add_job(
@@ -147,6 +160,37 @@ class RippleScheduler:
             logger.info(f"pH schedule initialized: {ph_wait_duration} wait, {ph_on_duration} on")
         except Exception as e:
             logger.error(f"Failed to initialize nutrient schedule: {e}")
+            
+    def _parse_config_value(self, raw_value, preferred_index=1):
+        """Parse configuration values that may have comma-separated parts.
+        
+        Args:
+            raw_value (str): Raw configuration string that may contain comma-separated values
+            preferred_index (int): Index of value to use (0 for first, 1 for second/operational)
+            
+        Returns:
+            str: Parsed value with whitespace and quotes removed
+        """
+        try:
+            if ',' in raw_value:
+                parts = raw_value.split(',')
+                if len(parts) > preferred_index:
+                    # Use the preferred index (usually 1 for operational value)
+                    value = parts[preferred_index].strip()
+                else:
+                    # Fall back to first value if preferred index doesn't exist
+                    value = parts[0].strip()
+            else:
+                # No comma, just use the whole value
+                value = raw_value.strip()
+                
+            # Strip any quotes
+            value = value.strip('"\'')
+            return value
+        except Exception as e:
+            logger.error(f"Error parsing config value '{raw_value}': {e}")
+            # Return the input as a fallback
+            return raw_value.strip()
             
     def _initialize_sprinkler_schedule(self):
         """Initialize sprinkler schedule based on device.conf settings"""
@@ -363,10 +407,17 @@ class RippleScheduler:
             
             # Now proceed with the original logic but using ec_value instead of reading from sensors
             try:
-                ec_target = float(self.config.get('EC', 'ec_target').split(',')[0])
-                ec_deadband = float(self.config.get('EC', 'ec_deadband').split(',')[0])
-                ec_max = float(self.config.get('EC', 'ec_max').split(',')[0])
-                ec_min = float(self.config.get('EC', 'ec_min').split(',')[0])
+                ec_target_raw = self.config.get('EC', 'ec_target')
+                ec_deadband_raw = self.config.get('EC', 'ec_deadband')
+                ec_max_raw = self.config.get('EC', 'ec_max')
+                ec_min_raw = self.config.get('EC', 'ec_min')
+                
+                # Parse using operational values (second value)
+                ec_target = float(self._parse_config_value(ec_target_raw, 1))
+                ec_deadband = float(self._parse_config_value(ec_deadband_raw, 1))
+                ec_max = float(self._parse_config_value(ec_max_raw, 1))
+                ec_min = float(self._parse_config_value(ec_min_raw, 1))
+                
                 logger.info(f"EC targets - target: {ec_target}, deadband: {ec_deadband}, min: {ec_min}, max: {ec_max}")
                 
                 # Check if EC is too high
@@ -395,30 +446,16 @@ class RippleScheduler:
             logger.info(f"Force-reloading config from: {config_path}")
             self.config.read(config_path)
             
-            # Get the nutrient pump duration from config - READ THE FIRST ELEMENT if it's a comma-separated list
+            # Get the nutrient pump duration from config - USE THE SECOND ELEMENT (operational value)
             on_duration_raw = self.config.get('NutrientPump', 'nutrient_pump_on_duration')
-            logger.info(f"Raw nutrient_pump_on_duration from config: '{on_duration_raw}'")
-            
-            # Handle comma-separated values correctly - USE THE SECOND ELEMENT if available (operational value)
-            if ',' in on_duration_raw:
-                on_duration_parts = on_duration_raw.split(',')
-                if len(on_duration_parts) >= 2:
-                    on_duration = on_duration_parts[1].strip()
-                    logger.info(f"Using OPERATIONAL value from config: '{on_duration}'")
-                else:
-                    on_duration = on_duration_parts[0].strip()
-                    logger.info(f"Using first value (no second value found): '{on_duration}'")
-            else:
-                on_duration = on_duration_raw.strip()
-                logger.info(f"Using single value (no comma): '{on_duration}'")
-            
-            # Strip any quotes
-            on_duration = on_duration.strip('"\'')
+            on_duration = self._parse_config_value(on_duration_raw, 1)  # Use second value when available
+            logger.info(f"Nutrient pump duration from config: operational value '{on_duration}' from raw '{on_duration_raw}'")
             
             on_seconds = self._time_to_seconds(on_duration)
             logger.info(f"Parsed nutrient duration: {on_duration} = {on_seconds} seconds")
             
-            trigger_duration = self.config.get('Mixing', 'trigger_mixing_duration').split(',')[0]
+            trigger_duration_raw = self.config.get('Mixing', 'trigger_mixing_duration')
+            trigger_duration = self._parse_config_value(trigger_duration_raw, 1)  # Use second value when available  
             trigger_seconds = self._time_to_seconds(trigger_duration)
             
             if on_seconds == 0:
@@ -822,10 +859,15 @@ class RippleScheduler:
                 return
                 
             # Get configuration parameters
-            on_duration = self.config.get('NutrientPump', 'ph_pump_on_duration').split(',')[0]
+            on_duration_raw = self.config.get('NutrientPump', 'ph_pump_on_duration')
+            on_duration = self._parse_config_value(on_duration_raw, 1)  # Use second value when available
             on_seconds = self._time_to_seconds(on_duration)
-            trigger_duration = self.config.get('Mixing', 'trigger_mixing_duration').split(',')[0]
+            
+            trigger_duration_raw = self.config.get('Mixing', 'trigger_mixing_duration')
+            trigger_duration = self._parse_config_value(trigger_duration_raw, 1)  # Use second value when available
             trigger_seconds = self._time_to_seconds(trigger_duration)
+            
+            logger.info(f"pH pump parameters: on_duration='{on_duration}' ({on_seconds}s), trigger_duration='{trigger_duration}' ({trigger_seconds}s)")
             
             if on_seconds == 0:
                 logger.warning("Skipping pH cycle: zero duration")
@@ -843,10 +885,17 @@ class RippleScheduler:
             
             # Get pH targets from configuration
             try:
-                target_ph = float(self.config.get('pH', 'ph_target').split(',')[0])
-                ph_deadband = float(self.config.get('pH', 'ph_deadband').split(',')[0])
-                ph_min = float(self.config.get('pH', 'ph_min').split(',')[0])
-                ph_max = float(self.config.get('pH', 'ph_max').split(',')[0])
+                ph_target_raw = self.config.get('pH', 'ph_target')
+                ph_deadband_raw = self.config.get('pH', 'ph_deadband')
+                ph_min_raw = self.config.get('pH', 'ph_min')
+                ph_max_raw = self.config.get('pH', 'ph_max')
+                
+                # Parse using operational values (second value)
+                target_ph = float(self._parse_config_value(ph_target_raw, 1))
+                ph_deadband = float(self._parse_config_value(ph_deadband_raw, 1))
+                ph_min = float(self._parse_config_value(ph_min_raw, 1))
+                ph_max = float(self._parse_config_value(ph_max_raw, 1))
+                
                 logger.info(f"pH targets - target: {target_ph}, deadband: {ph_deadband}, min: {ph_min}, max: {ph_max}")
                 
                 # CRITICAL FIX: Instead of skipping adjustment when pH is outside safe range,
@@ -954,24 +1003,12 @@ class RippleScheduler:
             # Make sure we're reading the latest config
             self.config.read(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'config', 'device.conf'))
             
-            # Read ALL possible values - use the first one for configuration, but consider the second (operational) one
+            # Get the raw configuration value
             on_duration_raw = self.config.get('Sprinkler', 'sprinkler_on_duration')
             
-            # First get the configuration value for updating the scheduler
-            on_duration = on_duration_raw.split(',')[0].strip()
+            # Use the operational value (second value) for actual control
+            on_duration = self._parse_config_value(on_duration_raw, 1)  # Index 1 for second value
             on_seconds = self._time_to_seconds(on_duration)
-            
-            # Now check if there's an operational value
-            operational_duration = None
-            if ',' in on_duration_raw:
-                on_duration_parts = on_duration_raw.split(',')
-                if len(on_duration_parts) >= 2:
-                    operational_duration = on_duration_parts[1].strip()
-                    operational_seconds = self._time_to_seconds(operational_duration)
-                    logger.info(f"Using operational sprinkler duration for activation: {operational_duration} ({operational_seconds}s)")
-                    # Use the operational value for actual control
-                    on_duration = operational_duration
-                    on_seconds = operational_seconds
             
             # Clean up any existing sprinkler stop jobs
             try:
@@ -1105,10 +1142,16 @@ class RippleScheduler:
                 
             # Get water level targets from configuration
             try:
-                water_level_target = float(self.config.get('WaterLevel', 'water_level_target').split(',')[0])
-                water_level_deadband = float(self.config.get('WaterLevel', 'water_level_deadband').split(',')[0])
-                water_level_min = float(self.config.get('WaterLevel', 'water_level_min').split(',')[0])
-                water_level_max = float(self.config.get('WaterLevel', 'water_level_max').split(',')[0])
+                water_level_target_raw = self.config.get('WaterLevel', 'water_level_target')
+                water_level_deadband_raw = self.config.get('WaterLevel', 'water_level_deadband')
+                water_level_min_raw = self.config.get('WaterLevel', 'water_level_min')
+                water_level_max_raw = self.config.get('WaterLevel', 'water_level_max')
+                
+                # Parse using operational values (second value)
+                water_level_target = float(self._parse_config_value(water_level_target_raw, 1))
+                water_level_deadband = float(self._parse_config_value(water_level_deadband_raw, 1))
+                water_level_min = float(self._parse_config_value(water_level_min_raw, 1))
+                water_level_max = float(self._parse_config_value(water_level_max_raw, 1))
                 
                 logger.info(f"Water level targets - target: {water_level_target}, deadband: {water_level_deadband}, min: {water_level_min}, max: {water_level_max}")
                 

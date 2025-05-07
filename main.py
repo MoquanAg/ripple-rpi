@@ -497,15 +497,16 @@ class RippleController:
                 logger.info(f"Reloading configuration for section: {section}")
                 
                 if section == 'Mixing':
-                    self.scheduler.update_configuration('Mixing', 'mixing_interval', 
-                        self.config.get('Mixing', 'mixing_interval').split(',')[0])
-                    self.scheduler.update_configuration('Mixing', 'mixing_duration', 
-                        self.config.get('Mixing', 'mixing_duration').split(',')[0])
-                    self.scheduler.update_configuration('Mixing', 'trigger_mixing_duration', 
-                        self.config.get('Mixing', 'trigger_mixing_duration').split(',')[0])
+                    # Parse using the second value (operational value) if available
+                    mixing_interval = self._parse_config_value('Mixing', 'mixing_interval', 1)
+                    mixing_duration = self._parse_config_value('Mixing', 'mixing_duration', 1)
+                    trigger_mixing_duration = self._parse_config_value('Mixing', 'trigger_mixing_duration', 1)
+                    
+                    self.scheduler.update_configuration('Mixing', 'mixing_interval', mixing_interval)
+                    self.scheduler.update_configuration('Mixing', 'mixing_duration', mixing_duration)
+                    self.scheduler.update_configuration('Mixing', 'trigger_mixing_duration', trigger_mixing_duration)
                     
                     # Check if mixing_duration is set to zero
-                    mixing_duration = self.config.get('Mixing', 'mixing_duration').split(',')[0]
                     mixing_seconds = self._time_to_seconds(mixing_duration)
                     
                     if mixing_seconds == 0:
@@ -536,22 +537,23 @@ class RippleController:
                     logger.info("Mixing configuration updated")
                 
                 elif section == 'NutrientPump':
-                    self.scheduler.update_configuration('NutrientPump', 'nutrient_pump_on_duration', 
-                        self.config.get('NutrientPump', 'nutrient_pump_on_duration').split(',')[0])
-                    self.scheduler.update_configuration('NutrientPump', 'nutrient_pump_wait_duration', 
-                        self.config.get('NutrientPump', 'nutrient_pump_wait_duration').split(',')[0])
-                    self.scheduler.update_configuration('NutrientPump', 'ph_pump_on_duration', 
-                        self.config.get('NutrientPump', 'ph_pump_on_duration').split(',')[0])
-                    self.scheduler.update_configuration('NutrientPump', 'ph_pump_wait_duration', 
-                        self.config.get('NutrientPump', 'ph_pump_wait_duration').split(',')[0])
+                    # Parse using the second value (operational value) if available
+                    nutrient_on_duration = self._parse_config_value('NutrientPump', 'nutrient_pump_on_duration', 1)
+                    nutrient_wait_duration = self._parse_config_value('NutrientPump', 'nutrient_pump_wait_duration', 1)
+                    ph_on_duration = self._parse_config_value('NutrientPump', 'ph_pump_on_duration', 1)
+                    ph_wait_duration = self._parse_config_value('NutrientPump', 'ph_pump_wait_duration', 1)
+                    
+                    self.scheduler.update_configuration('NutrientPump', 'nutrient_pump_on_duration', nutrient_on_duration)
+                    self.scheduler.update_configuration('NutrientPump', 'nutrient_pump_wait_duration', nutrient_wait_duration)
+                    self.scheduler.update_configuration('NutrientPump', 'ph_pump_on_duration', ph_on_duration)
+                    self.scheduler.update_configuration('NutrientPump', 'ph_pump_wait_duration', ph_wait_duration)
                     
                     # Initialize Relay connection
                     from src.sensors.Relay import Relay
                     relay = Relay()
                     
                     # Check nutrient pump duration
-                    nutrient_duration = self.config.get('NutrientPump', 'nutrient_pump_on_duration').split(',')[0]
-                    nutrient_seconds = self._time_to_seconds(nutrient_duration)
+                    nutrient_seconds = self._time_to_seconds(nutrient_on_duration)
                     
                     if nutrient_seconds == 0:
                         # Turn off nutrient pumps if duration is set to zero
@@ -578,8 +580,7 @@ class RippleController:
                             logger.warning("Failed to turn off nutrient pumps: relay not available")
                     
                     # Check pH pump duration
-                    ph_duration = self.config.get('NutrientPump', 'ph_pump_on_duration').split(',')[0]
-                    ph_seconds = self._time_to_seconds(ph_duration)
+                    ph_seconds = self._time_to_seconds(ph_on_duration)
                     
                     if ph_seconds == 0:
                         # Turn off pH pumps if duration is set to zero
@@ -624,11 +625,12 @@ class RippleController:
                     except Exception as e:
                         logger.error(f"Error turning off sprinklers: {e}")
                         
-                    # Now update the configuration values
-                    self.scheduler.update_configuration('Sprinkler', 'sprinkler_on_duration', 
-                        self.config.get('Sprinkler', 'sprinkler_on_duration').split(',')[0])
-                    self.scheduler.update_configuration('Sprinkler', 'sprinkler_wait_duration', 
-                        self.config.get('Sprinkler', 'sprinkler_wait_duration').split(',')[0])
+                    # Now update the configuration values using operational values (second value)
+                    sprinkler_on_duration = self._parse_config_value('Sprinkler', 'sprinkler_on_duration', 1)
+                    sprinkler_wait_duration = self._parse_config_value('Sprinkler', 'sprinkler_wait_duration', 1)
+                    
+                    self.scheduler.update_configuration('Sprinkler', 'sprinkler_on_duration', sprinkler_on_duration)
+                    self.scheduler.update_configuration('Sprinkler', 'sprinkler_wait_duration', sprinkler_wait_duration)
                     
                     # Only proceed to potentially turning them back on if not in an error state
                     try:
@@ -648,26 +650,8 @@ class RippleController:
                         except Exception as e:
                             logger.warning(f"[Startup] Error cleaning up sprinkler jobs: {e}")
                             
-                        # Get sprinkler on_duration from config - USING THE SECOND VALUE (operational value)
-                        sprinkler_on_duration_raw = self.config.get('Sprinkler', 'sprinkler_on_duration')
-                        logger.info(f"Raw sprinkler_on_duration from config: '{sprinkler_on_duration_raw}'")
-                        
-                        # Properly parse the value to get the second element (operational value)
-                        sprinkler_on_duration = ""
-                        if ',' in sprinkler_on_duration_raw:
-                            sprinkler_on_duration_parts = sprinkler_on_duration_raw.split(',')
-                            if len(sprinkler_on_duration_parts) >= 2:
-                                sprinkler_on_duration = sprinkler_on_duration_parts[1].strip()
-                                logger.info(f"[Startup] Using OPERATIONAL value from config: '{sprinkler_on_duration}'")
-                            else:
-                                sprinkler_on_duration = sprinkler_on_duration_parts[0].strip()
-                                logger.info(f"[Startup] Using first value (no second value found): '{sprinkler_on_duration}'")
-                        else:
-                            sprinkler_on_duration = sprinkler_on_duration_raw.strip()
-                            logger.info(f"[Startup] Using single value (no comma): '{sprinkler_on_duration}'")
-                        
-                        # Strip any quotes
-                        sprinkler_on_duration = sprinkler_on_duration.strip('"\'')
+                        # Get sprinkler on_duration - USING THE PARSED VALUE
+                        logger.info(f"Using parsed sprinkler_on_duration: '{sprinkler_on_duration}'")
                         
                         sprinkler_on_seconds = self._time_to_seconds(sprinkler_on_duration)
                         logger.info(f"[Startup] Parsed sprinkler duration: {sprinkler_on_duration} = {sprinkler_on_seconds} seconds")
@@ -973,26 +957,9 @@ class RippleController:
             except Exception as e:
                 logger.warning(f"[Startup] Error cleaning up sprinkler jobs: {e}")
             
-            # Get sprinkler on_duration from config - USING THE SECOND VALUE (operational value)
-            sprinkler_on_duration_raw = self.config.get('Sprinkler', 'sprinkler_on_duration')
-            logger.info(f"Raw sprinkler_on_duration from config: '{sprinkler_on_duration_raw}'")
-            
-            # Properly parse the value to get the second element (operational value)
-            sprinkler_on_duration = ""
-            if ',' in sprinkler_on_duration_raw:
-                sprinkler_on_duration_parts = sprinkler_on_duration_raw.split(',')
-                if len(sprinkler_on_duration_parts) >= 2:
-                    sprinkler_on_duration = sprinkler_on_duration_parts[1].strip()
-                    logger.info(f"[Startup] Using OPERATIONAL value from config: '{sprinkler_on_duration}'")
-                else:
-                    sprinkler_on_duration = sprinkler_on_duration_parts[0].strip()
-                    logger.info(f"[Startup] Using first value (no second value found): '{sprinkler_on_duration}'")
-            else:
-                sprinkler_on_duration = sprinkler_on_duration_raw.strip()
-                logger.info(f"[Startup] Using single value (no comma): '{sprinkler_on_duration}'")
-            
-            # Strip any quotes
-            sprinkler_on_duration = sprinkler_on_duration.strip('"\'')
+            # Get sprinkler on_duration - PARSE THE SECOND VALUE (operational value)
+            sprinkler_on_duration = self._parse_config_value('Sprinkler', 'sprinkler_on_duration', 1)
+            logger.info(f"Using parsed sprinkler_on_duration for startup: '{sprinkler_on_duration}'")
             
             sprinkler_on_seconds = self._time_to_seconds(sprinkler_on_duration)
             logger.info(f"[Startup] Parsed sprinkler duration: {sprinkler_on_duration} = {sprinkler_on_seconds} seconds")
@@ -1442,6 +1409,45 @@ class RippleController:
             logger.error(f"Error creating backup sprinkler timer: {e}")
             logger.exception("Full exception details:")
             return False
+
+    def _parse_config_value(self, section, key, preferred_index=1):
+        """Parse configuration values that may have comma-separated parts.
+        
+        Args:
+            section (str): Config section name
+            key (str): Config key name
+            preferred_index (int): Index of value to use (0 for first, 1 for second/operational)
+            
+        Returns:
+            str: Parsed value with whitespace and quotes removed
+        """
+        try:
+            raw_value = self.config.get(section, key)
+            
+            if ',' in raw_value:
+                parts = raw_value.split(',')
+                if len(parts) > preferred_index:
+                    # Use the preferred index (usually 1 for operational value)
+                    value = parts[preferred_index].strip()
+                else:
+                    # Fall back to first value if preferred index doesn't exist
+                    value = parts[0].strip()
+            else:
+                # No comma, just use the whole value
+                value = raw_value.strip()
+                
+            # Strip any quotes
+            value = value.strip('"\'')
+            
+            logger.info(f"Parsed config value for {section}.{key}: '{raw_value}' -> '{value}' (using index {preferred_index})")
+            return value
+        except Exception as e:
+            logger.error(f"Error parsing config value for {section}.{key}: {e}")
+            # Return first part as a fallback
+            try:
+                return self.config.get(section, key).split(',')[0].strip()
+            except:
+                return ""
 
 if __name__ == "__main__":
     try:
