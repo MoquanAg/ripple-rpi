@@ -9,9 +9,18 @@ VENV_PATH="$RIPPLE_PATH/venv"
 echo "Setting up Python virtual environment."
 
 # Set up Python virtual environment
-python3 -m venv "$VENV_PATH"
+python -m venv "$VENV_PATH"
+
+# Configure pip to use Aliyun mirror
+"$VENV_PATH/bin/pip" config set global.index-url https://mirrors.aliyun.com/pypi/simple/
+"$VENV_PATH/bin/pip" config set global.trusted-host mirrors.aliyun.com
+
+source "$VENV_PATH/bin/activate"
+
 "$VENV_PATH/bin/pip" install --upgrade pip
 "$VENV_PATH/bin/pip" install -r "$RIPPLE_PATH/requirements.txt"
+
+
 
 # Create autostart entry
 AUTOSTART_DIR="$RIPPLE_HOME/.config/autostart"
