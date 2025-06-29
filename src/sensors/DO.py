@@ -6,15 +6,26 @@ current_dir = os.path.dirname(__file__)
 parent_dir = os.path.dirname(current_dir)
 sys.path.append(parent_dir)
 
-from lumina_modbus_event_emitter import ModbusResponse
-
-import globals
-from src.lumina_logger import GlobalLogger
+try:
+    # Try importing when running from main directory
+    from src.lumina_modbus_event_emitter import ModbusResponse
+    import src.globals as globals
+    from src.lumina_logger import GlobalLogger
+except ImportError:
+    # Import when running from src directory
+    from lumina_modbus_event_emitter import ModbusResponse
+    import globals
+    from lumina_logger import GlobalLogger
 
 logger = GlobalLogger("RippleDO", log_prefix="ripple_").logger
 
 import math
-import helpers
+try:
+    # Try importing when running from main directory
+    import src.helpers as helpers
+except ImportError:
+    # Import when running from src directory
+    import helpers
 
 class DO:
 
@@ -28,14 +39,14 @@ class DO:
         config = globals.DEVICE_CONFIG_FILE
         
         try:
-            if 'DEVICE' in config:
-                for key, value in config['DEVICE'].items():
+            if 'SENSORS' in config:
+                for key, value in config['SENSORS'].items():
                     if key.upper().startswith("DO_"):
                         sensor_id = key
                         cls(sensor_id, port)
                         logger.info(f"Loaded sensor with ID: {sensor_id}")
             else:
-                logger.info("No 'DEVICE' section found in the configuration file.")
+                logger.info("No 'SENSORS' section found in the configuration file.")
         except Exception as e:
             logger.info(f"Failed to load sensors: {e}")
 
@@ -62,12 +73,13 @@ class DO:
         self.sensor_id = sensor_id
         self.port = port
         self.data_path = globals.SAVED_SENSOR_DATA_PATH
-        self.address = globals.get_device_address('SENSORS', 'DO_main', '0x03')
-        self.baud_rate = globals.get_device_baudrate('SENSORS', 'DO_main', 9600)
-        self.position = "main"
+        self.address = globals.get_device_address('SENSORS', sensor_id, '0x40')
+        self.baud_rate = globals.get_device_baudrate('SENSORS', sensor_id, 9600)
+        self.position = globals.get_device_position('SENSORS', sensor_id, "main")
         self.do = None
         self.last_updated = None
-        self.load_address()
+        
+        logger.info(f"DO sensor {sensor_id} loaded with address: {hex(self.address)}")
 
         # Update modbus client initialization
         self.modbus_client = globals.modbus_client
@@ -80,20 +92,7 @@ class DO:
     def close_connection(self):
         self.ser.close()
 
-    def load_address(self):
-        config = globals.DEVICE_CONFIG_FILE
-        try:
-            if 'DEVICE' in config:
-                for key, value in config['DEVICE'].items():
-                    if key.upper().startswith(f"DO_{self.sensor_id.upper()}"):
-                        self.address = int(value, 16)
-                        self.position = self.sensor_id
-                        logger.info(f"{key} address loaded: {hex(self.address)}")
-                        break
-        except FileNotFoundError:
-            logger.info(f"Device config not found. Using default address.")
-        except ValueError:
-            logger.info(f"Invalid address format. Using default: {hex(self.address)}")
+
 
     def get_status_async(self):
         """
@@ -190,4 +189,4 @@ if __name__ == "__main__":
 
     while True:
         DO.get_statuses_async()
-        time.sleep(1)  # Update every 2 seconds
+        time.sleep(5)  # Update every 2 seconds
