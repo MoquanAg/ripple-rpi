@@ -4,8 +4,14 @@ import tzlocal
 from datetime import datetime, timedelta
 import os, sys
 import json
-import globals
-from src.lumina_logger import GlobalLogger
+try:
+    # Try importing when running from main directory
+    import src.globals as globals
+    from src.lumina_logger import GlobalLogger
+except ImportError:
+    # Import when running from src directory
+    import globals
+    from lumina_logger import GlobalLogger
 
 logger = GlobalLogger("RippleHelpers", log_prefix="ripple_").logger
 

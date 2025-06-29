@@ -6,10 +6,16 @@ current_dir = os.path.dirname(__file__)
 parent_dir = os.path.dirname(current_dir)
 sys.path.append(parent_dir)
 
-from lumina_modbus_event_emitter import ModbusResponse
-
-import globals
-from src.lumina_logger import GlobalLogger
+try:
+    # Try importing when running from main directory
+    from src.lumina_modbus_event_emitter import ModbusResponse
+    import src.globals as globals
+    from src.lumina_logger import GlobalLogger
+except ImportError:
+    # Import when running from src directory
+    from lumina_modbus_event_emitter import ModbusResponse
+    import globals
+    from lumina_logger import GlobalLogger
 
 logger = GlobalLogger("RipplepH", log_prefix="ripple_").logger
 
