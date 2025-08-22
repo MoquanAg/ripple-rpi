@@ -307,14 +307,103 @@ async def update_manual_command(command: ManualCommand, username: str = Depends(
 
 @app.get("/api/v1/status", tags=["Status"])
 async def get_system_status(username: str = Depends(verify_credentials)):
-    """Get current system status in the saved_sensor_data.json format"""
+    """Get current system status in a simplified format"""
     try:
         # Read current sensor data
         with open('data/saved_sensor_data.json', 'r') as f:
             sensor_data = json.load(f)
         
-        # Return the data as is, without modifying it
-        return sensor_data
+        # Extract essential sensor values
+        simplified_status = {}
+        
+        # Extract sensor values
+        if 'data' in sensor_data and 'water_metrics' in sensor_data['data']:
+            water_metrics = sensor_data['data']['water_metrics']
+            
+            # Extract pH value
+            if 'ph' in water_metrics and 'measurements' in water_metrics['ph']:
+                ph_points = water_metrics['ph']['measurements']['points']
+                if ph_points:
+                    simplified_status['ph'] = ph_points[-1]['fields']['value']
+                    simplified_status['ph_temperature'] = ph_points[-1]['fields']['temperature']
+            
+            # Extract EC value
+            if 'ec' in water_metrics and 'measurements' in water_metrics['ec']:
+                ec_points = water_metrics['ec']['measurements']['points']
+                if ec_points:
+                    simplified_status['ec'] = ec_points[-1]['fields']['value']
+                    # Extract additional EC data
+                    simplified_status['ec_tds'] = ec_points[-1]['fields'].get('tds')
+                    simplified_status['ec_salinity'] = ec_points[-1]['fields'].get('salinity')
+                    simplified_status['ec_temperature'] = ec_points[-1]['fields'].get('temperature')
+            
+            # Extract water level
+            if 'water_level' in water_metrics and 'measurements' in water_metrics['water_level']:
+                water_level_points = water_metrics['water_level']['measurements']['points']
+                if water_level_points:
+                    simplified_status['water_level'] = water_level_points[-1]['fields']['value']
+        
+        # Extract target values from config file
+        try:
+            config = configparser.ConfigParser()
+            config.read('config/device.conf')
+            
+            # pH targets
+            if config.has_section('pH'):
+                simplified_status['target_ph'] = float(config.get('pH', 'ph_target').split(',')[0])
+                simplified_status['ph_deadband'] = float(config.get('pH', 'ph_deadband').split(',')[0])
+                simplified_status['ph_min'] = float(config.get('pH', 'ph_min').split(',')[0])
+                simplified_status['ph_max'] = float(config.get('pH', 'ph_max').split(',')[0])
+            
+            # EC targets
+            if config.has_section('EC'):
+                simplified_status['target_ec'] = float(config.get('EC', 'ec_target').split(',')[0])
+                simplified_status['ec_deadband'] = float(config.get('EC', 'ec_deadband').split(',')[0])
+                simplified_status['ec_min'] = float(config.get('EC', 'ec_min').split(',')[0])
+                simplified_status['ec_max'] = float(config.get('EC', 'ec_max').split(',')[0])
+            
+            # Water level targets
+            if config.has_section('WaterLevel'):
+                simplified_status['target_water_level'] = float(config.get('WaterLevel', 'water_level_target').split(',')[0])
+                simplified_status['water_level_deadband'] = float(config.get('WaterLevel', 'water_level_deadband').split(',')[0])
+                simplified_status['water_level_min'] = float(config.get('WaterLevel', 'water_level_min').split(',')[0])
+                simplified_status['water_level_max'] = float(config.get('WaterLevel', 'water_level_max').split(',')[0])
+            
+            # Nutrient pump settings
+            if config.has_section('NutrientPump'):
+                simplified_status['abc_ratio'] = config.get('NutrientPump', 'abc_ratio').split(',')[0].strip('"')
+            
+            # Sprinkler settings
+            if config.has_section('Sprinkler'):
+                simplified_status['sprinkler_on_duration'] = config.get('Sprinkler', 'sprinkler_on_duration').split(',')[0].strip('"')
+                simplified_status['sprinkler_wait_duration'] = config.get('Sprinkler', 'sprinkler_wait_duration').split(',')[0].strip('"')
+            
+            # Water temperature targets
+            if config.has_section('WaterTemperature'):
+                simplified_status['target_water_temperature'] = float(config.get('WaterTemperature', 'target_water_temperature').split(',')[0])
+                simplified_status['target_water_temperature_min'] = float(config.get('WaterTemperature', 'target_water_temperature_min').split(',')[0])
+                simplified_status['target_water_temperature_max'] = float(config.get('WaterTemperature', 'target_water_temperature_max').split(',')[0])
+                
+        except Exception as e:
+            logger.warning(f"Error reading config targets: {e}")
+        
+        # Extract relay states in the desired format
+        if 'data' in sensor_data and 'relay_metrics' in sensor_data['data']:
+            relay_points = sensor_data['data']['relay_metrics']['measurements']['points']
+            relay_list = []
+            for point in relay_points:
+                if 'tags' in point and 'fields' in point:
+                    relay_list.append({
+                        "port": str(point['tags']['port_index']),
+                        "status": bool(point['fields']['status']),
+                        "as": point['tags']['device']
+                    })
+            simplified_status['relays'] = relay_list
+        
+        # Add timestamp
+        simplified_status['timestamp'] = datetime.now().isoformat()
+        
+        return simplified_status
     except Exception as e:
         logger.error(f"Error getting system status: {e}")
         raise HTTPException(status_code=500, detail=f"Error getting system status: {str(e)}")

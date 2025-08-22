@@ -1160,56 +1160,62 @@ class RippleController:
     def save_sensor_data(self):
         """Save current sensor data to JSON file"""
         try:
-            data = {
-                "data": {
-                    "water_metrics": {
-                        "water_level": {
-                            "measurements": {
-                                "name": "water_metrics",
-                                "points": []
+            # Try to load existing data first
+            try:
+                with open(self.sensor_data_file, 'r') as f:
+                    data = json.load(f)
+            except (FileNotFoundError, json.JSONDecodeError):
+                # Initialize new data structure if file doesn't exist or is invalid
+                data = {
+                    "data": {
+                        "water_metrics": {
+                            "water_level": {
+                                "measurements": {
+                                    "name": "water_metrics",
+                                    "points": []
+                                }
+                            },
+                            "ph": {
+                                "measurements": {
+                                    "name": "water_metrics",
+                                    "points": []
+                                }
+                            },
+                            "ec": {
+                                "measurements": {
+                                    "name": "water_metrics",
+                                    "points": []
+                                }
                             }
                         },
-                        "ph": {
+                        "relay_metrics": {
                             "measurements": {
-                                "name": "water_metrics",
+                                "name": "relay_metrics",
                                 "points": []
-                            }
-                        },
-                        "ec": {
-                            "measurements": {
-                                "name": "water_metrics",
-                                "points": []
-                            }
-                        }
-                    },
-                    "relay_metrics": {
-                        "measurements": {
-                            "name": "relay_metrics",
-                            "points": []
-                        },
-                        "configuration": {
-                            "relay_configuration": {
-                                "relayone": {
-                                    "total_ports": 16,
-                                    "assigned_ports": [],
-                                    "unassigned_ports": list(range(16))
+                            },
+                            "configuration": {
+                                "relay_configuration": {
+                                    "relayone": {
+                                        "total_ports": 16,
+                                        "assigned_ports": [],
+                                        "unassigned_ports": list(range(16))
+                                    }
                                 }
                             }
                         }
-                    }
-                },
-                "relays": {
-                    "last_updated": datetime.now().isoformat(),
-                    "relayone": {
-                        "RELAYONE": {
-                            "RELAYONE": [0] * 16
+                    },
+                    "relays": {
+                        "last_updated": datetime.now().isoformat(),
+                        "relayone": {
+                            "RELAYONE": {
+                                "RELAYONE": [0] * 16
+                            }
                         }
+                    },
+                    "devices": {
+                        "last_updated": datetime.now().isoformat()
                     }
-                },
-                "devices": {
-                    "last_updated": datetime.now().isoformat()
                 }
-            }
 
             # Get water level data
             wl_data = WaterLevel.get_statuses_async()
