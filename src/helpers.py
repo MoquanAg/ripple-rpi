@@ -81,8 +81,10 @@ def datetime_to_iso8601(datetime_obj="now"):
     if datetime_obj is None or datetime_obj == "now":
         datetime_obj = datetime.now()
 
-    local_timezone = datetime.now().astimezone().tzinfo
-    datetime_obj = datetime_obj.replace(tzinfo=local_timezone)
+    # Use UTC+8 timezone (China Standard Time) instead of local timezone
+    from datetime import timezone, timedelta
+    china_tz = timezone(timedelta(hours=8))
+    datetime_obj = datetime_obj.replace(tzinfo=china_tz)
 
     return datetime_obj.strftime("%Y-%m-%dT%H:%M:%S%z")
 

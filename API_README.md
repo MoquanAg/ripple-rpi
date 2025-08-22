@@ -80,7 +80,7 @@ All API endpoints require HTTP Basic Authentication. Use the username and passwo
         {"port": "9", "status": true, "as": "SprinklerA"},
         {"port": "10", "status": true, "as": "SprinklerB"}
       ],
-      "timestamp": "2025-08-22T11:11:05+0100"
+      "timestamp": "2025-08-22T18:26:56+0800"
     }
     ```
 

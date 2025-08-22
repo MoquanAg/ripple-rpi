@@ -17,6 +17,7 @@ src_dir = os.path.join(current_dir, 'src')
 sys.path.append(src_dir)
 
 import globals
+import helpers
 from src.sensors.water_level import WaterLevel
 from src.sensors.Relay import Relay
 from src.sensors.DO import DO
@@ -1236,7 +1237,7 @@ class RippleController:
                             "range_max": 200,
                             "zero_offset": None
                         },
-                        "timestamp": datetime.now().isoformat()
+                        "timestamp": helpers.datetime_to_iso8601()
                     })
 
             # Get pH data
@@ -1254,7 +1255,7 @@ class RippleController:
                             "temperature": 25.0,
                             "offset": None
                         },
-                        "timestamp": datetime.now().isoformat()
+                        "timestamp": helpers.datetime_to_iso8601()
                     })
 
             # Get EC data
@@ -1281,7 +1282,7 @@ class RippleController:
                             "compensation_mode": None,
                             "sensor_type": None
                         },
-                        "timestamp": datetime.now().isoformat()
+                        "timestamp": helpers.datetime_to_iso8601()
                     })
 
             # Get relay data and map according to device.conf assignments
@@ -1323,7 +1324,7 @@ class RippleController:
                                 "is_assigned": device_name != "none",
                                 "raw_status": status
                             },
-                            "timestamp": datetime.now().isoformat()
+                            "timestamp": helpers.datetime_to_iso8601()
                         })
 
             # Save to file

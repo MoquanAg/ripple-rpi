@@ -21,6 +21,7 @@ sys.path.append(src_dir)
 
 # Import controller modules
 import globals
+import helpers
 from src.lumina_logger import GlobalLogger
 from src.sensors.water_level import WaterLevel
 from src.sensors.Relay import Relay
@@ -401,7 +402,7 @@ async def get_system_status(username: str = Depends(verify_credentials)):
             simplified_status['relays'] = relay_list
         
         # Add timestamp
-        simplified_status['timestamp'] = datetime.now().isoformat()
+        simplified_status['timestamp'] = helpers.datetime_to_iso8601()
         
         return simplified_status
     except Exception as e:
