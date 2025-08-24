@@ -60,10 +60,18 @@ echo "Added autostart entry for Ripple Fertigation System."
 mkdir -p "$RIPPLE_PATH/data"
 mkdir -p "$RIPPLE_PATH/log"
 
-# Set appropriate permissions
+# Set appropriate permissions and ownership
 echo "Setting file permissions."
 chmod -R 755 "$RIPPLE_PATH"
 chmod 644 "$RIPPLE_PATH/config/device.conf"
+# Ensure data and log directories are owned by the lumina user
+chown -R lumina:lumina "$RIPPLE_PATH/data"
+chown -R lumina:lumina "$RIPPLE_PATH/log"
+
+# Configure git to ignore file permission changes (prevents false "modified" status)
+echo "Configuring git to ignore file permission changes."
+cd "$RIPPLE_PATH"
+git config core.fileMode false
 
 echo "Setup complete. The Ripple Fertigation System will start automatically at boot."
 echo "You can also start it manually by running: $RIPPLE_PATH/start_ripple.sh" 
