@@ -895,15 +895,65 @@ class Relay:
         except Exception as e:
             logger.error(f"Error controlling tank-to-gutters pump: {e}")
 
-    def set_sprinklers(self, status):
-        """Control both sprinkler A and B together."""
-        logger.info(f"Setting sprinklers to {status}")
+    def set_sprinklers(self, status, sprinkler_type="both"):
+        """
+        Control sprinklers with support for both individual and group control.
+        
+        Args:
+            status (bool): True to turn on, False to turn off
+            sprinkler_type (str): "both", "a", "b", "1", "2", or "individual"
+                                 - "both": Control both sprinklers together (failsafe)
+                                 - "a" or "1": Control Sprinkler1 only
+                                 - "b" or "2": Control Sprinkler2 only
+                                 - "individual": Control based on config names
+        """
+        logger.info(f"Setting sprinklers - Status: {status}, Type: {sprinkler_type}")
+        
+        try:
+            # Map sprinkler types to actual config names
+            sprinkler_mapping = {
+                "a": "Sprinkler1",
+                "b": "Sprinkler2", 
+                "1": "Sprinkler1",
+                "2": "Sprinkler2",
+                "both": "both",
+                "individual": "individual"
+            }
+            
+            if sprinkler_type not in sprinkler_mapping:
+                logger.warning(f"Invalid sprinkler_type: {sprinkler_type}. Using 'both'")
+                sprinkler_type = "both"
+            
+            target_sprinkler = sprinkler_mapping[sprinkler_type]
+            
+            if target_sprinkler == "both":
+                # Control both sprinklers together (failsafe mode)
+                logger.info("Using failsafe mode - controlling both sprinklers together")
+                return self._control_multiple_sprinklers([True, True] if status else [False, False])
+                
+            elif target_sprinkler == "individual":
+                # Use the names from RELAY_CONTROLS section for backward compatibility
+                logger.info("Using individual control based on RELAY_CONTROLS names")
+                return self._control_individual_sprinklers(status)
+                
+            else:
+                # Control specific sprinkler
+                logger.info(f"Controlling individual sprinkler: {target_sprinkler}")
+                return self.set_relay(target_sprinkler, status)
+                
+        except Exception as e:
+            logger.error(f"Error controlling sprinklers: {e}")
+            logger.exception("Exception details:")
+            return False
+
+    def _control_multiple_sprinklers(self, states):
+        """Control multiple sprinklers with optimized command if possible."""
         try:
             # Find the relay assignments for both sprinklers
             indices = []
             relay_group = None
             
-            for sprinkler in ["SprinklerA", "SprinklerB"]:
+            for sprinkler in ["Sprinkler1", "Sprinkler2"]:
                 if sprinkler in self.relay_assignments:
                     info = self.relay_assignments[sprinkler]
                     if relay_group is None:
@@ -916,17 +966,98 @@ class Relay:
                     # Use set_multiple_relays for efficiency
                     start_index = min(indices)
                     logger.info(f"Using optimized set_multiple_relays for sprinklers at indices {indices}")
-                    return self.set_multiple_relays(relay_group, start_index, [status, status])
+                    return self.set_multiple_relays(relay_group, start_index, states)
             
             # Fallback to individual control
             logger.info("Using individual control for sprinklers")
-            result_a = self.set_relay("SprinklerA", status)
-            result_b = self.set_relay("SprinklerB", status)
-            return result_a and result_b
+            result_1 = self.set_relay("Sprinkler1", states[0])
+            result_2 = self.set_relay("Sprinkler2", states[1])
+            return result_1 and result_2
             
         except Exception as e:
-            logger.error(f"Error controlling sprinklers: {e}")
-            logger.exception("Exception details:")
+            logger.error(f"Error in _control_multiple_sprinklers: {e}")
+            return False
+
+    def _control_individual_sprinklers(self, status):
+        """Control sprinklers using RELAY_CONTROLS names for backward compatibility."""
+        try:
+            # Try to use the RELAY_CONTROLS names first
+            sprinkler_a_name = None
+            sprinkler_b_name = None
+            
+            # Look for sprinkler_a and sprinkler_b in RELAY_CONTROLS
+            if hasattr(globals, 'DEVICE_CONFIG_FILE') and 'RELAY_CONTROLS' in globals.DEVICE_CONFIG_FILE:
+                config = globals.DEVICE_CONFIG_FILE
+                if 'sprinkler_a' in config['RELAY_CONTROLS']:
+                    sprinkler_a_name = config['RELAY_CONTROLS']['sprinkler_a'].strip()
+                if 'sprinkler_b' in config['RELAY_CONTROLS']:
+                    sprinkler_b_name = config['RELAY_CONTROLS']['sprinkler_b'].strip()
+            
+            # If we found the names, use them
+            if sprinkler_a_name and sprinkler_b_name:
+                logger.info(f"Using RELAY_CONTROLS names: {sprinkler_a_name}, {sprinkler_b_name}")
+                result_a = self.set_relay(sprinkler_a_name, status)
+                result_b = self.set_relay(sprinkler_b_name, status)
+                return result_a and result_b
+            else:
+                # Fallback to RELAY_ASSIGNMENTS names
+                logger.info("Falling back to RELAY_ASSIGNMENTS names: Sprinkler1, Sprinkler2")
+                result_1 = self.set_relay("Sprinkler1", status)
+                result_2 = self.set_relay("Sprinkler2", status)
+                return result_1 and result_2
+                
+        except Exception as e:
+            logger.error(f"Error in _control_individual_sprinklers: {e}")
+            return False
+
+    def set_sprinkler_1(self, status):
+        """Control Sprinkler1 individually."""
+        logger.info(f"Setting Sprinkler1 to {status}")
+        return self.set_relay("Sprinkler1", status)
+
+    def set_sprinkler_2(self, status):
+        """Control Sprinkler2 individually."""
+        logger.info(f"Setting Sprinkler2 to {status}")
+        return self.set_relay("Sprinkler2", status)
+
+    def set_sprinkler_a(self, status):
+        """Control SprinklerA individually (backward compatibility)."""
+        logger.info(f"Setting SprinklerA to {status}")
+        try:
+            # Try to find the actual name from RELAY_CONTROLS
+            if hasattr(globals, 'DEVICE_CONFIG_FILE') and 'RELAY_CONTROLS' in globals.DEVICE_CONFIG_FILE:
+                config = globals.DEVICE_CONFIG_FILE
+                if 'sprinkler_a' in config['RELAY_CONTROLS']:
+                    sprinkler_name = config['RELAY_CONTROLS']['sprinkler_a'].strip()
+                    logger.info(f"Found sprinkler_a name: {sprinkler_name}")
+                    return self.set_relay(sprinkler_name, status)
+            
+            # Fallback to Sprinkler1
+            logger.info("Falling back to Sprinkler1")
+            return self.set_relay("Sprinkler1", status)
+            
+        except Exception as e:
+            logger.error(f"Error setting SprinklerA: {e}")
+            return False
+
+    def set_sprinkler_b(self, status):
+        """Control SprinklerB individually (backward compatibility)."""
+        logger.info(f"Setting SprinklerB to {status}")
+        try:
+            # Try to find the actual name from RELAY_CONTROLS
+            if hasattr(globals, 'DEVICE_CONFIG_FILE') and 'RELAY_CONTROLS' in globals.DEVICE_CONFIG_FILE:
+                config = globals.DEVICE_CONFIG_FILE
+                if 'sprinkler_b' in config['RELAY_CONTROLS']:
+                    sprinkler_name = config['RELAY_CONTROLS']['sprinkler_b'].strip()
+                    logger.info(f"Found sprinkler_b name: {sprinkler_name}")
+                    return self.set_relay(sprinkler_name, status)
+            
+            # Fallback to Sprinkler2
+            logger.info("Falling back to Sprinkler2")
+            return self.set_relay("Sprinkler2", status)
+            
+        except Exception as e:
+            logger.error(f"Error setting SprinklerB: {e}")
             return False
 
     def set_pump_from_collector_tray_to_tank(self, status):
@@ -1232,14 +1363,17 @@ if __name__ == "__main__":
         print("Initializing relay connection...")
         time.sleep(0.5)  # Wait 2 seconds for initialization
     
+        relay.get_status()
+        time.sleep(0.5)
         # relay.set_ph_minus_pump(True)
-        relay.set_valve_tank_to_outside(False)
-        relay.set_valve_outside_to_tank(True)
-        relay.set_mixing_pump(True)
-        relay.set_pump_from_tank_to_gutters(True)
-        relay.set_sprinklers(True)
-        # relay.test_relay_control_sequential()
-
+        # relay.set_valve_tank_to_outside(False)
+        # relay.set_valve_outside_to_tank(True)
+        # relay.set_mixing_pump(True)
+        # relay.set_pump_from_tank_to_gutters(True)
         
-        # Final delay before exiting
-        time.sleep(1)
+        # Test new sprinkler functionality
+        relay.set_sprinklers(False, "1")
+        time.sleep(0.5)
+        
+        relay.get_status()
+        time.sleep(0.5)
