@@ -96,7 +96,7 @@ All API endpoints require HTTP Basic Authentication. Use the username and passwo
     ```
   - Response: Success status and message
   - Note: The `sprinkler` field will automatically control both sprinkler_a and sprinkler_b relays for safety
-  - Valid fields: `nutrient_pump_a`, `nutrient_pump_b`, `nutrient_pump_c`, `ph_up_pump`, `ph_down_pump`, `valve_outside_to_tank`, `valve_tank_to_outside`, `mixing_pump`, `pump_from_tank_to_gutters`, `sprinkler`, `sprinkler_a`, `sprinkler_b`, `pump_from_collector_tray_to_tank`
+  - Valid fields: Dynamically loaded from `device.conf` `[RELAY_CONTROLS]` section. Common fields include: `nutrient_pump_a`, `nutrient_pump_b`, `nutrient_pump_c`, `ph_up_pump`, `ph_down_pump`, `valve_outside_to_tank`, `valve_tank_to_outside`, `mixing_pump`, `pump_from_tank_to_gutters`, `sprinkler`, `sprinkler_a`, `sprinkler_b`, `pump_from_collector_tray_to_tank`, `nanobubbler`
 
 - `POST /api/v1/server_instruction_set`: Update the instruction set and device configuration
   - Request Body: JSON instruction set from central server
