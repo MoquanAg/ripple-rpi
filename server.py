@@ -417,6 +417,7 @@ async def update_action(request: dict, username: str = Depends(verify_credential
         
         # Explicit list of valid API field names with sprinkler as special case
         valid_fields = [
+            'device_id',  # Device identifier for device-specific control
             'nutrient_pump_a',
             'nutrient_pump_b',
             'nutrient_pump_c',
@@ -448,22 +449,51 @@ async def update_action(request: dict, username: str = Depends(verify_credential
         
         # Check for valid field types
         for field, value in request.items():
-            if not isinstance(value, bool):
-                error_msg = f"Field {field} must be a boolean, got {type(value).__name__}"
-                logger.warning(error_msg)
-                return {
-                    "status": "error",
-                    "message": error_msg
-                }
+            if field == 'device_id':
+                # device_id should be a string
+                if not isinstance(value, str):
+                    error_msg = f"Field {field} must be a string, got {type(value).__name__}"
+                    logger.warning(error_msg)
+                    return {
+                        "status": "error",
+                        "message": error_msg
+                    }
+            else:
+                # All other fields should be boolean
+                if not isinstance(value, bool):
+                    error_msg = f"Field {field} must be a boolean, got {type(value).__name__}"
+                    logger.warning(error_msg)
+                    return {
+                        "status": "error",
+                        "message": error_msg
+                    }
         
-        # Process special case for sprinkler
+        # Process special case for sprinkler with device_id support
         processed_request = request.copy()
+        device_id = processed_request.pop('device_id', None)  # Extract device_id if present
+        
         if 'sprinkler' in processed_request:
             sprinkler_value = processed_request.pop('sprinkler')
-            # Set both sprinkler relays to the same value
-            processed_request['sprinkler_a'] = sprinkler_value
-            processed_request['sprinkler_b'] = sprinkler_value
-            logger.info(f"Mapped 'sprinkler' to both sprinkler_a and sprinkler_b with value {sprinkler_value}")
+            
+            if device_id:
+                # Use device-specific sprinkler control - execute directly
+                logger.info(f"Using device-specific sprinkler control for device_id: {device_id}, value: {sprinkler_value}")
+                try:
+                    from src.sensors.Relay import Relay
+                    relay = Relay()
+                    if relay:
+                        result = relay.set_sprinklers_with_device_id(device_id, sprinkler_value)
+                        logger.info(f"Device-specific sprinkler control result: {result}")
+                    else:
+                        logger.warning("No relay hardware available for device-specific sprinkler control")
+                except Exception as e:
+                    logger.error(f"Error in device-specific sprinkler control: {e}")
+                    logger.exception("Full exception details:")
+            else:
+                # Legacy behavior: Set both sprinkler relays to the same value
+                processed_request['sprinkler_a'] = sprinkler_value
+                processed_request['sprinkler_b'] = sprinkler_value
+                logger.info(f"Mapped 'sprinkler' to both sprinkler_a and sprinkler_b with value {sprinkler_value}")
         
         # Save to action.json
         with open('config/action.json', 'w') as f:

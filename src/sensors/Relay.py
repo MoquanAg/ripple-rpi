@@ -895,6 +895,175 @@ class Relay:
         except Exception as e:
             logger.error(f"Error controlling tank-to-gutters pump: {e}")
 
+    def _parse_device_id(self, device_id):
+        """
+        Parse device ID to extract device identifier.
+        
+        Args:
+            device_id (str): Device ID in format like "looper-boyao-1"
+            
+        Returns:
+            str: Device identifier (e.g., "1" from "looper-boyao-1")
+        """
+        if not device_id:
+            logger.warning("Empty device_id provided")
+            return None
+            
+        try:
+            # Split by hyphen and take the last part as device identifier
+            parts = device_id.split('-')
+            if len(parts) >= 2:
+                device_identifier = parts[-1]  # Last part is the device number/ID
+                logger.debug(f"Parsed device_id '{device_id}' -> device identifier '{device_identifier}'")
+                return device_identifier
+            else:
+                logger.warning(f"Invalid device_id format: {device_id}")
+                return None
+        except Exception as e:
+            logger.error(f"Error parsing device_id '{device_id}': {e}")
+            return None
+
+    def _get_sprinkler_mapping(self):
+        """
+        Get sprinkler mapping based on current configuration.
+        Determines which case applies based on device.conf:
+        - Case 1: Single sprinkler (sprinkler = "Sprinkler")
+        - Case 2: Dual safe control (sprinkler_a/b = "SprinklerA/B")  
+        - Case 3: Dual independent control (RELAY_ASSIGNMENTS has Sprinkler1/2)
+        
+        Returns:
+            dict: Mapping of sprinkler patterns to actual config names
+        """
+        mapping = {}
+        
+        try:
+            if not hasattr(globals, 'DEVICE_CONFIG_FILE'):
+                logger.warning("DEVICE_CONFIG_FILE not available")
+                return mapping
+                
+            config = globals.DEVICE_CONFIG_FILE
+            
+            # Check RELAY_ASSIGNMENTS first to determine if we have Sprinkler1/2
+            has_sprinkler1_2 = False
+            if 'RELAY_ASSIGNMENTS' in config:
+                assignments = config['RELAY_ASSIGNMENTS']
+                for key, value in assignments.items():
+                    if 'Sprinkler1' in value:
+                        mapping['sprinkler1'] = 'Sprinkler1'
+                        has_sprinkler1_2 = True
+                    if 'Sprinkler2' in value:
+                        mapping['sprinkler2'] = 'Sprinkler2'
+                        has_sprinkler1_2 = True
+            
+            # If we have Sprinkler1/2 in assignments, this is Case 3
+            if has_sprinkler1_2:
+                mapping['case'] = 3
+                logger.debug("Detected Case 3: Dual independent control (Sprinkler1/2)")
+                return mapping
+            
+            # Check RELAY_CONTROLS for other cases
+            if 'RELAY_CONTROLS' in config:
+                controls = config['RELAY_CONTROLS']
+                
+                # Check for sprinkler_a and sprinkler_b (Case 2)
+                if 'sprinkler_a' in controls and 'sprinkler_b' in controls:
+                    mapping['sprinkler_a'] = controls['sprinkler_a'].strip()
+                    mapping['sprinkler_b'] = controls['sprinkler_b'].strip()
+                    mapping['case'] = 2
+                    logger.debug("Detected Case 2: Dual safe control (SprinklerA/B)")
+                    return mapping
+                
+                # Check for single sprinkler entry (Case 1)
+                if 'sprinkler' in controls:
+                    sprinkler_value = controls['sprinkler'].strip()
+                    if ',' in sprinkler_value:
+                        # Multiple sprinklers in single entry - treat as Case 2
+                        sprinklers = [s.strip() for s in sprinkler_value.split(',')]
+                        if len(sprinklers) == 2:
+                            mapping['sprinkler_a'] = sprinklers[0]
+                            mapping['sprinkler_b'] = sprinklers[1]
+                            mapping['case'] = 2
+                            logger.debug("Detected Case 2: Dual safe control (comma-separated)")
+                            return mapping
+                    else:
+                        # Single sprinkler (Case 1)
+                        mapping['sprinkler_single'] = sprinkler_value
+                        mapping['case'] = 1
+                        logger.debug("Detected Case 1: Single sprinkler control")
+                        return mapping
+            
+            logger.warning("No valid sprinkler configuration found")
+            return mapping
+            
+        except Exception as e:
+            logger.error(f"Error getting sprinkler mapping: {e}")
+            return {}
+
+    def set_sprinklers_with_device_id(self, device_id, status):
+        """
+        Control sprinklers based on device ID using dynamic case detection.
+        
+        Args:
+            device_id (str): Device ID (e.g., "looper-boyao-1")
+            status (bool): True to turn on, False to turn off
+            
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        logger.info(f"Setting sprinklers with device_id: {device_id}, status: {status}")
+        
+        try:
+            # Parse device ID to get device identifier
+            device_identifier = self._parse_device_id(device_id)
+            if not device_identifier:
+                logger.warning(f"Could not parse device_id: {device_id}")
+                return False
+            
+            # Get sprinkler mapping from config
+            mapping = self._get_sprinkler_mapping()
+            
+            if 'case' not in mapping:
+                logger.warning("No valid sprinkler configuration found")
+                return False
+            
+            case = mapping['case']
+            
+            if case == 1:
+                # Case 1: Single sprinkler - turn on/off directly
+                logger.info("Case 1: Single sprinkler configuration")
+                sprinkler_name = mapping['sprinkler_single']
+                return self.set_relay(sprinkler_name, status)
+                
+            elif case == 2:
+                # Case 2: Dual safe control - both A and B must be on/off together
+                logger.info("Case 2: Dual sprinkler configuration (A/B) - using failsafe mode")
+                sprinkler_a = mapping['sprinkler_a']
+                sprinkler_b = mapping['sprinkler_b']
+                result_a = self.set_relay(sprinkler_a, status)
+                result_b = self.set_relay(sprinkler_b, status)
+                return result_a and result_b
+                
+            elif case == 3:
+                # Case 3: Dual independent control - match device suffix to Sprinkler1/2
+                logger.info(f"Case 3: Dual independent sprinkler configuration - device identifier: {device_identifier}")
+                
+                if device_identifier == "1":
+                    return self.set_relay(mapping['sprinkler1'], status)
+                elif device_identifier == "2":
+                    return self.set_relay(mapping['sprinkler2'], status)
+                else:
+                    logger.warning(f"Device identifier '{device_identifier}' not supported for numeric sprinkler control")
+                    return False
+                    
+            else:
+                logger.warning(f"Unknown sprinkler case: {case}")
+                return False
+                
+        except Exception as e:
+            logger.error(f"Error controlling sprinklers with device_id: {e}")
+            logger.exception("Exception details:")
+            return False
+
     def set_sprinklers(self, status, sprinkler_type="both"):
         """
         Control sprinklers with support for both individual and group control.
@@ -1376,7 +1545,7 @@ if __name__ == "__main__":
         # relay.set_mixing_pump(True)
         # relay.set_pump_from_tank_to_gutters(True)
         
-        relay.set_nanobubbler(False)
+        relay.set_nanobubbler(True)
         time.sleep(0.5)
         
         # Test new sprinkler functionality
