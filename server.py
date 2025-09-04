@@ -126,6 +126,64 @@ def _time_to_seconds(time_str):
     hours, minutes, seconds = map(int, time_str.split(':'))
     return hours * 3600 + minutes * 60 + seconds
 
+def get_valid_relay_fields():
+    """Dynamically read valid relay control fields from device.conf"""
+    try:
+        config = configparser.ConfigParser()
+        config.read('config/device.conf')
+        
+        if not config.has_section('RELAY_CONTROLS'):
+            logger.warning("No [RELAY_CONTROLS] section found in device.conf")
+            return []
+        
+        # Mapping from config field names (lowercase) to API field names
+        field_mapping = {
+            'nutrient_pump_a': 'nutrient_pump_a',
+            'nutrient_pump_b': 'nutrient_pump_b', 
+            'nutrient_pump_c': 'nutrient_pump_c',
+            'phuppump': 'ph_up_pump',  # configparser converts to lowercase
+            'phdownpump': 'ph_down_pump',  # configparser converts to lowercase
+            'valve_outside_to_tank': 'valve_outside_to_tank',
+            'valve_tank_to_outside': 'valve_tank_to_outside',
+            'mixing_pump': 'mixing_pump',
+            'pump_from_tank_to_gutters': 'pump_from_tank_to_gutters',
+            'sprinkler_a': 'sprinkler_a',
+            'sprinkler_b': 'sprinkler_b',
+            'pump_from_collector_tray_to_tank': 'pump_from_collector_tray_to_tank',
+            'nanobubbler': 'nanobubbler'
+        }
+        
+        valid_fields = []
+        
+        # Get all keys from RELAY_CONTROLS section and map to API field names
+        for key in config.options('RELAY_CONTROLS'):
+            if key in field_mapping:
+                valid_fields.append(field_mapping[key])
+            else:
+                # For unmapped fields, convert to lowercase
+                api_field = key.lower()
+                valid_fields.append(api_field)
+        
+        # Add special fields that are always valid
+        special_fields = ['device_id', 'sprinkler']  # sprinkler is special case for both sprinkler_a and sprinkler_b
+        valid_fields.extend(special_fields)
+        
+        # Remove duplicates while preserving order
+        valid_fields = list(dict.fromkeys(valid_fields))
+        
+        logger.info(f"Loaded {len(valid_fields)} valid relay fields from device.conf: {valid_fields}")
+        return valid_fields
+        
+    except Exception as e:
+        logger.error(f"Error reading valid relay fields from device.conf: {e}")
+        # Fallback to hardcoded list if config reading fails
+        return [
+            'device_id', 'nutrient_pump_a', 'nutrient_pump_b', 'nutrient_pump_c',
+            'ph_up_pump', 'ph_down_pump', 'valve_outside_to_tank', 'valve_tank_to_outside',
+            'mixing_pump', 'pump_from_tank_to_gutters', 'sprinkler', 'sprinkler_a',
+            'sprinkler_b', 'pump_from_collector_tray_to_tank', 'nanobubbler'
+        ]
+
 def update_device_conf(instruction_set: Dict) -> bool:
     """Update device.conf with values from instruction set."""
     try:
@@ -415,23 +473,8 @@ async def update_action(request: dict, username: str = Depends(verify_credential
     try:
         logger.info(f"Received raw action request: {request}")
         
-        # Explicit list of valid API field names with sprinkler as special case
-        valid_fields = [
-            'device_id',  # Device identifier for device-specific control
-            'nutrient_pump_a',
-            'nutrient_pump_b',
-            'nutrient_pump_c',
-            'ph_up_pump',
-            'ph_down_pump',
-            'valve_outside_to_tank',
-            'valve_tank_to_outside',
-            'mixing_pump',
-            'pump_from_tank_to_gutters',
-            'sprinkler',  # Special case that maps to both sprinkler_a and sprinkler_b
-            'sprinkler_a',
-            'sprinkler_b',
-            'pump_from_collector_tray_to_tank'
-        ]
+        # Dynamically read valid API field names from device.conf
+        valid_fields = get_valid_relay_fields()
         
         # Check for invalid fields
         invalid_fields = []
