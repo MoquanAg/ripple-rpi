@@ -1192,6 +1192,11 @@ class Relay:
         """Control mixing pump."""
         logger.info(f"Setting mixing pump to {status}")
         self.set_relay("MixingPump", status)
+        
+    def set_nanobubbler(self, status):
+        """Control nanobubbler."""
+        logger.info(f"Setting nanobubbler to {status}")
+        self.set_relay("Nanobubbler", status)
 
     def set_relay(self, device_name, state):
         """Set a relay by its device name."""
@@ -1371,9 +1376,14 @@ if __name__ == "__main__":
         # relay.set_mixing_pump(True)
         # relay.set_pump_from_tank_to_gutters(True)
         
-        # Test new sprinkler functionality
-        relay.set_sprinklers(False, "1")
+        relay.set_nanobubbler(False)
         time.sleep(0.5)
+        
+        # Test new sprinkler functionality
+        # relay.set_sprinklers(True, "1")
+        # time.sleep(20)
+        # relay.set_sprinklers(False, "1")
+        # time.sleep(0.5)
         
         relay.get_status()
         time.sleep(0.5)
