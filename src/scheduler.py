@@ -65,9 +65,15 @@ class RippleScheduler:
     def _initialize_mixing_schedule(self):
         """Initialize mixing pump schedule based on device.conf settings"""
         try:
-            mixing_interval = self.config.get('Mixing', 'mixing_interval').split(',')[0]
-            mixing_duration = self.config.get('Mixing', 'mixing_duration').split(',')[0]
-            trigger_duration = self.config.get('Mixing', 'trigger_mixing_duration').split(',')[0]
+            # Use operational values (second value after comma) for actual scheduling
+            mixing_interval_raw = self.config.get('Mixing', 'mixing_interval')
+            mixing_duration_raw = self.config.get('Mixing', 'mixing_duration')
+            trigger_duration_raw = self.config.get('Mixing', 'trigger_mixing_duration')
+            
+            # Parse the operational values (index 1 = second value after comma)
+            mixing_interval = self._parse_config_value(mixing_interval_raw, 1)
+            mixing_duration = self._parse_config_value(mixing_duration_raw, 1)
+            trigger_duration = self._parse_config_value(trigger_duration_raw, 1)
             
             # Validate durations
             if mixing_interval == "00:00:00" or mixing_duration == "00:00:00" or trigger_duration == "00:00:00":
@@ -195,8 +201,13 @@ class RippleScheduler:
     def _initialize_sprinkler_schedule(self):
         """Initialize sprinkler schedule based on device.conf settings"""
         try:
-            on_duration = self.config.get('Sprinkler', 'sprinkler_on_duration').split(',')[0]
-            wait_duration = self.config.get('Sprinkler', 'sprinkler_wait_duration').split(',')[0]
+            # Use operational values (second value after comma) for actual scheduling
+            on_duration_raw = self.config.get('Sprinkler', 'sprinkler_on_duration')
+            wait_duration_raw = self.config.get('Sprinkler', 'sprinkler_wait_duration')
+            
+            # Parse the operational values (index 1 = second value after comma)
+            on_duration = self._parse_config_value(on_duration_raw, 1)
+            wait_duration = self._parse_config_value(wait_duration_raw, 1)
             
             # Validate durations
             if on_duration == "00:00:00" or wait_duration == "00:00:00":
@@ -255,7 +266,9 @@ class RippleScheduler:
         """Execute mixing pump cycle"""
         try:
             if not self.mixing_pump_running:
-                mixing_duration = self.config.get('Mixing', 'mixing_duration').split(',')[0]
+                # Use operational value (second value after comma)
+                mixing_duration_raw = self.config.get('Mixing', 'mixing_duration')
+                mixing_duration = self._parse_config_value(mixing_duration_raw, 1)
                 mixing_duration_seconds = self._time_to_seconds(mixing_duration)
                 
                 if mixing_duration_seconds == 0:
@@ -1502,7 +1515,8 @@ class RippleScheduler:
                                 
                             # Get target pH from configuration
                             try:
-                                target_ph = float(self.config.get('pH', 'ph_target').split(',')[0])
+                                target_ph_raw = self.config.get('pH', 'ph_target')
+                                target_ph = float(self._parse_config_value(target_ph_raw, 1))
                                 logger.info(f"Target pH: {target_ph}")
                             except Exception as e:
                                 logger.error(f"Failed to get target pH from config: {e}")
@@ -1510,7 +1524,8 @@ class RippleScheduler:
                                 
                             # Get deadband from configuration
                             try:
-                                ph_deadband = float(self.config.get('pH', 'ph_deadband').split(',')[0])
+                                ph_deadband_raw = self.config.get('pH', 'ph_deadband')
+                                ph_deadband = float(self._parse_config_value(ph_deadband_raw, 1))
                                 logger.info(f"pH deadband: {ph_deadband}")
                             except Exception as e:
                                 logger.error(f"Failed to get pH deadband from config, using default: {e}")
