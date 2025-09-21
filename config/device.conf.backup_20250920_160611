@@ -1,0 +1,82 @@
+[SYSTEM]
+username = "ripple-rpi"
+password = "+IHa0UpROx94"
+
+[SENSORS]
+ph_main = ph, main, "pH Sensor", /dev/ttyAMA2, 0x10, 9600
+ec_main = ec, main, "EC Sensor", /dev/ttyAMA2, 0x20, 9600
+water_level_main = water_level, main, "Water Level Sensor", /dev/ttyAMA2, 0x40, 9600
+do_main = do, main, "DO Sensor", /dev/ttyAMA2, 0x30, 9600
+
+[RELAY_CONTROL]
+relayone = relay, ripple, "Ripple Relay", /dev/ttyAMA4, 0x01, 38400
+
+[RELAY_CONTROLS]
+nutrient_pump_a = NutrientPumpA
+nutrient_pump_b = NutrientPumpB
+nutrient_pump_c = NutrientPumpC
+pHUpPump = pHUpPump
+pHDownPump = pHDownPump
+valve_outside_to_tank = ValveOutsideToTank
+valve_tank_to_outside = ValveTankToOutside
+mixing_pump = MixingPump
+pump_from_tank_to_gutters = PumpFromTankToGutters
+sprinkler_a = SprinklerA
+sprinkler_b = SprinklerB
+pump_from_collector_tray_to_tank = PumpFromCollectorTrayToTank
+
+sprinkler = SprinklerA, SprinklerB
+nutrient_pumps = NutrientPumpA, NutrientPumpB, NutrientPumpC
+
+
+[RELAY_ASSIGNMENTS]
+relay_one_0_to_3 = null, null, null, null
+relay_one_4_to_7 = null, ValveOutsideToTank, ValveTankToOutside, MixingPump
+relay_one_8_to_11 = PumpFromTankToGutters, SprinklerA, SprinklerB, PumpFromCollectorTrayToTank
+relay_one_12_to_15 = NutrientPumpA, NutrientPumpB, NutrientPumpC, pHDownPump
+
+[pH]
+ph_target = 6.0, 6.0
+ph_deadband = 0.5, 0.2
+ph_min = 5.0, 5.0
+ph_max = 7.0, 7.0
+
+[EC]
+ec_target = 0.8, 1.0
+ec_deadband = 0.1, 0.1
+ec_min = 0.6, 0.6
+ec_max = 1.2, 1.9
+
+[DO]
+do_target = 10, 10
+do_deadband = 0.1, 0.1
+do_min = 0, 0
+do_max = 15, 15
+
+[Mixing]
+mixing_interval = 02:00:00, 02:00:00
+mixing_duration = 00:20:00, 00:20:00
+trigger_mixing_duration = 00:05:00, 00:05:00
+
+[WaterLevel]
+water_level_target = 80, 80
+water_level_deadband = 10, 10
+water_level_min = 50, 50
+water_level_max = 100, 100
+
+[NutrientPump]
+abc_ratio = "1:1:0", 1:1:0
+nutrient_pump_on_duration = 00:00:10, 00:00:10
+nutrient_pump_wait_duration = 00:01:00, 00:01:00
+ph_pump_on_duration = 00:00:05, 00:00:02
+ph_pump_wait_duration = 00:02:00, 00:02:00
+
+[Sprinkler]
+sprinkler_on_duration = 01:10:00, 00:15:00
+sprinkler_wait_duration = 03:00:00, 03:00:00
+
+[WaterTemperature]
+target_water_temperature = 18.0, 18.0
+target_water_temperature_min = 18.0, 18.0
+target_water_temperature_max = 18.0, 18.0
+
