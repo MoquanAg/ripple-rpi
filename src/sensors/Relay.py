@@ -943,22 +943,39 @@ class Relay:
                 
             config = globals.DEVICE_CONFIG_FILE
             
-            # Check RELAY_ASSIGNMENTS first to determine if we have Sprinkler1/2
+            # Check RELAY_ASSIGNMENTS first to determine sprinkler configuration
             has_sprinkler1_2 = False
+            has_sprinkler_a_b = False
+            
             if 'RELAY_ASSIGNMENTS' in config:
                 assignments = config['RELAY_ASSIGNMENTS']
                 for key, value in assignments.items():
+                    # Check for Sprinkler1/2 (Case 3: Independent control)
                     if 'Sprinkler1' in value:
                         mapping['sprinkler1'] = 'Sprinkler1'
                         has_sprinkler1_2 = True
                     if 'Sprinkler2' in value:
                         mapping['sprinkler2'] = 'Sprinkler2'
                         has_sprinkler1_2 = True
+                    
+                    # Check for SprinklerA/B (Case 2: Failsafe control)
+                    if 'SprinklerA' in value:
+                        mapping['sprinkler_a'] = 'SprinklerA'
+                        has_sprinkler_a_b = True
+                    if 'SprinklerB' in value:
+                        mapping['sprinkler_b'] = 'SprinklerB'
+                        has_sprinkler_a_b = True
             
-            # If we have Sprinkler1/2 in assignments, this is Case 3
+            # If we have Sprinkler1/2 in assignments, this is Case 3 (Independent)
             if has_sprinkler1_2:
                 mapping['case'] = 3
                 logger.debug("Detected Case 3: Dual independent control (Sprinkler1/2)")
+                return mapping
+            
+            # If we have SprinklerA/B in assignments, this is Case 2 (Failsafe)
+            if has_sprinkler_a_b:
+                mapping['case'] = 2
+                logger.debug("Detected Case 2: Dual failsafe control (SprinklerA/B)")
                 return mapping
             
             # Check RELAY_CONTROLS for other cases
@@ -970,7 +987,7 @@ class Relay:
                     mapping['sprinkler_a'] = controls['sprinkler_a'].strip()
                     mapping['sprinkler_b'] = controls['sprinkler_b'].strip()
                     mapping['case'] = 2
-                    logger.debug("Detected Case 2: Dual safe control (SprinklerA/B)")
+                    logger.debug("Detected Case 2: Dual safe control (SprinklerA/B from RELAY_CONTROLS)")
                     return mapping
                 
                 # Check for single sprinkler entry (Case 1)
@@ -1118,11 +1135,36 @@ class Relay:
     def _control_multiple_sprinklers(self, states):
         """Control multiple sprinklers with optimized command if possible."""
         try:
+            # Get sprinkler mapping to determine which sprinkler names to use
+            mapping = self._get_sprinkler_mapping()
+            
+            if 'case' not in mapping:
+                logger.warning("No valid sprinkler configuration found for multiple control")
+                return False
+            
+            # Determine sprinkler names based on detected case
+            sprinkler_names = []
+            if mapping['case'] == 2:  # Failsafe case (A/B)
+                if 'sprinkler_a' in mapping and 'sprinkler_b' in mapping:
+                    sprinkler_names = [mapping['sprinkler_a'], mapping['sprinkler_b']]
+                else:
+                    logger.warning("Case 2 detected but sprinkler_a/b not found in mapping")
+                    return False
+            elif mapping['case'] == 3:  # Independent case (1/2)
+                if 'sprinkler1' in mapping and 'sprinkler2' in mapping:
+                    sprinkler_names = [mapping['sprinkler1'], mapping['sprinkler2']]
+                else:
+                    logger.warning("Case 3 detected but sprinkler1/2 not found in mapping")
+                    return False
+            else:
+                logger.warning(f"Case {mapping['case']} not supported for multiple sprinkler control")
+                return False
+            
             # Find the relay assignments for both sprinklers
             indices = []
             relay_group = None
             
-            for sprinkler in ["Sprinkler1", "Sprinkler2"]:
+            for sprinkler in sprinkler_names:
                 if sprinkler in self.relay_assignments:
                     info = self.relay_assignments[sprinkler]
                     if relay_group is None:
@@ -1134,13 +1176,13 @@ class Relay:
                 if abs(indices[0] - indices[1]) == 1:
                     # Use set_multiple_relays for efficiency
                     start_index = min(indices)
-                    logger.info(f"Using optimized set_multiple_relays for sprinklers at indices {indices}")
+                    logger.info(f"Using optimized set_multiple_relays for sprinklers {sprinkler_names} at indices {indices}")
                     return self.set_multiple_relays(relay_group, start_index, states)
             
             # Fallback to individual control
-            logger.info("Using individual control for sprinklers")
-            result_1 = self.set_relay("Sprinkler1", states[0])
-            result_2 = self.set_relay("Sprinkler2", states[1])
+            logger.info(f"Using individual control for sprinklers: {sprinkler_names}")
+            result_1 = self.set_relay(sprinkler_names[0], states[0])
+            result_2 = self.set_relay(sprinkler_names[1], states[1])
             return result_1 and result_2
             
         except Exception as e:
@@ -1537,21 +1579,26 @@ if __name__ == "__main__":
         print("Initializing relay connection...")
         time.sleep(0.5)  # Wait 2 seconds for initialization
     
-        relay.get_status()
-        time.sleep(0.5)
+        # relay.get_status()
+        # time.sleep(0.5)
+        # relay.set_nutrient_pumps(True)
+        # time.sleep(20)
+        # relay.set_nutrient_pumps(False)
+        # time.sleep(0.5)
+        
         # relay.set_ph_minus_pump(True)
         # relay.set_valve_tank_to_outside(False)
         # relay.set_valve_outside_to_tank(True)
         # relay.set_mixing_pump(True)
-        # relay.set_pump_from_tank_to_gutters(True)
-        
-        relay.set_nanobubbler(True)
-        time.sleep(0.5)
+        relay.set_pump_from_tank_to_gutters(False)
+        relay.set_sprinklers(False)
+        # relay.set_nanobubbler(True)
+        time.sleep(60)
         
         # Test new sprinkler functionality
-        # relay.set_sprinklers(True, "1")
-        # time.sleep(20)
-        # relay.set_sprinklers(False, "1")
+        # relay.set_sprinklers(False)
+        # time.sleep(10)
+        # relay.set_sprinklers(False)
         # time.sleep(0.5)
         
         relay.get_status()
