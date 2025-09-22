@@ -46,6 +46,54 @@ LED_730_ID = 3
 
 
 class LEDDriver:
+    """
+    LED driver control system implementing singleton pattern for lighting management.
+    
+    Manages multiple LED channels for plant growth lighting including main LEDs,
+    blue LEDs (450nm), red LEDs (660nm), and far-red LEDs (730nm). Provides
+    precise intensity control through PWM modulation with safety validation
+    and error handling.
+    
+    Features:
+    - Multi-channel LED control (Main, Blue, Red, Far-Red)
+    - PWM intensity control (0-255 range with safety clamping)
+    - Serial communication protocol with checksum validation
+    - Thread-safe singleton implementation
+    - Automatic intensity validation and type conversion
+    - Response validation with error code handling
+    - Fade testing capabilities for LED validation
+    
+    LED Channels:
+    - MAIN_LED_ID (0): Main growth light LED
+    - BLUE_LED_ID (1): Blue spectrum LED (450nm)
+    - RED_LED_ID (2): Red spectrum LED (660nm)
+    - LED_730_ID (3): Far-red spectrum LED (730nm)
+    
+    Communication Protocol:
+    - Serial communication over configurable port
+    - Command format: [0x02, 0x03, 0x35, LED_ID, INTENSITY, 0x03, CHECKSUM]
+    - Response format: [0x02, 0x03, 0x35, STATUS, LED_ID, 0x03, CHECKSUM]
+    - Baud rate: 115200, 8N1 configuration
+    - Timeout: 1 second for response validation
+    
+    Error Codes:
+    - SUCCESS_CODE (0x00): Command executed successfully
+    - UNDETERMINED_ERROR (0x01): Unknown error occurred
+    - DATA_ERROR (0x02): Data validation or transmission error
+    - COMMAND_ERROR (0xFF): Invalid command format or parameters
+    
+    Args:
+        port (str): Serial port for LED controller communication (default: '/dev/ttyAMA5')
+        
+    Note:
+        - Docstring created by Claude 3.5 Sonnet on 2024-09-22
+        - Implements thread-safe singleton pattern for system-wide LED control
+        - Uses XOR checksum validation for communication reliability
+        - Automatically clamps intensity values to valid range (0-255)
+        - Provides property-based access to individual LED intensities
+        - Supports fade testing for LED system validation
+        - Handles serial communication errors gracefully
+    """
     _instance = None
     _lock = threading.Lock()
 
@@ -115,11 +163,57 @@ class LEDDriver:
             return None
 
     def flush_input_buffer(self, ser):
-        """Flush the input buffer of the serial port."""
+        """
+        Flush the input buffer of the serial port.
+        
+        Clears any pending data in the serial port input buffer to ensure
+        clean communication. This prevents interference from previous
+        commands or incomplete transmissions.
+        
+        Args:
+            ser: Serial port object to flush
+            
+        Note:
+            - Uses reset_input_buffer() to clear the buffer
+            - Includes 5ms delay to ensure buffer is fully cleared
+            - Called before sending commands to ensure clean transmission
+        """
         ser.reset_input_buffer()
         time.sleep(0.005)  # Short delay to ensure buffer is cleared
 
     def set_led_intensity(self, id, intensity):
+        """
+        Set the intensity of a specific LED channel.
+        
+        Controls the PWM intensity of individual LED channels with safety
+        validation, error handling, and response verification. Automatically
+        clamps intensity values and validates LED IDs before transmission.
+        
+        Args:
+            id (int): LED channel ID (0-5, see LED_ID constants)
+            intensity (int/float/str): Intensity value (0-255, values ≤20 are clamped to 0)
+            
+        Returns:
+            int: Set intensity value on success, negative error code on failure
+                - Positive value: Successfully set intensity
+                - -1: Invalid LED ID or serial communication error
+                - -UNDETERMINED_ERROR: Unknown error from LED controller
+                - -DATA_ERROR: Data validation or transmission error
+                - -COMMAND_ERROR: Invalid command format
+                
+        Communication Protocol:
+            - Command: [0x02, 0x03, 0x35, LED_ID, INTENSITY, 0x03, CHECKSUM]
+            - Response: [0x02, 0x03, 0x35, STATUS, LED_ID, 0x03, CHECKSUM]
+            - Checksum: XOR of all bytes except the last
+            
+        Note:
+            - Automatically validates LED ID against MAX_PWM_ID
+            - Clamps intensity values ≤20 to 0 (LEDs won't turn on below 20)
+            - Uses XOR checksum for communication reliability
+            - Updates internal intensity tracking on successful commands
+            - Handles serial communication errors gracefully
+            - Provides detailed error logging for troubleshooting
+        """
         time.sleep(0.005)
 
         if id > MAX_PWM_ID:
@@ -214,7 +308,36 @@ class LEDDriver:
         return -DATA_ERROR
 
     def test_fade(self):
+        """
+        Execute a comprehensive LED fade test sequence.
         
+        Performs a systematic test of all LED channels by cycling through
+        intensity ranges to validate LED functionality and driver communication.
+        Tests individual channels and combined effects with smooth fade transitions.
+        
+        Test Sequence:
+        1. Initialize all LEDs to 0 intensity
+        2. Set main LED to minimum operational level (22)
+        3. Blue LED fade test: 21→254→20 (full cycle)
+        4. Red LED fade test: 21→254→20 (full cycle)
+        5. Combined blue+red fade test: 21→254→20 (synchronized)
+        6. Far-red LED fade test: 21→254→20 (full cycle)
+        7. Final operational state: Main=30, Blue=80
+        
+        Parameters:
+            - Fade step: 1 intensity unit per cycle
+            - Fade delay: 10ms between steps for smooth transitions
+            - Maximum intensity: 250 (below 255 for safety margin)
+            - Minimum operational: 21 (above LED turn-on threshold)
+            
+        Note:
+            - Used for LED system validation and troubleshooting
+            - Demonstrates smooth fade capabilities of the driver
+            - Tests both individual and combined LED operation
+            - Includes safety delays between operations
+            - Leaves system in known operational state
+            - Total test duration: approximately 25-30 seconds
+        """
         max_intensity = 250
         
         self.set_led_intensity(0, 0) # MAIN should be at 200 for PDD testing

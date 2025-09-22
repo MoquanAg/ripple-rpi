@@ -26,9 +26,62 @@ logger = GlobalLogger("RippleRelay", log_prefix="ripple_").logger
 
 
 class Relay:
+    """
+    Relay control system implementing singleton pattern for hardware relay management.
+    
+    Manages multiple relay boards and individual relay control through Modbus RTU protocol.
+    Provides centralized control for all system components including nutrient pumps,
+    pH adjustment pumps, sprinklers, mixing pumps, and other hardware devices.
+    
+    Implements singleton pattern to ensure only one Relay instance exists throughout
+    the application, preventing resource conflicts and maintaining consistent state.
+    
+    Features:
+    - Multi-board relay support with configurable addresses
+    - Individual and batch relay control operations
+    - Automatic status monitoring and reporting
+    - Hardware abstraction layer for device control
+    - Configuration-driven relay assignments
+    
+    Args:
+        *args: Variable length argument list (currently unused)
+        **kwargs: Arbitrary keyword arguments (currently unused)
+        
+    Returns:
+        Relay: The singleton Relay instance, or None if relay control is disabled
+        
+    Note:
+        - Docstring created by Claude 3.5 Sonnet on 2024-09-22
+        - Checks GLOBALS.HAS_RELAY configuration flag
+        - Returns None if relay control is disabled in configuration
+        - Sets up modbus client subscription for relay communication
+        - Initializes pending_commands dictionary for response tracking
+        - Loads relay addresses and assignments from device configuration
+    """
     _instance = None  # Class variable to hold the singleton instance
 
     def __new__(cls, *args, **kwargs):
+        """
+        Create a singleton instance of the Relay class.
+        
+        Implements the singleton pattern to ensure only one Relay instance exists
+        throughout the application. Manages relay control for all hardware components
+        including pumps, valves, sprinklers, and other devices.
+        
+        Args:
+            *args: Variable length argument list (currently unused)
+            **kwargs: Arbitrary keyword arguments (currently unused)
+            
+        Returns:
+            Relay: The singleton Relay instance, or None if relay control is disabled
+            
+        Note:
+            - Docstring created by Claude 3.5 Sonnet on 2024-09-22
+            - Checks GLOBALS.HAS_RELAY configuration flag
+            - Returns None if relay control is disabled in configuration
+            - Sets up modbus client subscription for relay communication
+            - Initializes pending_commands dictionary for response tracking
+        """
         if cls._instance is None:
             # Check if Relay is enabled in config
             if not globals.HAS_RELAY:
@@ -46,6 +99,23 @@ class Relay:
         return cls._instance
 
     def init(self, port=None):
+        """
+        Initialize the Relay instance with configuration and hardware settings.
+        
+        Sets up serial communication parameters, loads relay addresses and assignments
+        from configuration files, and prepares the system for relay control operations.
+        
+        Args:
+            port (str, optional): Serial port for relay communication. If None,
+                                uses port from configuration file.
+                                
+        Note:
+            - Docstring created by Claude 3.5 Sonnet on 2024-09-22
+            - Configures serial communication parameters from device configuration
+            - Loads relay addresses and device assignments from config file
+            - Sets up default Modbus address and baud rate
+            - Initializes relay status tracking dictionary
+        """
         # Use port from config if available, otherwise use default
         config = globals.DEVICE_CONFIG_FILE
         self.port = globals.get_device_port('RELAY_CONTROL', 'RelayOne', '/dev/ttyAMA4')
@@ -182,7 +252,20 @@ class Relay:
             logger.exception("Full exception details:")
 
     def get_status(self):
-        """Queue status request commands for all configured relays."""
+        """
+        Queue status request commands for all configured relay boards.
+        
+        Sends Modbus RTU commands to read the current state of all relay ports
+        on each configured relay board. Results are processed asynchronously
+        through the modbus event emitter system.
+        
+        Note:
+            - Docstring created by Claude 3.5 Sonnet on 2024-09-22
+            - Sends read coil status commands (function code 0x01) to all relay boards
+            - Requests status for 16 coils (ports 0x00 to 0x0F) on each board
+            - Uses configured timeout and baud rate for each relay board
+            - Tracks pending commands for response correlation
+        """
         for relay_name, address in self.relay_addresses.items():
             logger.info(f"Sending status request to {relay_name} at address 0x{address:02X}")
             try:
@@ -213,7 +296,23 @@ class Relay:
                 self.save_null_data()
 
     def turn_on(self, device_name, relay_index):
-        """Queue a turn on command with the modbus client."""
+        """
+        Queue a turn on command for a specific relay port.
+        
+        Sends Modbus RTU write single coil command (function code 0x05) to turn on
+        a specific relay port on the specified relay board.
+        
+        Args:
+            device_name (str): Name of the relay board device (e.g., 'RELAYONE')
+            relay_index (int): Index of the relay port to turn on (0-15)
+            
+        Note:
+            - Docstring created by Claude 3.5 Sonnet on 2024-09-22
+            - Uses Modbus function code 0x05 (Write Single Coil)
+            - Sends command with 0xFF00 value to turn on the relay
+            - Supports case-insensitive device name matching
+            - Tracks pending commands for response verification
+        """
         # Get the correct address for the device from relay_addresses
         device_upper = device_name.upper()
         address = None
@@ -259,7 +358,23 @@ class Relay:
         )
 
     def turn_off(self, device_name, relay_index):
-        """Queue a turn off command with the modbus client."""
+        """
+        Queue a turn off command for a specific relay port.
+        
+        Sends Modbus RTU write single coil command (function code 0x05) to turn off
+        a specific relay port on the specified relay board.
+        
+        Args:
+            device_name (str): Name of the relay board device (e.g., 'RELAYONE')
+            relay_index (int): Index of the relay port to turn off (0-15)
+            
+        Note:
+            - Docstring created by Claude 3.5 Sonnet on 2024-09-22
+            - Uses Modbus function code 0x05 (Write Single Coil)
+            - Sends command with 0x0000 value to turn off the relay
+            - Supports case-insensitive device name matching
+            - Tracks pending commands for response verification
+        """
         # Get the correct address for the device from relay_addresses
         device_upper = device_name.upper()
         address = None
@@ -704,12 +819,23 @@ class Relay:
 
     def set_multiple_relays(self, device_name, starting_relay_index, states):
         """
-        Set multiple consecutive relays with a single command.
+        Set multiple consecutive relays with a single Modbus command.
+        
+        Sends Modbus RTU write multiple registers command (function code 0x10) to control
+        multiple consecutive relay ports on the specified relay board in a single operation.
+        This is more efficient than individual relay commands when controlling multiple ports.
         
         Args:
-            device_name (str): Name of the device
-            starting_relay_index (int): Starting relay index
-            states (list): List of boolean values indicating desired states (1 to 8 states)
+            device_name (str): Name of the relay board device (e.g., 'RELAYONE')
+            starting_relay_index (int): Starting relay index for the consecutive group
+            states (list): List of boolean values indicating desired states (1 to 16 states)
+            
+        Note:
+            - Docstring created by Claude 3.5 Sonnet on 2024-09-22
+            - Uses Modbus function code 0x10 (Write Multiple Registers)
+            - Supports 1 to 16 consecutive relay ports
+            - Each relay state uses 2 bytes (0x00, 0x01 for ON, 0x00, 0x00 for OFF)
+            - Provides optimized control for consecutive relay operations
         """
         logger.info(f"Setting {len(states)} relays starting at index {starting_relay_index} with states {states}")
         if not 1 <= len(states) <= 16:

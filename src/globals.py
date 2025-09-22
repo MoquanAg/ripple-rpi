@@ -66,7 +66,39 @@ else:
 
 # Get availabilities from device config
 def get_availability(key, default=0):
-    """Get device availability from SYSTEM section or sensor definition"""
+    """
+    Get device availability status from configuration files.
+    
+    Determines whether a specific device or sensor is available and configured
+    in the system by checking multiple configuration sections. Handles special
+    cases for different device types and provides fallback values for missing
+    configurations.
+    
+    Args:
+        key (str): Device identifier, optionally prefixed with 'has_' for availability checks
+        default (int): Default availability value if device not found (default: 0)
+        
+    Returns:
+        bool: True if device is available and properly configured, False otherwise
+        
+    Configuration Sections Checked:
+        1. SYSTEM section: Direct availability flags
+        2. SENSORS section: Sensor definitions and configurations
+        3. CLIMATE_CONTROL section: Climate control device configurations
+        4. RELAY_CONTROL section: Relay board configurations
+        
+    Special Handling:
+        - Removes 'has_' prefix from key if present
+        - Converts underscores to empty strings for matching
+        - Handles special case for 'solarsensor' → 'solarirradiance'
+        - Validates configuration values using is_invalid_value()
+        
+    Note:
+        - Used throughout the system to determine hardware availability
+        - Supports dynamic configuration without code changes
+        - Provides consistent availability checking across all components
+        - Logs warnings for missing configuration sections
+    """
     try:
         device_name = key
         # First check if the device has a non-null entry in SENSORS or CLIMATE_CONTROL
@@ -148,7 +180,27 @@ def get_availability_value(key, default=0):
         return default
 
 def get_device_address(section, key, default_hex='0x00'):
-    """Get device address from appropriate section"""
+    """
+    Get device Modbus address from configuration file.
+    
+    Retrieves the Modbus slave address for a specific device from the specified
+    configuration section. Handles hex string parsing and provides default values
+    for missing configurations.
+    
+    Args:
+        section (str): Configuration section name (e.g., 'SENSORS', 'RELAY_CONTROL')
+        key (str): Device identifier within the section
+        default_hex (str): Default hex address if not found (default: '0x00')
+        
+    Returns:
+        int: Modbus slave address as integer
+        
+    Note:
+        - Parses hex strings (e.g., '0x10' → 16)
+        - Returns default value if device not found in section
+        - Used for Modbus RTU communication setup
+        - Supports both '0x' prefixed and plain hex strings
+    """
     try:
         if section in DEVICE_CONFIG_FILE and key in DEVICE_CONFIG_FILE[section]:
             value = DEVICE_CONFIG_FILE[section][key].split(',')[4].strip()  # Get address from 5th field

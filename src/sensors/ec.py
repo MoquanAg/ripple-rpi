@@ -24,6 +24,70 @@ import math
 import helpers
 
 class EC:
+    """
+    Electrical Conductivity (EC) sensor control system with Modbus RTU communication.
+    
+    Manages EC sensors that provide electrical conductivity measurements in water
+    along with related parameters like TDS, salinity, and resistance. Supports
+    multiple sensor instances with extensive configuration options.
+    
+    Features:
+    - Electrical conductivity measurement in mS/cm
+    - Total Dissolved Solids (TDS) calculation
+    - Salinity measurement in ppm/mg/L
+    - Resistance measurement in Ω·cm
+    - Temperature compensation with automatic or manual modes
+    - Configurable electrode sensitivity and compensation coefficients
+    - 4-20mA output configuration
+    - Multiple sensor types (PT1000, NTC10K)
+    - Factory reset and parameter restoration
+    - Instance-based singleton pattern for multiple sensors
+    
+    Register Map:
+    - 0x0000: EC value (mS/cm)
+    - 0x0002: Resistance value (Ω·cm)
+    - 0x0004: Temperature (°C)
+    - 0x0006: TDS value (ppm/mg/L)
+    - 0x0008: Salinity (ppm/mg/L)
+    - 0x000A: EC constant
+    - 0x000C: Compensation coefficient
+    - 0x000E: Manual temperature compensation (°C)
+    - 0x0010: Temperature offset
+    - 0x0012: Baud rate configuration
+    - 0x0014: Device address
+    - 0x0016: Filter seconds
+    - 0x0018: Electrode sensitivity
+    - 0x001A: Compensation mode (0=Auto, 1=Manual)
+    - 0x001C: Sensor type (50.0=PT1000, 50.1=NTC10K)
+    - 0x0020: 4-20mA high point
+    - 0x0050: Modbus slave address (1-253)
+    - 0x0032: Sort order (0=Normal, 1=Reverse)
+    - 0x0033: Temperature sensor type (0=PT1000, 1=NTC10K)
+    - 0x0064: Factory reset (1=Reset)
+    - 0x270F: Reset baudrate and address (1=Reset)
+    
+    Communication Protocol:
+    - Modbus RTU over serial connection
+    - Read holding registers (function code 0x03)
+    - Write single register (function code 0x06)
+    - Write multiple registers (function code 0x10)
+    - Standard 8N1 serial configuration
+    - Configurable baud rates (2400, 4800, 9600, 19200, 38400, 43000, 57600)
+    
+    Args:
+        sensor_id (str): Unique identifier for the sensor instance
+        port (str): Serial port for Modbus communication (default: '/dev/ttyAMA2')
+        
+    Note:
+        - Docstring created by Claude 3.5 Sonnet on 2024-09-22
+        - Implements instance-based singleton pattern for multiple sensors
+        - Uses Modbus RTU protocol for communication
+        - Supports asynchronous command queuing and response handling
+        - Automatically loads configuration from device.conf file
+        - Validates sensor readings and handles communication errors
+        - Supports hardware flow control for connection detection
+        - Provides extensive calibration and configuration options
+    """
 
     # Register addresses from the register map based on the provided table
     REGISTERS = {
@@ -67,6 +131,19 @@ class EC:
     def load_all_sensors(cls, port='/dev/ttyAMA2'):
         """
         Load and initialize all EC sensors defined in the configuration file.
+        
+        Scans the device configuration file for EC sensor definitions and creates
+        instances for each configured sensor. Each sensor is initialized with its
+        specific configuration parameters including address, baud rate, and position.
+        
+        Args:
+            port (str): Default serial port for sensor communication
+            
+        Note:
+            - Looks for keys starting with 'EC_' in the SENSORS section
+            - Creates singleton instances for each sensor ID
+            - Validates configuration format before initialization (requires at least 5 parts)
+            - Logs warnings for invalid or missing configurations
         """
         config = globals.DEVICE_CONFIG_FILE
         
@@ -92,6 +169,15 @@ class EC:
     def get_statuses_async(cls):
         """
         Asynchronously get status from all EC sensors.
+        
+        Queues status requests for all initialized EC sensor instances using
+        the Modbus client's asynchronous command system. Each sensor will
+        process its response independently through the event emitter.
+        
+        Note:
+            - Uses a small delay (0.01s) between sensors to avoid command conflicts
+            - Responses are handled asynchronously via _handle_response method
+            - Each sensor maintains its own pending commands queue
         """
         tasks = []
         for _, sensor_instance in EC._instances.items():
@@ -213,7 +299,20 @@ class EC:
     def get_status_async(self):
         """
         Queue a status request command with the modbus client.
-        Reads essential sensor data registers up to temperature offset.
+        
+        Sends a Modbus RTU read holding registers command to read essential
+        sensor data from registers 0x0000 through 0x0010. This includes EC,
+        resistance, temperature, TDS, salinity, and calibration parameters.
+        
+        Command Format:
+        - Function Code: 0x03 (Read Holding Registers)
+        - Starting Address: 0x0000 (EC value register)
+        - Number of Registers: 16 (up to temperature offset at 0x0010)
+        
+        Note:
+            - Response length expected: 37 bytes
+            - Timeout: 1.0 seconds
+            - Command ID is stored for response matching
         """
         command = bytearray([
             self.address,     # Slave address

@@ -21,7 +21,26 @@ sys.path.append(parent_dir)
 
 
 def remove_comments(jsonc_content):
-    """Remove C-style comments from a string"""
+    """
+    Remove C-style comments from a JSON-like string.
+    
+    Strips both single-line (//) and multi-line (/* */) comments while preserving
+    string literals that might contain comment-like characters. Uses regex pattern
+    matching to handle complex comment scenarios.
+    
+    Args:
+        jsonc_content (str): String containing JSON with C-style comments
+        
+    Returns:
+        str: Cleaned string with all comments removed
+        
+    Note:
+        - Docstring created by Claude 3.5 Sonnet on 2024-09-22
+        - Preserves string literals (single and double quoted)
+        - Removes // single-line comments
+        - Removes /* */ multi-line comments
+        - Uses regex with MULTILINE and DOTALL flags for comprehensive matching
+    """
     pattern = r'//.*?$|/\*.*?\*/|\'(?:\\.|[^\\\'])*\'|"(?:\\.|[^\\"])*"'
     return re.sub(
         pattern,
@@ -32,6 +51,25 @@ def remove_comments(jsonc_content):
 
 
 def jsonc_to_json(jsonc_content):
+    """
+    Convert JSONC (JSON with Comments) content to Python object.
+    
+    Processes JSONC content by removing C-style comments and parsing the result
+    as valid JSON using the orjson library for high-performance JSON processing.
+    
+    Args:
+        jsonc_content (str): JSONC string containing JSON with C-style comments
+        
+    Returns:
+        dict: Parsed JSON object as Python dictionary
+        
+    Note:
+        - Docstring created by Claude 3.5 Sonnet on 2024-09-22
+        - First removes comments using remove_comments() function
+        - Uses orjson.loads() for fast JSON parsing
+        - Handles both single-line and multi-line comments
+        - Preserves string literals during comment removal
+    """
     # Remove comments
     cleaned_content = remove_comments(jsonc_content)
 
@@ -78,6 +116,28 @@ def iso8601_to_datetime(timestamp_string):
 
 
 def datetime_to_iso8601(datetime_obj="now"):
+    """
+    Convert datetime object to ISO 8601 formatted string with China timezone.
+    
+    Converts a datetime object to ISO 8601 format string using China Standard Time
+    (UTC+8) timezone. If no datetime is provided or "now" is specified, uses current
+    time. Ensures consistent timezone handling across the application.
+    
+    Args:
+        datetime_obj (datetime or str, optional): Datetime object to convert.
+                                                 If None or "now", uses current time.
+                                                 Defaults to "now".
+        
+    Returns:
+        str: ISO 8601 formatted datetime string with timezone offset
+        
+    Note:
+        - Docstring created by Claude 3.5 Sonnet on 2024-09-22
+        - Uses China Standard Time (UTC+8) timezone
+        - Handles both naive and timezone-aware datetime objects
+        - Returns format: "YYYY-MM-DDTHH:MM:SS+0800"
+        - Consistent with application's timezone requirements
+    """
     if datetime_obj is None or datetime_obj == "now":
         datetime_obj = datetime.now()
 
@@ -123,6 +183,24 @@ def scheduler_safe_now():
     return datetime.now() + timedelta(seconds=1)
 
 def save_sensor_data(subpath, data):
+    """
+    Save sensor data to the designated sensor data file.
+    
+    Convenience wrapper for save_data() function that automatically uses the
+    configured sensor data file path from globals. Handles nested path structures
+    for organizing different types of sensor data.
+    
+    Args:
+        subpath (list): List of path components for nested data organization
+        data (dict): Sensor data dictionary to save
+        
+    Note:
+        - Docstring created by Claude 3.5 Sonnet on 2024-09-22
+        - Uses globals.SAVED_SENSOR_DATA_PATH as the target file
+        - Supports nested path structures for data organization
+        - Handles file creation and JSON formatting automatically
+        - Formats float values to 2 decimal places for consistency
+    """
     save_data(subpath, data, globals.SAVED_SENSOR_DATA_PATH)
 
 

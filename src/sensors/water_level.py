@@ -24,6 +24,43 @@ import math
 import helpers
 
 class WaterLevel:
+    """
+    Water level sensor control system with Modbus RTU communication.
+    
+    Manages water level sensors that provide pressure-based level measurements
+    with temperature compensation. Supports multiple sensor instances with
+    configurable addresses, baud rates, and measurement units.
+    
+    Features:
+    - Pressure-based water level measurement in centimeters
+    - Temperature compensation for accurate readings
+    - Configurable measurement units (cm, m, psi, etc.)
+    - Adjustable decimal places for display precision
+    - Configurable baud rates and Modbus addresses
+    - Range and zero offset calibration
+    - Factory reset and parameter restoration
+    
+    Register Map:
+    - 0x0000: Slave address (1-255)
+    - 0x0001: Baud rate (0-7 for different rates)
+    - 0x0002: Pressure unit (9-17 for different units)
+    - 0x0003: Decimal places (0-3 for precision)
+    - 0x0004: Measurement output value (-32768-32767)
+    - 0x0005: Range minimum point (-32768-32767)
+    - 0x0006: Range maximum point (-32768-32767)
+    - 0x000C: Zero offset value (-32768-32767)
+    
+    Args:
+        sensor_id (str): Unique identifier for the sensor instance
+        port (str): Serial port for Modbus communication
+        
+    Note:
+        - Docstring created by Claude 3.5 Sonnet on 2024-09-22
+        - Implements instance-based singleton pattern for multiple sensors
+        - Uses Modbus RTU protocol for communication
+        - Supports asynchronous command queuing and response handling
+        - Automatically loads configuration from device.conf file
+    """
 
     # Register addresses from the register map based on the provided table
     REGISTERS = {
@@ -76,6 +113,20 @@ class WaterLevel:
     def load_all_sensors(cls, port='/dev/ttyAMA2'):
         """
         Load and initialize all water level sensors defined in the configuration file.
+        
+        Scans the device configuration file for water level sensor definitions and
+        creates instances for each configured sensor. Each sensor is initialized
+        with its specific configuration parameters.
+        
+        Args:
+            port (str): Default serial port for sensor communication
+            
+        Note:
+            - Docstring created by Claude 3.5 Sonnet on 2024-09-22
+            - Looks for keys starting with 'WATER_LEVEL_' in the SENSORS section
+            - Creates singleton instances for each sensor ID
+            - Validates configuration format before initialization
+            - Logs warnings for invalid or missing configurations
         """
         config = globals.DEVICE_CONFIG_FILE
         
@@ -221,15 +272,27 @@ class WaterLevel:
     def get_status_async(self):
         """
         Queue a status request command with the modbus client.
+        
+        Reads multiple holding registers to get comprehensive sensor data including
+        configuration parameters and current measurement values. Results are processed
+        asynchronously through the modbus event emitter system.
+        
         Reads registers from 0x0000 to 0x0007 to get all essential sensor data:
         - 0x0000: Slave address
         - 0x0001: Baudrate
         - 0x0002: Pressure unit
         - 0x0003: Decimal places
-        - 0x0004: Measurement output value
+        - 0x0004: Measurement output value (level)
         - 0x0005: Range min point
         - 0x0006: Range max point
         - 0x0007: Additional settings
+        
+        Note:
+            - Docstring created by Claude 3.5 Sonnet on 2024-09-22
+            - Uses Modbus function code 0x03 (Read Holding Registers)
+            - Reads 8 consecutive registers (16 bytes of data)
+            - Expects 21-byte response including address, function, byte count, data, and CRC
+            - Tracks pending commands for response correlation
         """
         command = bytearray([
             self.address,     # Slave address

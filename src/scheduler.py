@@ -12,6 +12,44 @@ import json
 import threading
 
 class RippleScheduler:
+    """
+    Advanced scheduling system for automated fertigation control operations.
+    
+    Manages complex scheduling tasks for the Ripple fertigation system including
+    nutrient dosing, pH adjustment, mixing cycles, sprinkler control, and water
+    level management. Uses APScheduler with SQLite persistence for reliable
+    task execution and recovery.
+    
+    Features:
+    - Automated nutrient pump scheduling with A:B:C ratio control
+    - pH adjustment scheduling based on sensor feedback
+    - Mixing pump cycles for solution homogenization
+    - UV sterilization cycles for water treatment
+    - Sprinkler irrigation scheduling with dual-layer protection
+    - Water level monitoring and auto-refill control
+    - Fresh water dilution monitoring
+    - Configuration-driven scheduling parameters
+    - Manual override capabilities for all operations
+    - Persistent job storage with SQLite backend
+    
+    Scheduling Components:
+    - Mixing cycles: Regular solution mixing and UV sterilization
+    - Nutrient cycles: EC-based nutrient addition with ratio control
+    - pH cycles: pH-based acid/base adjustment
+    - Sprinkler cycles: Automated irrigation with failsafe protection
+    - Water level: Automatic tank refill and level monitoring
+    
+    Args:
+        None
+        
+    Note:
+        - Docstring created by Claude 3.5 Sonnet on 2024-09-22
+        - Uses APScheduler BackgroundScheduler with SQLite jobstore
+        - Implements dual-layer protection for critical operations
+        - Supports configuration hot-reloading for dynamic adjustments
+        - Provides comprehensive logging for all scheduled operations
+        - Handles sensor data freshness validation for control decisions
+    """
     def __init__(self):
         # Create persistent jobstore using SQLite
         data_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'data')
@@ -28,7 +66,22 @@ class RippleScheduler:
         self.last_nutrient_pump_time = None
         
     def start(self):
-        """Start the scheduler and initialize all scheduled tasks"""
+        """
+        Start the scheduler and initialize all scheduled tasks.
+        
+        Initializes and starts the APScheduler background scheduler, then sets up
+        all automated tasks including mixing cycles, nutrient dosing, pH adjustment,
+        sprinkler control, and water level monitoring. Performs initial system
+        checks to evaluate current system state.
+        
+        Note:
+            - Docstring created by Claude 3.5 Sonnet on 2024-09-22
+            - Starts APScheduler BackgroundScheduler with SQLite persistence
+            - Initializes all scheduling components from configuration
+            - Runs immediate system checks for pH, EC, and water level
+            - Logs comprehensive schedule status for monitoring
+            - Handles initialization errors gracefully with logging
+        """
         if not self.scheduler.running:
             self.scheduler.start()
             logger.info("Ripple scheduler started")
@@ -347,7 +400,29 @@ class RippleScheduler:
             self.mixing_pump_end_time = None
             
     def _run_nutrient_cycle(self):
-        """Execute nutrient cycle"""
+        """
+        Execute automated nutrient dosing cycle based on EC sensor readings.
+        
+        Reads current EC (Electrical Conductivity) values from saved sensor data,
+        compares against configured targets, and activates appropriate nutrient
+        pumps using A:B:C ratio configuration. Includes mixing pump coordination
+        and optimized relay control for consecutive pump operations.
+        
+        Control Logic:
+        - Skips dosing if EC is above target + deadband
+        - Activates dosing if EC is below target - deadband or minimum threshold
+        - Uses configured A:B:C ratio for proportional pump timing
+        - Coordinates with mixing pump for proper solution homogenization
+        - Implements minimum runtime enforcement for small ratios
+        
+        Note:
+            - Docstring created by Claude 3.5 Sonnet on 2024-09-22
+            - Validates sensor data freshness before making control decisions
+            - Uses optimized set_multiple_relays for consecutive pump control
+            - Implements individual pump scheduling for precise ratio control
+            - Handles configuration parsing with operational value preference
+            - Provides comprehensive logging of pump duration calculations
+        """
         try:
             # Make sure we're reading the latest config
             config_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'config', 'device.conf')
@@ -802,7 +877,31 @@ class RippleScheduler:
             logger.error(f"Error in nutrient cycle: {e}")
             
     def _run_ph_cycle(self):
-        """Execute pH adjustment cycle"""
+        """
+        Execute automated pH adjustment cycle based on pH sensor readings.
+        
+        Reads current pH values from saved sensor data, compares against configured
+        targets, and activates appropriate pH adjustment pumps (pH Up or pH Down).
+        Includes mixing pump coordination and comprehensive safety range validation.
+        
+        Control Logic:
+        - Uses pH Up pump when pH is below target - deadband/2 or minimum threshold
+        - Uses pH Down pump when pH is above target + deadband/2 or maximum threshold
+        - Skips adjustment when pH is within acceptable deadband range
+        - Prioritizes bringing pH back into safe range when outside limits
+        - Coordinates with mixing pump for proper solution homogenization
+        
+        Args:
+            None (reads configuration and sensor data internally)
+            
+        Note:
+            - Docstring created by Claude 3.5 Sonnet on 2024-09-22
+            - Validates sensor data freshness before making control decisions
+            - Implements safety-first logic for pH range validation
+            - Uses case-insensitive relay assignment matching
+            - Provides detailed logging of pH thresholds and pump selection
+            - Handles configuration parsing with operational value preference
+        """
         try:
             # Make sure we're reading the latest config
             self.config.read(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'config', 'device.conf'))

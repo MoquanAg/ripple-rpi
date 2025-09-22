@@ -29,6 +29,31 @@ from src.scheduler import RippleScheduler
 logger = GlobalLogger("RippleController", log_prefix="ripple_").logger
 
 class ConfigFileHandler(FileSystemEventHandler):
+    """
+    File system event handler for monitoring configuration file changes.
+    
+    Monitors the device configuration file (device.conf) and action file (action.json)
+    for modifications and triggers appropriate reloading and processing operations.
+    Implements debouncing to prevent duplicate event processing and change detection
+    to identify specific configuration sections that were modified.
+    
+    Features:
+    - Real-time monitoring of device.conf and action.json files
+    - Debounced event handling to prevent duplicate processing
+    - Change detection to identify modified configuration sections
+    - Automatic configuration reloading for affected sections
+    - Action file processing for manual commands
+    
+    Args:
+        controller: Reference to the main RippleController instance
+        
+    Note:
+        - Docstring created by Claude 3.5 Sonnet on 2024-09-22
+        - Inherits from FileSystemEventHandler for file monitoring
+        - Uses watchdog library for cross-platform file system monitoring
+        - Implements 1-second debouncing to prevent rapid-fire events
+        - Tracks configuration state changes for selective reloading
+    """
     def __init__(self, controller):
         self.controller = controller
         self.last_action_state = {}
@@ -57,6 +82,24 @@ class ConfigFileHandler(FileSystemEventHandler):
             logger.error(f"Error loading current config state: {e}")
         
     def on_modified(self, event):
+        """
+        Handle file modification events from the file system monitor.
+        
+        Processes file modification events for device.conf and action.json files,
+        implementing debouncing and change detection to trigger appropriate
+        reloading and processing operations.
+        
+        Args:
+            event: FileSystemEvent object containing event details
+            
+        Note:
+            - Docstring created by Claude 3.5 Sonnet on 2024-09-22
+            - Implements debouncing to prevent duplicate event processing
+            - Detects changes in device.conf configuration sections
+            - Processes action.json for manual command execution
+            - Triggers selective configuration reloading based on changes
+            - Updates internal state tracking for future comparisons
+        """
         try:
             # Normalize paths for comparison
             config_file_path = os.path.abspath(self.controller.config_file)
@@ -345,6 +388,49 @@ class ConfigFileHandler(FileSystemEventHandler):
             logger.exception("Full exception details:")
 
 class RippleController:
+    """
+    Main controller class for the Ripple fertigation system.
+    
+    Orchestrates the entire fertigation control system including sensor management,
+    relay control, scheduling, configuration handling, and system monitoring. Acts
+    as the central coordinator for all system components and provides unified
+    control interfaces for automated and manual operations.
+    
+    Features:
+    - Multi-sensor management (pH, EC, DO, Water Level)
+    - Relay control system for pumps, valves, and sprinklers
+    - Automated scheduling for nutrient dosing and irrigation
+    - Configuration file monitoring and hot-reloading
+    - Action file processing for manual commands
+    - System health monitoring and logging
+    - Data persistence and sensor data management
+    
+    System Components:
+    - Sensor Management: pH, EC, DO, Water Level sensors with Modbus communication
+    - Relay Control: Nutrient pumps, pH pumps, valves, sprinklers, mixing pumps
+    - Scheduling: Automated nutrient dosing, pH adjustment, mixing cycles
+    - Configuration: Device configuration monitoring and reloading
+    - Actions: Manual command processing and relay control
+    
+    Data Flow:
+    1. Configuration monitoring detects changes in device.conf and action.json
+    2. Sensor data collection through Modbus communication
+    3. Target value comparison and control decisions
+    4. Relay activation based on control logic
+    5. Scheduling system manages automated operations
+    6. Data persistence and logging for system monitoring
+    
+    Args:
+        None
+        
+    Note:
+        - Docstring created by Claude 3.5 Sonnet on 2024-09-22
+        - Implements comprehensive fertigation control system
+        - Uses file system monitoring for configuration changes
+        - Coordinates multiple sensor and actuator subsystems
+        - Provides both automated and manual control interfaces
+        - Includes extensive error handling and logging
+    """
     def __init__(self):
         """Initialize the Ripple controller."""
         self.water_level_sensors = {}  # Dict to store water level sensor instances

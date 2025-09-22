@@ -28,6 +28,43 @@ except ImportError:
     import helpers
 
 class DO:
+    """
+    Dissolved Oxygen (DO) sensor control system with Modbus RTU communication.
+    
+    Manages dissolved oxygen sensors that provide oxygen concentration measurements
+    in water. Supports multiple sensor instances with configurable addresses,
+    baud rates, and measurement parameters.
+    
+    Features:
+    - Dissolved oxygen measurement in mg/L (milligrams per liter)
+    - Temperature compensation for accurate readings
+    - Configurable baud rates and Modbus addresses
+    - Automatic data validation and error handling
+    - Oxygenation threshold checking for system control
+    - Instance-based singleton pattern for multiple sensors
+    
+    Register Map:
+    - 0x0014: DO value (mg/L, multiplied by 100 for transmission)
+    
+    Communication Protocol:
+    - Modbus RTU over serial connection
+    - Read holding registers (function code 0x03)
+    - Standard 8N1 serial configuration
+    - Configurable baud rates (typically 9600)
+    
+    Args:
+        sensor_id (str): Unique identifier for the sensor instance
+        port (str): Serial port for Modbus communication (default: '/dev/ttyAMA2')
+        
+    Note:
+        - Docstring created by Claude 3.5 Sonnet on 2024-09-22
+        - Implements instance-based singleton pattern for multiple sensors
+        - Uses Modbus RTU protocol for communication
+        - Supports asynchronous command queuing and response handling
+        - Automatically loads configuration from device.conf file
+        - Validates DO readings to ensure reasonable values (0-20 mg/L)
+        - Provides oxygenation threshold checking (default: <7.0 mg/L)
+    """
 
     _instances = {}  # Dictionary to hold multiple instances
 
@@ -35,6 +72,19 @@ class DO:
     def load_all_sensors(cls, port='/dev/ttyAMA2'):
         """
         Load and initialize all DO sensors defined in the configuration file.
+        
+        Scans the device configuration file for DO sensor definitions and creates
+        instances for each configured sensor. Each sensor is initialized with its
+        specific configuration parameters including address, baud rate, and position.
+        
+        Args:
+            port (str): Default serial port for sensor communication
+            
+        Note:
+            - Looks for keys starting with 'DO_' in the SENSORS section
+            - Creates singleton instances for each sensor ID
+            - Validates configuration format before initialization
+            - Logs warnings for invalid or missing configurations
         """
         config = globals.DEVICE_CONFIG_FILE
         
@@ -54,6 +104,15 @@ class DO:
     def get_statuses_async(cls):
         """
         Asynchronously get status from all DO sensors.
+        
+        Queues status requests for all initialized DO sensor instances using
+        the Modbus client's asynchronous command system. Each sensor will
+        process its response independently through the event emitter.
+        
+        Note:
+            - Uses a small delay (0.01s) between sensors to avoid command conflicts
+            - Responses are handled asynchronously via _handle_response method
+            - Each sensor maintains its own pending commands queue
         """
         tasks = []
         for _, sensor_instance in DO._instances.items():
@@ -69,6 +128,23 @@ class DO:
         return cls._instances[sensor_id]
 
     def init(self, sensor_id, port='/dev/ttyAMA2'):
+        """
+        Initialize a DO sensor instance with configuration parameters.
+        
+        Sets up the sensor with its configuration from the device.conf file,
+        initializes the Modbus client connection, and subscribes to response
+        events. This method is called automatically when creating a new sensor
+        instance.
+        
+        Args:
+            sensor_id (str): Unique identifier for the sensor
+            port (str): Serial port for Modbus communication
+            
+        Note:
+            - Loads address, baud rate, and position from configuration
+            - Subscribes to 'DO' events from the Modbus client
+            - Initializes pending commands queue for async operations
+        """
         logger.info(f"Initializing the DO instance for {sensor_id} in {port}.")
         self.sensor_id = sensor_id
         self.port = port
@@ -97,7 +173,20 @@ class DO:
     def get_status_async(self):
         """
         Queue a status request command with the modbus client.
-        The response will be handled by _handle_response via the event emitter.
+        
+        Sends a Modbus RTU read holding registers command to read the DO value
+        from register 0x0014. The response will be handled asynchronously by
+        _handle_response via the event emitter system.
+        
+        Command Format:
+        - Function Code: 0x03 (Read Holding Registers)
+        - Starting Address: 0x0014 (DO value register)
+        - Number of Registers: 2
+        
+        Note:
+            - Response length expected: 9 bytes
+            - Timeout: 0.5 seconds
+            - Command ID is stored for response matching
         """
         command = bytearray([self.address, 0x03, 0x00, 0x14, 0x00, 0x02])
         command_id = self.modbus_client.send_command(
@@ -179,6 +268,21 @@ class DO:
         logger.log_sensor_data(['data', 'water_metrics'], data)
         
     def should_oxygenate(self):
+        """
+        Check if oxygenation is needed based on current DO levels.
+        
+        Determines whether the water needs additional oxygenation based on
+        the current dissolved oxygen reading. Uses a threshold-based approach
+        for automated system control.
+        
+        Returns:
+            bool: True if DO level is below threshold (7.0 mg/L), False otherwise
+            
+        Note:
+            - Returns False if DO reading is None (sensor error)
+            - Threshold can be adjusted based on system requirements
+            - Used for automated pump and aeration control
+        """
         if self.do is None:
             return False
         return self.do < 7.0

@@ -23,6 +23,48 @@ import math
 import helpers
 
 class pH:
+    """
+    pH sensor control system with Modbus RTU communication.
+    
+    Manages pH sensors that provide acidity/alkalinity measurements in water
+    with temperature compensation. Supports multiple sensor instances with
+    configurable addresses, baud rates, and calibration parameters.
+    
+    Features:
+    - pH measurement in standard units (0-14 scale)
+    - Temperature compensation for accurate readings
+    - Configurable pH offset calibration
+    - Modbus slave address configuration
+    - Automatic data validation and error handling
+    - Connection status monitoring via hardware flow control
+    - Instance-based singleton pattern for multiple sensors
+    
+    Register Map:
+    - 0x0000: pH value (actual value * 100 for transmission)
+    - 0x0001: Temperature in °C (actual value * 10 for transmission)
+    - 0x0010: pH offset calibration (actual value * 100, signed)
+    - 0x0050: Modbus slave address (1-253)
+    
+    Communication Protocol:
+    - Modbus RTU over serial connection
+    - Read holding registers (function code 0x03)
+    - Write single register (function code 0x06)
+    - Standard 8N1 serial configuration
+    - Configurable baud rates (typically 9600)
+    
+    Args:
+        sensor_id (str): Unique identifier for the sensor instance
+        port (str): Serial port for Modbus communication (default: '/dev/ttyAMA2')
+        
+    Note:
+        - Docstring created by Claude 3.5 Sonnet on 2024-09-22
+        - Implements instance-based singleton pattern for multiple sensors
+        - Uses Modbus RTU protocol for communication
+        - Supports asynchronous command queuing and response handling
+        - Automatically loads configuration from device.conf file
+        - Validates pH readings to ensure reasonable values (0-14 range)
+        - Supports hardware flow control for connection detection
+    """
 
     # Register addresses from the register map
     REGISTERS = {
@@ -38,6 +80,19 @@ class pH:
     def load_all_sensors(cls, port='/dev/ttyAMA2'):
         """
         Load and initialize all pH sensors defined in the configuration file.
+        
+        Scans the device configuration file for pH sensor definitions and creates
+        instances for each configured sensor. Each sensor is initialized with its
+        specific configuration parameters including address, baud rate, and position.
+        
+        Args:
+            port (str): Default serial port for sensor communication
+            
+        Note:
+            - Looks for keys starting with 'PH_' in the SENSORS section
+            - Creates singleton instances for each sensor ID
+            - Validates configuration format before initialization (requires at least 5 parts)
+            - Logs warnings for invalid or missing configurations
         """
         config = globals.DEVICE_CONFIG_FILE
         
@@ -63,6 +118,15 @@ class pH:
     def get_statuses_async(cls):
         """
         Asynchronously get status from all pH sensors.
+        
+        Queues status requests for all initialized pH sensor instances using
+        the Modbus client's asynchronous command system. Each sensor will
+        process its response independently through the event emitter.
+        
+        Note:
+            - Uses a small delay (0.01s) between sensors to avoid command conflicts
+            - Responses are handled asynchronously via _handle_response method
+            - Each sensor maintains its own pending commands queue
         """
         tasks = []
         for _, sensor_instance in pH._instances.items():
@@ -184,7 +248,20 @@ class pH:
     def get_status_async(self):
         """
         Queue a status request command with the modbus client.
-        Reads pH (0x0000) and temperature (0x0001) values.
+        
+        Sends a Modbus RTU read holding registers command to read pH and temperature
+        values from registers 0x0000 and 0x0001. The response will be handled
+        asynchronously by _handle_response via the event emitter system.
+        
+        Command Format:
+        - Function Code: 0x03 (Read Holding Registers)
+        - Starting Address: 0x0000 (pH value register)
+        - Number of Registers: 2 (pH and temperature)
+        
+        Note:
+            - Response length expected: 9 bytes
+            - Timeout: 0.5 seconds
+            - Command ID is stored for response matching
         """
         command = bytearray([
             self.address,     # Slave address
@@ -223,8 +300,18 @@ class pH:
 
     def write_offset_async(self, offset):
         """
-        Write pH offset value.
-        offset: pH offset value (will be multiplied by 100 internally)
+        Write pH offset value for sensor calibration.
+        
+        Sets the pH offset calibration value that is applied to all pH readings.
+        This is used to calibrate the sensor against known reference solutions.
+        
+        Args:
+            offset (float): pH offset value in pH units (range: -327.68 to 327.67)
+            
+        Note:
+            - Value is internally multiplied by 100 for transmission
+            - Uses Modbus function code 0x06 (Write Single Register)
+            - Updates register 0x0010 with the calibration value
         """
         # Convert offset to internal format (multiply by 100)
         offset_value = int(offset * 100)
@@ -418,7 +505,20 @@ class pH:
     def is_connected(self):
         """
         Check if the sensor is physically connected by checking hardware flow control signals.
-        Returns True if the port exists and hardware signals indicate a device is connected, False otherwise.
+        
+        Verifies sensor connectivity by examining hardware flow control signals
+        on the serial port. This provides a more reliable method than simple
+        port existence checking.
+        
+        Returns:
+            bool: True if the port exists and hardware signals indicate a device
+                  is connected, False otherwise.
+                  
+        Note:
+            - Checks for port existence first
+            - Uses hardware flow control (RTS/DTR) to detect device presence
+            - Monitors DSR (Data Set Ready) signal for connection confirmation
+            - Handles serial exceptions gracefully
         """
         try:
             if not os.path.exists(self.port):

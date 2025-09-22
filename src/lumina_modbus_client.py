@@ -32,6 +32,52 @@ class ModbusResponse:
     timestamp: float = 0.0  # Add timestamp field with default value
 
 class LuminaModbusClient:
+    """
+    High-performance Modbus RTU client with TCP socket communication and threading.
+    
+    Implements a robust Modbus RTU client that communicates with hardware devices
+    through a TCP socket bridge. Features asynchronous command processing, response
+    handling, connection management, and comprehensive error handling with automatic
+    reconnection capabilities.
+    
+    Features:
+    - Thread-safe singleton implementation with connection pooling
+    - Asynchronous command queuing and processing
+    - Multi-threaded architecture for concurrent operations
+    - Automatic connection management with watchdog monitoring
+    - Command timeout handling and cleanup
+    - CRC16 checksum validation for Modbus messages
+    - Port-specific locking for concurrent device access
+    - Health monitoring and queue management
+    - Exponential backoff reconnection strategy
+    
+    Architecture:
+    - Command Processor: Handles outgoing command queue
+    - Response Reader: Processes incoming responses
+    - Command Cleaner: Manages timeout cleanup
+    - Connection Watchdog: Monitors and maintains connections
+    - Health Monitor: Tracks system performance metrics
+    
+    Communication Protocol:
+    - TCP socket connection to Modbus bridge server
+    - Modbus RTU commands with CRC16 checksums
+    - Command format: "COMMAND_ID:DEVICE_TYPE:PORT:BAUDRATE:HEX_COMMAND:RESPONSE_LENGTH:TIMEOUT"
+    - Response format: "COMMAND_ID:HEX_RESPONSE:TIMESTAMP" or "COMMAND_ID:ERROR:ERROR_TYPE:TIMESTAMP"
+    - Automatic command ID generation with port and timestamp information
+    
+    Args:
+        reconnect_attempts (int): Maximum reconnection attempts (default: 3)
+        command_queue_size (int): Maximum command queue size (default: 1000)
+        
+    Note:
+        - Docstring created by Claude 3.5 Sonnet on 2024-09-22
+        - Implements thread-safe singleton pattern for system-wide Modbus control
+        - Uses TCP socket bridge for hardware communication
+        - Supports multiple concurrent devices with port-specific locking
+        - Provides comprehensive error handling and automatic recovery
+        - Includes performance monitoring and queue management
+        - Handles command timeouts and cleanup automatically
+    """
     _instance = None
     _lock = threading.Lock()
 
@@ -126,16 +172,41 @@ class LuminaModbusClient:
 
     def send_command(self, device_type: str, port: str, command: bytes, **kwargs) -> str:
         """
-        Queue a command to be sent to the server.
+        Queue a Modbus RTU command for asynchronous execution.
+        
+        Creates a unique command ID, adds CRC16 checksum, and queues the command
+        for transmission to the Modbus bridge server. Commands are processed
+        asynchronously by the command processor thread with timeout and error handling.
         
         Args:
-            device_type: Type of device (e.g., 'THC', 'EC', etc.)
-            port: Serial port to use
-            command: Command bytes to send
-            **kwargs: Additional arguments (baudrate, response_length, timeout)
+            device_type (str): Device type identifier (e.g., 'pH', 'EC', 'DO', 'THC')
+            port (str): Serial port for device communication (e.g., '/dev/ttyAMA1')
+            command (bytes): Raw Modbus RTU command bytes (without CRC)
+            **kwargs: Additional command parameters:
+                - baudrate (int): Serial baud rate (default: 9600)
+                - response_length (int): Expected response length in bytes
+                - timeout (float): Command timeout in seconds (default: 5.0)
         
         Returns:
-            str: Command ID for tracking the response
+            str: Unique command ID for tracking the response
+            
+        Command ID Format:
+            "PORT_DEVICE_TYPE_HEX_PREFIX_TIMESTAMP_RANDOM"
+            Example: "AMA1_pH_010300140002_20241222143022_A5"
+            
+        Communication Flow:
+            1. Generate unique command ID with timestamp and random suffix
+            2. Add CRC16 checksum to command bytes
+            3. Format command string with all parameters
+            4. Queue command for asynchronous processing
+            5. Store command in pending_commands for response tracking
+            
+        Note:
+            - Commands are processed asynchronously by dedicated thread
+            - Response handling is managed by event emitter system
+            - Timeout and error handling are automatic
+            - Commands are queued with 1-second timeout to prevent blocking
+            - CRC16 checksum is automatically calculated and appended
         """
         # Generate unique command ID
         truncated_hex = command.hex()[:12]
