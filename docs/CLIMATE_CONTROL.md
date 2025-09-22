@@ -204,3 +204,6 @@ target_co2_night = 800, 800
 ---
 
 *This documentation covers the climate control functionality of the Ripple fertigation system, providing comprehensive information for system operation, maintenance, and development.*
+
+
+
