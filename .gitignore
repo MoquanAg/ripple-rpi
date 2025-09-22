@@ -181,3 +181,7 @@ config/action.json
 action.json
 config/instruction_set.json
 instruction_set.json
+
+# Database files (local runtime data)
+data/ripple_scheduler.db
+*.db
