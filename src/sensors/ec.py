@@ -1111,8 +1111,8 @@ if __name__ == "__main__":
         # Wait a bit before requesting additional data
         time.sleep(1)
         # Get additional data for all sensors
-        print("Getting additional data from all sensors...")
-        for _, sensor_instance in EC._instances.items():
-            sensor_instance.get_additional_data_async()
-            time.sleep(0.1)  # Small delay between sensors
-        time.sleep(30)  # Update every 30 seconds 
+        # print("Getting additional data from all sensors...")
+        # for _, sensor_instance in EC._instances.items():
+        #     sensor_instance.get_additional_data_async()
+        #     time.sleep(0.1)  # Small delay between sensors
+        time.sleep(10)  # Update every 30 seconds 

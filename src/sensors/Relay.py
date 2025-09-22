@@ -1709,17 +1709,17 @@ if __name__ == "__main__":
         # time.sleep(0.5)
         # relay.set_nutrient_pumps(True)
         # time.sleep(20)
-        relay.set_nutrient_pumps(False)
-        time.sleep(0.5)
+        # relay.set_nutrient_pumps(False)
+        # time.sleep(0.5)
         
         # relay.set_ph_minus_pump(True)
         # relay.set_valve_tank_to_outside(False)
         # relay.set_valve_outside_to_tank(True)
         # relay.set_mixing_pump(True)
-        relay.set_pump_from_tank_to_gutters(False)
-        relay.set_sprinklers(False)
-        # relay.set_nanobubbler(True)
-        time.sleep(60)
+        # relay.set_pump_from_tank_to_gutters(False)
+        # relay.set_sprinklers(False)
+        # # relay.set_nanobubbler(True)
+        # time.sleep(60)
         
         # Test new sprinkler functionality
         # relay.set_sprinklers(False)

@@ -403,15 +403,15 @@ class LEDDriver:
 async def main():
     driver = LEDDriver()
     # driver.send_pwm_frequency_commands()
-    # driver.set_led_intensity(0, 30) # MAIN should be at 200 for PDD testing
-    # driver.set_led_intensity(1, 0) # BLUE should be at 150 for PDD testing
-    # driver.set_led_intensity(2, 30) # RED should be at 150 for PDD testing
-    # driver.set_led_intensity(3, 255) # 730nm LED
+    driver.set_led_intensity(0, 30) # MAIN should be at 200 for PDD testing
+    driver.set_led_intensity(1, 0) # BLUE should be at 150 for PDD testing
+    driver.set_led_intensity(2, 50) # RED should be at 150 for PDD testing
+    driver.set_led_intensity(3, 255) # 730nm LED
 
-    driver.set_led_intensity(0, 0)  # MAIN should be at 200 for PDD testing
-    driver.set_led_intensity(1, 0)  # BLUE should be at 150 for PDD testing
-    driver.set_led_intensity(2, 0)  # RED should be at 150 for PDD testing
-    driver.set_led_intensity(3, 0)  # 730nm LED
+    # driver.set_led_intensity(0, 0)  # MAIN should be at 200 for PDD testing
+    # driver.set_led_intensity(1, 0)  # BLUE should be at 150 for PDD testing
+    # driver.set_led_intensity(2, 0)  # RED should be at 150 for PDD testing
+    # driver.set_led_intensity(3, 0)  # 730nm LED
 
     # driver.test_fade()
 
