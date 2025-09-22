@@ -1,20 +1,40 @@
-anyio==4.9.0
+# Core web framework and API
+fastapi==0.115.12
+uvicorn==0.34.0
+pydantic==1.10.21
+starlette==0.46.2
+
+# Database and scheduling
 APScheduler==3.11.0
+sqlalchemy==2.0.36
+
+# Serial communication for sensors
+pyserial==3.5
+
+# JSON processing
+orjson==3.10.16
+
+# File system monitoring
+watchdog==6.0.0
+
+# HTTP client
+requests==2.32.3
+
+# Timezone handling
+tzlocal==5.3.1
+
+# Configuration and environment
+python-dotenv==1.1.0
+
+# Async support
+anyio==4.9.0
+sniffio==1.3.1
+h11==0.14.0
+
+# Utilities
+click==8.1.8
+typing_extensions==4.13.0
 certifi==2025.1.31
 charset-normalizer==3.4.1
-click==8.1.8
-fastapi==0.115.12
-h11==0.14.0
 idna==3.10
-orjson==3.10.16
-pydantic==1.10.21
-pyserial==3.5
-python-dotenv==1.1.0
-requests==2.32.3
-sniffio==1.3.1
-starlette==0.46.2
-typing_extensions==4.13.0
-tzlocal==5.3.1
 urllib3==2.3.0
-uvicorn==0.34.0
-watchdog==6.0.0
