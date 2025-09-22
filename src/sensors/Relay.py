@@ -1709,8 +1709,8 @@ if __name__ == "__main__":
         # time.sleep(0.5)
         # relay.set_nutrient_pumps(True)
         # time.sleep(20)
-        # relay.set_nutrient_pumps(False)
-        # time.sleep(0.5)
+        relay.set_nutrient_pumps(False)
+        time.sleep(0.5)
         
         # relay.set_ph_minus_pump(True)
         # relay.set_valve_tank_to_outside(False)
