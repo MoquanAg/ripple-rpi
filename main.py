@@ -438,6 +438,10 @@ class RippleController:
         self.sensor_targets = {}  # Dict to store sensor target values
         self.scheduler = RippleScheduler()
         
+        # Initialize simplified sprinkler controller
+        from src.simplified_sprinkler_controller import get_sprinkler_controller
+        self.sprinkler_controller = get_sprinkler_controller()
+        
         # Use absolute paths for config files
         self.base_dir = os.path.dirname(os.path.abspath(__file__))
         self.config_dir = os.path.join(self.base_dir, 'config')
@@ -1021,86 +1025,31 @@ class RippleController:
             logger.exception("Full exception details:")
 
     def _activate_sprinklers_on_startup(self):
-        """Check and activate sprinklers on system startup if configured"""
+        """Initialize simplified sprinkler system on startup"""
         try:
-            logger.info("Checking if sprinklers should be activated on startup")
+            logger.info("==== INITIALIZING SIMPLIFIED SPRINKLER SYSTEM ====")
             
-            # Make sure we have the latest config
-            self.config.read(self.config_file)
+            # Use the simplified sprinkler controller
+            success = self.sprinkler_controller.start_sprinkler_cycle()
             
-            # IMPORTANT: Clean up ALL possible sprinkler-related jobs first
-            try:
-                if hasattr(self.scheduler, 'scheduler'):
-                    # Stop any sprinkler stop jobs regardless of their ID
-                    for job_id in ['immediate_sprinkler_stop', 'startup_sprinkler_stop', 
-                                  'scheduled_sprinkler_stop', 'config_sprinkler_stop',
-                                  'sprinkler_cycle']:
-                        try:
-                            self.scheduler.scheduler.remove_job(job_id)
-                            logger.info(f"[Startup] Removed existing sprinkler job with ID: {job_id}")
-                        except Exception:
-                            # Job might not exist
-                            pass
-            except Exception as e:
-                logger.warning(f"[Startup] Error cleaning up sprinkler jobs: {e}")
-            
-            # Get sprinkler on_duration - PARSE THE SECOND VALUE (operational value)
-            sprinkler_on_duration = self._parse_config_value('Sprinkler', 'sprinkler_on_duration', 1)
-            logger.info(f"Using parsed sprinkler_on_duration for startup: '{sprinkler_on_duration}'")
-            
-            sprinkler_on_seconds = self._time_to_seconds(sprinkler_on_duration)
-            logger.info(f"[Startup] Parsed sprinkler duration: {sprinkler_on_duration} = {sprinkler_on_seconds} seconds")
-            
-            # Only activate the sprinkler if duration is positive
-            if sprinkler_on_seconds > 0:
-                from src.sensors.Relay import Relay
-                relay = Relay()
-                if relay:
-                    logger.info(f"[Startup] Sprinkler duration > 0 ({sprinkler_on_duration}), activating sprinklers")
-                    # Turn on sprinklers directly
-                    relay.set_sprinklers(True)
-                    
-                    # Schedule to stop after the configured duration
-                    try:
-                        # First try to use the scheduler (preferred method)
-                        if hasattr(self.scheduler, 'scheduler') and hasattr(self.scheduler.scheduler, 'add_job'):
-                            # Create a copy of the duration for the lambda to avoid variable capture issues
-                            duration_copy = sprinkler_on_seconds
-                            stop_time = datetime.now() + timedelta(seconds=duration_copy)
-                            
-                            # Add a job that directly calls set_sprinklers(False)
-                            self.scheduler.scheduler.add_job(
-                                lambda: self._direct_stop_sprinklers(),
-                                'date',
-                                run_date=stop_time,
-                                id='startup_sprinkler_stop',
-                                replace_existing=True
-                            )
-                            logger.info(f"[Startup] Scheduled sprinkler stop via scheduler for: {stop_time.strftime('%H:%M:%S')} - job ID: startup_sprinkler_stop")
-                            # Log all scheduled jobs to verify
-                            self._log_all_scheduler_jobs()
-                        else:
-                            # Fallback to a thread-based timer if scheduler is unavailable
-                            logger.warning("[Startup] Scheduler unavailable, using thread-based timer as fallback")
-                            self._create_backup_sprinkler_timer(sprinkler_on_seconds)
-                    except Exception as e:
-                        logger.error(f"[Startup] Error scheduling sprinkler stop via scheduler: {e}")
-                        logger.exception("Full exception details:")
-                        # Try the backup method if scheduler failed
-                        logger.info("[Startup] Attempting to use thread-based timer as fallback after scheduler failure")
-                        self._create_backup_sprinkler_timer(sprinkler_on_seconds)
-                else:
-                    logger.warning("[Startup] Failed to activate sprinklers: relay not available")
+            if success:
+                logger.info("[Startup] Simplified sprinkler system started successfully")
             else:
-                logger.info("[Startup] Sprinkler duration set to zero, keeping sprinklers off")
+                logger.info("[Startup] Sprinkler system not started (duration may be 0 or already running)")
+                
         except Exception as e:
-            logger.error(f"Error activating sprinklers on startup: {e}")
+            logger.error(f"Error initializing simplified sprinkler system: {e}")
             logger.exception("Full exception details:")
 
     def shutdown(self):
         """Shutdown the Ripple controller"""
         try:
             logger.info("Shutting down Ripple controller")
+            
+            # Shutdown sprinkler controller first
+            if hasattr(self, 'sprinkler_controller'):
+                self.sprinkler_controller.shutdown()
+                
             self.scheduler.shutdown()
             self.observer.stop()
             self.observer.join()
