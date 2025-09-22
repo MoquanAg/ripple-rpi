@@ -1,4 +1,5 @@
 from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore
 from apscheduler.triggers.interval import IntervalTrigger
 from apscheduler.triggers.cron import CronTrigger
 from datetime import datetime, timedelta
@@ -8,10 +9,18 @@ import configparser
 import os
 import time
 import json
+import threading
 
 class RippleScheduler:
     def __init__(self):
-        self.scheduler = BackgroundScheduler()
+        # Create persistent jobstore using SQLite
+        data_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'data')
+        os.makedirs(data_dir, exist_ok=True)
+        
+        jobstore_url = f"sqlite:///{os.path.join(data_dir, 'ripple_scheduler.db')}"
+        jobstores = {'default': SQLAlchemyJobStore(url=jobstore_url)}
+        
+        self.scheduler = BackgroundScheduler(jobstores=jobstores)
         self.config = globals.DEVICE_CONFIG_FILE
         self.jobs = {}
         self.mixing_pump_running = False
@@ -222,13 +231,16 @@ class RippleScheduler:
                 logger.warning("Sprinkler schedule not initialized: zero duration after conversion")
                 return
             
-            # Add sprinkler job
-            self.scheduler.add_job(
-                self._run_sprinkler_cycle,
+            # Add sprinkler job using static function for SQLite serialization
+            job = self.scheduler.add_job(
+                _run_sprinkler_cycle_static,  # Static function - no self reference
                 IntervalTrigger(seconds=wait_seconds),
                 id='sprinkler_cycle',
                 max_instances=1
             )
+            
+            # Track the job properly
+            self.jobs['sprinkler_cycle'] = job
             
             logger.info(f"Sprinkler schedule initialized: {on_duration} on, {wait_duration} wait")
         except Exception as e:
@@ -1011,8 +1023,10 @@ class RippleScheduler:
             logger.exception(f"Error in pH cycle: {e}")
             
     def _run_sprinkler_cycle(self):
-        """Execute sprinkler cycle"""
+        """Execute automatic sprinkler cycle (triggered by scheduler)"""
         try:
+            logger.info("==== AUTOMATIC SPRINKLER CYCLE TRIGGERED ====")
+            
             # Make sure we're reading the latest config
             self.config.read(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'config', 'device.conf'))
             
@@ -1023,45 +1037,60 @@ class RippleScheduler:
             on_duration = self._parse_config_value(on_duration_raw, 1)  # Index 1 for second value
             on_seconds = self._time_to_seconds(on_duration)
             
-            # Clean up any existing sprinkler stop jobs
-            try:
-                for job_id in ['immediate_sprinkler_stop', 'startup_sprinkler_stop', 
-                               'scheduled_sprinkler_stop', 'config_sprinkler_stop']:
-                    try:
-                        self.scheduler.remove_job(job_id)
-                        logger.info(f"Removed existing sprinkler stop job: {job_id}")
-                    except Exception:
-                        # Job might not exist
-                        pass
-            except Exception as e:
-                logger.warning(f"Error cleaning up sprinkler jobs: {e}")
+            logger.info(f"[AUTO] Sprinkler config: on_duration={on_duration} ({on_seconds}s)")
+            
+            # Enhanced job cleanup using Lumina Edge pattern
+            self._cleanup_sprinkler_jobs()
             
             if on_seconds == 0:
-                logger.warning("Skipping sprinkler cycle: zero duration")
+                logger.warning("[AUTO] Skipping sprinkler cycle: zero duration")
                 return
             
             # Get relay instance
             from src.sensors.Relay import Relay
             relay = Relay()
             if not relay:
-                logger.warning("Failed to start sprinkler cycle: relay not available")
+                logger.warning("[AUTO] Failed to start sprinkler cycle: relay not available")
                 return
                 
             # Start sprinkler
             relay.set_sprinklers(True)
-            logger.info(f"Running sprinkler cycle for {on_duration} ({on_seconds}s)")
+            logger.info(f"[AUTO] Running automatic sprinkler cycle for {on_duration} ({on_seconds}s)")
             
-            # Schedule to stop after on_duration
+            # LAYER 1: APScheduler precision timing
+            off_time = datetime.now() + timedelta(seconds=on_seconds)
             self.scheduler.add_job(
-                self._stop_sprinkler,
+                self._stop_sprinkler_static,
                 'date',
-                run_date=datetime.now() + timedelta(seconds=on_seconds),
+                run_date=off_time,
                 id='scheduled_sprinkler_stop',
                 replace_existing=True
             )
-            logger.info(f"Scheduled sprinkler stop job ID: scheduled_sprinkler_stop for {on_seconds}s from now")
+            logger.info(f"[AUTO] Scheduled sprinkler stop job ID: scheduled_sprinkler_stop for {off_time.strftime('%H:%M:%S')}")
+            
+            # LAYER 2: Failsafe timer thread (backup protection)
+            def failsafe_sprinkler_stop():
+                time.sleep(on_seconds)
+                try:
+                    logger.warning(f"[FAILSAFE] Shutting off sprinklers after {on_seconds}s (scheduler backup)")
+                    from src.sensors.Relay import Relay
+                    failsafe_relay = Relay()
+                    if failsafe_relay:
+                        failsafe_relay.set_sprinklers(False)
+                        logger.info("[FAILSAFE] Sprinklers turned off by failsafe timer")
+                    else:
+                        logger.error("[FAILSAFE] Relay not available for failsafe shutdown")
+                except Exception as e:
+                    logger.error(f"[FAILSAFE] Sprinkler shutdown failed: {e}")
+                    logger.exception("[FAILSAFE] Full exception details:")
+            
+            failsafe_thread = threading.Thread(target=failsafe_sprinkler_stop, daemon=True)
+            failsafe_thread.start()
+            logger.info(f"[AUTO] Sprinkler failsafe timer started: {on_seconds}s")
+            logger.info("==== AUTOMATIC SPRINKLER CYCLE INITIATED (DUAL-LAYER PROTECTION) ====")
         except Exception as e:
-            logger.error(f"Error in sprinkler cycle: {e}")
+            logger.error(f"[AUTO] Error in automatic sprinkler cycle: {e}")
+            logger.exception("[AUTO] Full exception details:")
             
     def _check_fresh_water_dilution(self):
         """Check if fresh water dilution is needed"""
@@ -1333,9 +1362,17 @@ class RippleScheduler:
     def _restart_sprinkler_schedule(self):
         """Restart sprinkler schedule with new configuration"""
         try:
-            # Remove existing job
-            if 'sprinkler_cycle' in self.jobs:
+            # Remove existing job if it exists
+            try:
                 self.scheduler.remove_job('sprinkler_cycle')
+                logger.info("Removed existing sprinkler_cycle job")
+            except Exception:
+                # Job might not exist, which is fine
+                pass
+            
+            # Clean up from jobs tracking dict
+            if 'sprinkler_cycle' in self.jobs:
+                del self.jobs['sprinkler_cycle']
                 
             # Reinitialize the schedule
             self._initialize_sprinkler_schedule()
@@ -1426,17 +1463,174 @@ class RippleScheduler:
             logger.error(f"Error stopping mixing pump: {e}")
             
     def _stop_sprinkler(self):
-        """Stop the sprinklers"""
+        """Stop the sprinklers (scheduled by automatic cycle) - DEPRECATED: Use _stop_sprinkler_static"""
         try:
+            logger.info("[AUTO] ==== AUTOMATIC SPRINKLER STOP TRIGGERED ====")
             from src.sensors.Relay import Relay
             relay = Relay()
             if relay:
                 relay.set_sprinklers(False)
-                logger.info("Sprinklers stopped")
+                logger.info("[AUTO] Automatic sprinkler cycle completed - sprinklers stopped")
             else:
-                logger.warning("Failed to stop sprinklers: relay not available")
+                logger.warning("[AUTO] Failed to stop sprinklers: relay not available")
         except Exception as e:
-            logger.error(f"Error stopping sprinklers: {e}")
+            logger.error(f"[AUTO] Error stopping sprinklers: {e}")
+            logger.exception("[AUTO] Full exception details:")
+
+    def _cleanup_sprinkler_jobs(self):
+        """Enhanced job cleanup using Lumina Edge pattern"""
+        sprinkler_job_ids = [
+            'immediate_sprinkler_stop', 
+            'startup_sprinkler_stop', 
+            'scheduled_sprinkler_stop', 
+            'config_sprinkler_stop'
+        ]
+        
+        for job_id in sprinkler_job_ids:
+            try:
+                self.scheduler.remove_job(job_id)
+                logger.info(f"[AUTO] Removed existing sprinkler stop job: {job_id}")
+            except Exception:
+                # Job doesn't exist, which is fine
+                pass
+
+    @staticmethod
+    def _stop_sprinkler_static():
+        """Static function to stop sprinklers - safe for APScheduler serialization"""
+        try:
+            logger.info("[AUTO] ==== AUTOMATIC SPRINKLER STOP TRIGGERED (STATIC) ====")
+            from src.sensors.Relay import Relay
+            # Create fresh instance each time to avoid state corruption
+            relay = Relay()
+            if relay:
+                relay.set_sprinklers(False)
+                logger.info("[AUTO] Automatic sprinkler cycle completed - sprinklers stopped by static function")
+            else:
+                logger.warning("[AUTO] Failed to stop sprinklers: relay not available")
+        except Exception as e:
+            logger.error(f"[AUTO] Error stopping sprinklers in static function: {e}")
+            if logger:
+                logger.exception("[AUTO] Full exception details:")
+
+
+# STATIC FUNCTIONS FOR AUTOMATIC SCHEDULING (Lumina Edge Pattern)
+# These functions are completely independent and safe for SQLite serialization
+
+def _run_sprinkler_cycle_static():
+    """Static function to run automatic sprinkler cycle - safe for APScheduler serialization"""
+    try:
+        logger.info("==== AUTOMATIC SPRINKLER CYCLE TRIGGERED (STATIC) ====")
+        
+        # Read config fresh each time
+        import configparser
+        import os
+        config_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'config', 'device.conf')
+        config = configparser.ConfigParser()
+        config.read(config_path)
+        
+        # Parse sprinkler on duration (operational value - index 1)
+        on_duration_raw = config.get('Sprinkler', 'sprinkler_on_duration')
+        if ',' in on_duration_raw:
+            on_duration = on_duration_raw.split(',')[1].strip()
+        else:
+            on_duration = on_duration_raw.strip()
+        
+        # Convert to seconds
+        time_parts = on_duration.split(':')
+        on_seconds = int(time_parts[0]) * 3600 + int(time_parts[1]) * 60 + int(time_parts[2])
+        
+        logger.info(f"[AUTO] Static sprinkler config: on_duration={on_duration} ({on_seconds}s)")
+        
+        if on_seconds == 0:
+            logger.warning("[AUTO] Skipping sprinkler cycle: zero duration")
+            return
+        
+        # Get relay instance (fresh each time)
+        from src.sensors.Relay import Relay
+        relay = Relay()
+        if not relay:
+            logger.warning("[AUTO] Failed to start sprinkler cycle: relay not available")
+            return
+            
+        # Start sprinkler
+        relay.set_sprinklers(True)
+        logger.info(f"[AUTO] Running automatic sprinkler cycle for {on_duration} ({on_seconds}s)")
+        
+        # LAYER 1: APScheduler precision timing for stop
+        from datetime import datetime, timedelta
+        from apscheduler.schedulers.background import BackgroundScheduler
+        from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore
+        
+        # Create a temporary scheduler instance for stop job
+        data_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'data')
+        jobstore_url = f"sqlite:///{os.path.join(data_dir, 'ripple_scheduler.db')}"
+        jobstores = {'default': SQLAlchemyJobStore(url=jobstore_url)}
+        temp_scheduler = BackgroundScheduler(jobstores=jobstores)
+        
+        if not temp_scheduler.running:
+            temp_scheduler.start()
+        
+        # Clean up any existing stop jobs
+        for job_id in ['scheduled_sprinkler_stop_static']:
+            try:
+                temp_scheduler.remove_job(job_id)
+                logger.info(f"[AUTO] Removed existing stop job: {job_id}")
+            except:
+                pass
+        
+        # Schedule static stop function
+        off_time = datetime.now() + timedelta(seconds=on_seconds)
+        temp_scheduler.add_job(
+            _stop_sprinkler_static_standalone,
+            'date',
+            run_date=off_time,
+            id='scheduled_sprinkler_stop_static',
+            replace_existing=True
+        )
+        logger.info(f"[AUTO] Scheduled static sprinkler stop for {off_time.strftime('%H:%M:%S')}")
+        
+        # LAYER 2: Failsafe timer thread (backup protection)
+        import threading
+        import time
+        def failsafe_sprinkler_stop():
+            time.sleep(on_seconds)
+            try:
+                logger.warning(f"[FAILSAFE] Shutting off sprinklers after {on_seconds}s (static backup)")
+                failsafe_relay = Relay()
+                if failsafe_relay:
+                    failsafe_relay.set_sprinklers(False)
+                    logger.info("[FAILSAFE] Sprinklers turned off by static failsafe timer")
+                else:
+                    logger.error("[FAILSAFE] Relay not available for failsafe shutdown")
+            except Exception as e:
+                logger.error(f"[FAILSAFE] Static sprinkler shutdown failed: {e}")
+        
+        failsafe_thread = threading.Thread(target=failsafe_sprinkler_stop, daemon=True)
+        failsafe_thread.start()
+        logger.info(f"[AUTO] Static sprinkler failsafe timer started: {on_seconds}s")
+        logger.info("==== AUTOMATIC SPRINKLER CYCLE INITIATED (STATIC DUAL-LAYER) ====")
+        
+    except Exception as e:
+        logger.error(f"[AUTO] Error in static automatic sprinkler cycle: {e}")
+        if logger:
+            logger.exception("[AUTO] Full exception details:")
+
+def _stop_sprinkler_static_standalone():
+    """Standalone static function to stop sprinklers - completely independent"""
+    try:
+        logger.info("[AUTO] ==== AUTOMATIC SPRINKLER STOP TRIGGERED (STANDALONE STATIC) ====")
+        from src.sensors.Relay import Relay
+        # Create fresh instance
+        relay = Relay()
+        if relay:
+            relay.set_sprinklers(False)
+            logger.info("[AUTO] Automatic sprinkler cycle completed - sprinklers stopped by standalone static function")
+        else:
+            logger.warning("[AUTO] Failed to stop sprinklers: relay not available")
+    except Exception as e:
+        logger.error(f"[AUTO] Error stopping sprinklers in standalone static function: {e}")
+        if logger:
+            logger.exception("[AUTO] Full exception details:")
 
     def handle_manual_command(self, command_type, duration=None):
         """Handle manual commands from the API"""
