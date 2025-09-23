@@ -47,6 +47,16 @@ class SystemStatus(BaseModel):
     status: str
     last_update: str
 
+class PlumbingConfig(BaseModel):
+    valve_outside_to_tank: Optional[bool] = None
+    valve_tank_to_outside: Optional[bool] = None
+    pump_from_tank_to_gutters: Optional[bool] = None
+
+class SprinklerConfig(BaseModel):
+    sprinkler_on_at_startup: Optional[bool] = None
+    sprinkler_on_duration: Optional[str] = None
+    sprinkler_wait_duration: Optional[str] = None
+
 class ManualCommand(BaseModel):
     abc_ratio: str
     target_ec_max: float
@@ -144,6 +154,51 @@ def _time_to_seconds(time_str):
     """
     hours, minutes, seconds = map(int, time_str.split(':'))
     return hours * 3600 + minutes * 60 + seconds
+
+def _parse_config_value(section, key, config_parser, preferred_index=1):
+    """
+    Parse configuration values that may have comma-separated parts.
+    
+    Args:
+        section (str): Config section name
+        key (str): Config key name 
+        config_parser: ConfigParser instance
+        preferred_index (int): Index of value to use (0 for default, 1 for operational)
+        
+    Returns:
+        str: Parsed value with whitespace and quotes removed
+    """
+    try:
+        raw_value = config_parser.get(section, key)
+        
+        if ',' in raw_value:
+            parts = raw_value.split(',')
+            if len(parts) > preferred_index:
+                # Use the preferred index (usually 1 for operational value)
+                value = parts[preferred_index].strip()
+            else:
+                # Fall back to first value if preferred index doesn't exist
+                value = parts[0].strip()
+        else:
+            # No comma, just use the whole value
+            value = raw_value.strip()
+            
+        # Strip any quotes and handle boolean conversion
+        value = value.strip('"\'')
+        
+        # Convert string boolean values to actual booleans
+        if value.lower() in ('true', 'false'):
+            return value.lower() == 'true'
+        
+        logger.debug(f"Parsed config value for {section}.{key}: '{raw_value}' -> '{value}' (using index {preferred_index})")
+        return value
+    except Exception as e:
+        logger.error(f"Error parsing config value for {section}.{key}: {e}")
+        # Return first part as a fallback
+        try:
+            return config_parser.get(section, key).split(',')[0].strip()
+        except:
+            return ""
 
 def get_valid_relay_fields():
     """
@@ -636,12 +691,24 @@ async def get_system_status(username: str = Depends(verify_credentials)):
             if config.has_section('Sprinkler'):
                 simplified_status['sprinkler_on_duration'] = config.get('Sprinkler', 'sprinkler_on_duration').split(',')[0].strip('"')
                 simplified_status['sprinkler_wait_duration'] = config.get('Sprinkler', 'sprinkler_wait_duration').split(',')[0].strip('"')
+                # Add sprinkler_on_at_startup operational value
+                if config.has_option('Sprinkler', 'sprinkler_on_at_startup'):
+                    startup_value = _parse_config_value('Sprinkler', 'sprinkler_on_at_startup', config, preferred_index=1)
+                    simplified_status['sprinkler_on_at_startup'] = startup_value
             
             # Water temperature targets
             if config.has_section('WaterTemperature'):
                 simplified_status['target_water_temperature'] = float(config.get('WaterTemperature', 'target_water_temperature').split(',')[0])
                 simplified_status['target_water_temperature_min'] = float(config.get('WaterTemperature', 'target_water_temperature_min').split(',')[0])
                 simplified_status['target_water_temperature_max'] = float(config.get('WaterTemperature', 'target_water_temperature_max').split(',')[0])
+            
+            # Plumbing operational values
+            if config.has_section('PLUMBING'):
+                simplified_status['plumbing'] = {}
+                for key in config.options('PLUMBING'):
+                    operational_value = _parse_config_value('PLUMBING', key, config, preferred_index=1)
+                    api_key = key.lower()
+                    simplified_status['plumbing'][api_key] = operational_value
                 
         except Exception as e:
             logger.warning(f"Error reading config targets: {e}")
@@ -854,6 +921,292 @@ async def system_restart(username: str = Depends(verify_credentials)):
     except Exception as e:
         logger.error(f"Error restarting Ripple application: {e}")
         raise HTTPException(status_code=500, detail=f"Error restarting Ripple application: {str(e)}")
+
+@app.get("/api/v1/plumbing", tags=["Plumbing"])
+async def get_plumbing_config(username: str = Depends(verify_credentials)):
+    """
+    Get current plumbing configuration (operational values).
+    
+    Returns the operational values from the PLUMBING section of device.conf.
+    These are the second values in the comma-separated format which represent
+    the current operational state of plumbing devices.
+    
+    Returns:
+        Dict: Plumbing configuration object containing:
+            - valve_outside_to_tank (bool): Current state of valve from outside to tank
+            - valve_tank_to_outside (bool): Current state of valve from tank to outside  
+            - pump_from_tank_to_gutters (bool): Current state of pump from tank to gutters
+            
+    Note:
+        - Requires HTTP Basic Authentication
+        - Reads operational values (second value) from PLUMBING section
+        - Returns 500 error if configuration cannot be read
+    """
+    try:
+        config = configparser.ConfigParser()
+        config.read('config/device.conf')
+        
+        plumbing_config = {}
+        
+        if config.has_section('PLUMBING'):
+            # Read operational values (index 1) from PLUMBING section
+            for key in config.options('PLUMBING'):
+                operational_value = _parse_config_value('PLUMBING', key, config, preferred_index=1)
+                # Convert to snake_case for API consistency
+                api_key = key.lower()
+                if isinstance(operational_value, str) and operational_value.lower() in ('true', 'false'):
+                    plumbing_config[api_key] = operational_value.lower() == 'true'
+                else:
+                    plumbing_config[api_key] = operational_value
+        
+        logger.info(f"Retrieved plumbing configuration: {plumbing_config}")
+        return plumbing_config
+        
+    except Exception as e:
+        logger.error(f"Error getting plumbing configuration: {e}")
+        raise HTTPException(status_code=500, detail=f"Error getting plumbing configuration: {str(e)}")
+
+@app.post("/api/v1/plumbing", tags=["Plumbing"])
+async def update_plumbing_config(plumbing_config: PlumbingConfig, username: str = Depends(verify_credentials)):
+    """
+    Update plumbing configuration operational values.
+    
+    Updates the operational values (second values) in the PLUMBING section of device.conf
+    while preserving the default values (first values). Also applies the changes
+    immediately to the relay hardware.
+    
+    Args:
+        plumbing_config (PlumbingConfig): Plumbing configuration object containing:
+            - valve_outside_to_tank (bool, optional): State of valve from outside to tank
+            - valve_tank_to_outside (bool, optional): State of valve from tank to outside
+            - pump_from_tank_to_gutters (bool, optional): State of pump from tank to gutters
+            
+    Returns:
+        Dict: Response object containing:
+            - status (str): "success" or "error"
+            - message (str): Success or error message
+            - applied_changes (dict): Changes that were applied
+            
+    Note:
+        - Requires HTTP Basic Authentication
+        - Updates operational values (second value) in device.conf
+        - Preserves default values (first value) in configuration
+        - Immediately applies changes to relay hardware
+        - Returns 500 error if configuration update fails
+    """
+    try:
+        config = configparser.ConfigParser()
+        config.read('config/device.conf')
+        
+        applied_changes = {}
+        
+        # Ensure PLUMBING section exists
+        if not config.has_section('PLUMBING'):
+            config.add_section('PLUMBING')
+        
+        # Map API field names to config field names
+        field_mapping = {
+            'valve_outside_to_tank': 'ValveOutsideToTank',
+            'valve_tank_to_outside': 'ValveTankToOutside', 
+            'pump_from_tank_to_gutters': 'PumpFromTankToGutters'
+        }
+        
+        # Update provided fields
+        for api_field, value in plumbing_config.dict(exclude_unset=True).items():
+            if value is not None and api_field in field_mapping:
+                config_field = field_mapping[api_field]
+                
+                # Get current value to preserve default (first) value
+                if config.has_option('PLUMBING', config_field):
+                    current_value = config.get('PLUMBING', config_field)
+                    if ',' in current_value:
+                        default_value = current_value.split(',')[0].strip()
+                    else:
+                        default_value = current_value.strip()
+                else:
+                    # If field doesn't exist, use the new value as default too
+                    default_value = str(value).lower()
+                
+                # Set new value with preserved default
+                new_value = f"{default_value}, {str(value).lower()}"
+                config.set('PLUMBING', config_field, new_value)
+                applied_changes[api_field] = value
+                
+                logger.info(f"Updated {config_field}: {new_value}")
+        
+        # Write updated config back to file
+        with open('config/device.conf', 'w') as configfile:
+            config.write(configfile)
+        
+        # Apply changes to relay hardware immediately
+        if applied_changes:
+            relay = controller.relays.get('relay')
+            if relay:
+                for api_field, value in applied_changes.items():
+                    try:
+                        if api_field == 'valve_outside_to_tank':
+                            relay.set_valve_outside_to_tank(value)
+                        elif api_field == 'valve_tank_to_outside':
+                            relay.set_valve_tank_to_outside(value)
+                        elif api_field == 'pump_from_tank_to_gutters':
+                            relay.set_pump_from_tank_to_gutters(value)
+                        logger.info(f"Applied {api_field} = {value} to relay hardware")
+                    except Exception as e:
+                        logger.warning(f"Failed to apply {api_field} to hardware: {e}")
+            else:
+                logger.warning("No relay hardware available to apply plumbing changes")
+        
+        logger.info(f"Successfully updated plumbing configuration: {applied_changes}")
+        return {
+            "status": "success", 
+            "message": "Plumbing configuration updated successfully",
+            "applied_changes": applied_changes
+        }
+        
+    except Exception as e:
+        logger.error(f"Error updating plumbing configuration: {e}")
+        raise HTTPException(status_code=500, detail=f"Error updating plumbing configuration: {str(e)}")
+
+@app.get("/api/v1/sprinkler", tags=["Sprinkler"])
+async def get_sprinkler_config(username: str = Depends(verify_credentials)):
+    """
+    Get current sprinkler configuration (operational values).
+    
+    Returns the operational values from the Sprinkler section of device.conf.
+    These are the second values in the comma-separated format which represent
+    the current operational state of sprinkler settings.
+    
+    Returns:
+        Dict: Sprinkler configuration object containing:
+            - sprinkler_on_at_startup (bool): Whether sprinklers turn on at system startup
+            - sprinkler_on_duration (str): Duration sprinklers stay on
+            - sprinkler_wait_duration (str): Wait time between sprinkler cycles
+            
+    Note:
+        - Requires HTTP Basic Authentication
+        - Reads operational values (second value) from Sprinkler section
+        - Returns 500 error if configuration cannot be read
+    """
+    try:
+        config = configparser.ConfigParser()
+        config.read('config/device.conf')
+        
+        sprinkler_config = {}
+        
+        if config.has_section('Sprinkler'):
+            # Read operational values (index 1) from Sprinkler section
+            for key in config.options('Sprinkler'):
+                operational_value = _parse_config_value('Sprinkler', key, config, preferred_index=1)
+                # Convert to snake_case for API consistency
+                api_key = key.lower()
+                sprinkler_config[api_key] = operational_value
+        
+        logger.info(f"Retrieved sprinkler configuration: {sprinkler_config}")
+        return sprinkler_config
+        
+    except Exception as e:
+        logger.error(f"Error getting sprinkler configuration: {e}")
+        raise HTTPException(status_code=500, detail=f"Error getting sprinkler configuration: {str(e)}")
+
+@app.post("/api/v1/sprinkler", tags=["Sprinkler"])
+async def update_sprinkler_config(sprinkler_config: SprinklerConfig, username: str = Depends(verify_credentials)):
+    """
+    Update sprinkler configuration operational values.
+    
+    Updates the operational values (second values) in the Sprinkler section of device.conf
+    while preserving the default values (first values). Also applies the changes
+    immediately to the sprinkler system.
+    
+    Args:
+        sprinkler_config (SprinklerConfig): Sprinkler configuration object containing:
+            - sprinkler_on_at_startup (bool, optional): Whether sprinklers turn on at startup
+            - sprinkler_on_duration (str, optional): Duration sprinklers stay on (HH:MM:SS)
+            - sprinkler_wait_duration (str, optional): Wait time between cycles (HH:MM:SS)
+            
+    Returns:
+        Dict: Response object containing:
+            - status (str): "success" or "error"
+            - message (str): Success or error message
+            - applied_changes (dict): Changes that were applied
+            
+    Note:
+        - Requires HTTP Basic Authentication
+        - Updates operational values (second value) in device.conf
+        - Preserves default values (first value) in configuration
+        - For sprinkler_on_at_startup changes, applies immediately to hardware
+        - Returns 500 error if configuration update fails
+    """
+    try:
+        config = configparser.ConfigParser()
+        config.read('config/device.conf')
+        
+        applied_changes = {}
+        
+        # Ensure Sprinkler section exists
+        if not config.has_section('Sprinkler'):
+            config.add_section('Sprinkler')
+        
+        # Update provided fields
+        for api_field, value in sprinkler_config.dict(exclude_unset=True).items():
+            if value is not None:
+                # Get current value to preserve default (first) value
+                if config.has_option('Sprinkler', api_field):
+                    current_value = config.get('Sprinkler', api_field)
+                    if ',' in current_value:
+                        default_value = current_value.split(',')[0].strip()
+                    else:
+                        default_value = current_value.strip()
+                else:
+                    # If field doesn't exist, use the new value as default too
+                    if isinstance(value, bool):
+                        default_value = str(value).lower()
+                    else:
+                        default_value = str(value)
+                
+                # Set new value with preserved default
+                if isinstance(value, bool):
+                    new_value = f"{default_value}, {str(value).lower()}"
+                else:
+                    new_value = f"{default_value}, {str(value)}"
+                    
+                config.set('Sprinkler', api_field, new_value)
+                applied_changes[api_field] = value
+                
+                logger.info(f"Updated {api_field}: {new_value}")
+        
+        # Write updated config back to file
+        with open('config/device.conf', 'w') as configfile:
+            config.write(configfile)
+        
+        # Apply sprinkler_on_at_startup changes immediately if present
+        if 'sprinkler_on_at_startup' in applied_changes:
+            startup_value = applied_changes['sprinkler_on_at_startup']
+            relay = controller.relays.get('relay')
+            if relay:
+                try:
+                    if startup_value:
+                        # Turn on sprinklers if startup is enabled
+                        relay.set_sprinklers(True)
+                        logger.info(f"Applied sprinkler_on_at_startup = {startup_value} - sprinklers turned ON")
+                    else:
+                        # Turn off sprinklers if startup is disabled
+                        relay.set_sprinklers(False)
+                        logger.info(f"Applied sprinkler_on_at_startup = {startup_value} - sprinklers turned OFF")
+                except Exception as e:
+                    logger.warning(f"Failed to apply sprinkler_on_at_startup to hardware: {e}")
+            else:
+                logger.warning("No relay hardware available to apply sprinkler startup changes")
+        
+        logger.info(f"Successfully updated sprinkler configuration: {applied_changes}")
+        return {
+            "status": "success", 
+            "message": "Sprinkler configuration updated successfully",
+            "applied_changes": applied_changes
+        }
+        
+    except Exception as e:
+        logger.error(f"Error updating sprinkler configuration: {e}")
+        raise HTTPException(status_code=500, detail=f"Error updating sprinkler configuration: {str(e)}")
 
 # Run the server if script is executed directly
 if __name__ == "__main__":
