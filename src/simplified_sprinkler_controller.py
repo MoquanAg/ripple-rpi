@@ -61,10 +61,33 @@ class SimplifiedSprinklerController:
             logger.error(f"Error setting up scheduler: {e}")
             return None
             
+    def _check_hardware_running_state(self):
+        """Check if sprinklers are actually running based on hardware state"""
+        try:
+            from src.sensors.Relay import Relay
+            relay = Relay()
+            if not relay:
+                logger.warning("No relay available for state check")
+                return False
+                
+            # Check SprinklerA and SprinklerB hardware states
+            sprinkler_a_state = relay.get_relay_state("SprinklerA")
+            sprinkler_b_state = relay.get_relay_state("SprinklerB")
+            
+            # Consider running if either sprinkler is on
+            hardware_running = bool(sprinkler_a_state or sprinkler_b_state)
+            logger.info(f"Hardware state check - SprinklerA: {sprinkler_a_state}, SprinklerB: {sprinkler_b_state}, Running: {hardware_running}")
+            return hardware_running
+            
+        except Exception as e:
+            logger.error(f"Error checking hardware state: {e}")
+            return False
+    
     def start_sprinkler_cycle(self):
         """Start sprinkler cycle with dual protection"""
-        if self.is_running:
-            logger.warning("Sprinkler cycle already running")
+        # Check hardware state instead of software state
+        if self._check_hardware_running_state():
+            logger.warning("Sprinkler cycle already running (hardware check)")
             return False
             
         try:
@@ -84,7 +107,7 @@ class SimplifiedSprinklerController:
                 return False
                 
             relay.set_sprinklers(True)
-            self.is_running = True
+            # Note: No longer using self.is_running - hardware state is truth
             logger.info(f"[CONTROLLER] Sprinklers started for {on_duration_str} ({on_seconds}s)")
             
             # LAYER 1: APScheduler (Primary)
@@ -113,10 +136,10 @@ class SimplifiedSprinklerController:
                 return False
                 
             stop_time = datetime.now() + timedelta(seconds=on_seconds)
-            # Use static function to avoid serialization issues
-            from src.sprinkler_static import stop_sprinklers_static
+            # Use static function that communicates with controller
+            from src.sprinkler_static import stop_sprinklers_with_controller_callback
             self.scheduler.add_job(
-                stop_sprinklers_static,
+                stop_sprinklers_with_controller_callback,
                 'date',
                 run_date=stop_time,
                 id='controller_sprinkler_stop',
@@ -133,31 +156,45 @@ class SimplifiedSprinklerController:
         """Start failsafe timer as backup (Layer 2)"""
         try:
             def failsafe_stop():
-                time.sleep(duration)
-                if self.is_running:  # Only stop if still running
-                    logger.warning("[CONTROLLER] FAILSAFE activated - APScheduler may have failed")
-                    try:
-                        from src.sensors.Relay import Relay
-                        relay = Relay()
-                        if relay:
-                            relay.set_sprinklers(False)
-                            self.is_running = False
-                            logger.info("[CONTROLLER] FAILSAFE stopped sprinklers")
-                            
-                            # Schedule next cycle using static function
-                            from src.sprinkler_static import schedule_next_sprinkler_cycle_static
-                            schedule_next_sprinkler_cycle_static()
-                        else:
-                            logger.error("[CONTROLLER] FAILSAFE: No relay available")
-                    except Exception as e:
-                        logger.error(f"[CONTROLLER] FAILSAFE error: {e}")
+                try:
+                    logger.info(f"[FAILSAFE] Timer started, sleeping for {duration}s")
+                    time.sleep(duration)
+                    logger.info(f"[FAILSAFE] Timer woke up after {duration}s, checking if sprinklers still running...")
+                    
+                    if self.is_running:  # Only stop if still running
+                        logger.warning("[FAILSAFE] ACTIVATED - APScheduler failed, emergency stop!")
+                        try:
+                            from src.sensors.Relay import Relay
+                            relay = Relay()
+                            if relay:
+                                relay.set_sprinklers(False)
+                                self.is_running = False
+                                logger.critical("[FAILSAFE] Emergency stop completed - sprinklers turned off!")
+                                
+                                # Schedule next cycle using static function
+                                from src.sprinkler_static import schedule_next_sprinkler_cycle_static
+                                schedule_next_sprinkler_cycle_static()
+                            else:
+                                logger.error("[FAILSAFE] CRITICAL: No relay available for emergency stop!")
+                        except Exception as e:
+                            logger.error(f"[FAILSAFE] CRITICAL ERROR during emergency stop: {e}")
+                    else:
+                        logger.info("[FAILSAFE] APScheduler worked correctly - sprinklers already stopped")
                         
-            self.failsafe_timer = threading.Thread(target=failsafe_stop, daemon=True)
+                except Exception as e:
+                    logger.error(f"[FAILSAFE] Thread error: {e}")
+                        
+            # Cancel existing failsafe if any
+            if hasattr(self, 'failsafe_timer') and self.failsafe_timer and self.failsafe_timer.is_alive():
+                logger.info("[CONTROLLER] Canceling existing failsafe timer")
+                
+            self.failsafe_timer = threading.Thread(target=failsafe_stop, daemon=False)
             self.failsafe_timer.start()
-            logger.info(f"[CONTROLLER] Failsafe timer started: {duration}s")
+            logger.info(f"[CONTROLLER] Failsafe timer started: {duration}s (Thread: {self.failsafe_timer.name})")
             
         except Exception as e:
-            logger.error(f"Error starting failsafe timer: {e}")
+            logger.error(f"[CONTROLLER] Error starting failsafe timer: {e}")
+            logger.exception("Full failsafe timer error:")
             
     def _stop_sprinklers_and_mark_complete(self):
         """Stop sprinklers and mark cycle complete (called by APScheduler)"""
@@ -184,11 +221,8 @@ class SimplifiedSprinklerController:
     def stop_current_cycle(self):
         """Stop current sprinkler cycle"""
         try:
-            if self.scheduler:
-                try:
-                    self.scheduler.remove_job('controller_sprinkler_stop')
-                except:
-                    pass  # Job might not exist
+            # Note: Don't manually remove date-triggered jobs - APScheduler handles this automatically
+            # after job execution. Manual removal causes race conditions.
                     
             if self.is_running:
                 from src.sensors.Relay import Relay
@@ -216,6 +250,33 @@ class SimplifiedSprinklerController:
         except:
             return None
             
+    def debug_protection_status(self):
+        """Debug method to check both protection layers"""
+        try:
+            logger.info("=== PROTECTION LAYER DEBUG STATUS ===")
+            logger.info(f"Controller is_running: {self.is_running}")
+            
+            # Check APScheduler
+            if self.scheduler:
+                jobs = self.scheduler.get_jobs()
+                logger.info(f"APScheduler jobs: {len(jobs)}")
+                for job in jobs:
+                    logger.info(f"  Job: {job.id}, Next: {job.next_run_time}")
+            else:
+                logger.error("APScheduler: NOT AVAILABLE")
+                
+            # Check failsafe timer
+            if hasattr(self, 'failsafe_timer') and self.failsafe_timer:
+                logger.info(f"Failsafe timer alive: {self.failsafe_timer.is_alive()}")
+                logger.info(f"Failsafe timer name: {self.failsafe_timer.name}")
+            else:
+                logger.error("Failsafe timer: NOT AVAILABLE")
+                
+            logger.info("=== END DEBUG STATUS ===")
+            
+        except Exception as e:
+            logger.error(f"Error in debug status: {e}")
+
     def shutdown(self):
         """Shutdown controller gracefully"""
         try:

@@ -12,8 +12,7 @@ import configparser
 import os
 import time
 from datetime import datetime, timedelta
-from apscheduler.schedulers.background import BackgroundScheduler
-from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore
+# APScheduler imports removed - using global scheduler from globals.py
 
 # Global logger import
 try:
@@ -24,15 +23,12 @@ except:
     logger = logging.getLogger(__name__)
 
 def get_scheduler():
-    """Get or create APScheduler instance with SQLite persistence"""
+    """Get the global scheduler instance from globals.py"""
     try:
-        jobstore = SQLAlchemyJobStore(url='sqlite:///data/sprinkler_scheduler.db')
-        scheduler = BackgroundScheduler(jobstores={'default': jobstore})
-        if not scheduler.running:
-            scheduler.start()
+        from src.globals import scheduler
         return scheduler
     except Exception as e:
-        logger.error(f"Error creating scheduler: {e}")
+        logger.error(f"Error getting global scheduler: {e}")
         return None
 
 def get_sprinkler_config():
@@ -112,6 +108,37 @@ def stop_sprinklers_static():
         
     except Exception as e:
         logger.error(f"[STATIC] Error stopping sprinklers: {e}")
+        logger.exception("[STATIC] Full exception details:")
+
+def stop_sprinklers_with_controller_callback():
+    """Static function that stops sprinklers and notifies controller"""
+    try:
+        logger.info("==== STATIC SPRINKLER STOP WITH CONTROLLER CALLBACK ====")
+        
+        # Turn off sprinklers
+        from src.sensors.Relay import Relay
+        relay = Relay()
+        if not relay:
+            logger.error("[STATIC] No relay available for sprinkler stop")
+            return
+            
+        relay.set_sprinklers(False)
+        logger.info("[STATIC] Sprinklers stopped by APScheduler")
+        
+        # Notify controller that sprinklers stopped
+        try:
+            from src.simplified_sprinkler_controller import get_sprinkler_controller
+            controller = get_sprinkler_controller()
+            controller.is_running = False
+            logger.info("[STATIC] Controller state updated: is_running = False")
+        except Exception as e:
+            logger.error(f"[STATIC] Could not update controller state: {e}")
+        
+        # Schedule next cycle
+        schedule_next_sprinkler_cycle_static()
+        
+    except Exception as e:
+        logger.error(f"[STATIC] Error stopping sprinklers with callback: {e}")
         logger.exception("[STATIC] Full exception details:")
 
 def schedule_sprinkler_stop_static(on_seconds):
