@@ -184,4 +184,6 @@ instruction_set.json
 
 # Database files (local runtime data)
 data/ripple_scheduler.db
+data/scheduler_jobs.sqlite
 *.db
+*.sqlite
