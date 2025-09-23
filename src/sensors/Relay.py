@@ -1716,7 +1716,7 @@ if __name__ == "__main__":
         # relay.set_valve_tank_to_outside(False)
         # relay.set_valve_outside_to_tank(True)
         # relay.set_mixing_pump(True)
-        # relay.set_pump_from_tank_to_gutters(False)
+        relay.set_pump_from_tank_to_gutters(True)
         # relay.set_sprinklers(False)
         # # relay.set_nanobubbler(True)
         # time.sleep(60)
