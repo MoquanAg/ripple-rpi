@@ -343,19 +343,26 @@ RELAY_ADDRESS = get_device_address('RELAY_CONTROL', 'RelayOne', '0x10')
 
 #############################################
 #############################################
-# APScheduler
-scheduler = BackgroundScheduler()
+# APScheduler with SQLite persistence
+from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore
+
+# Configure unified scheduler database path
+SCHEDULER_DB_PATH = os.path.join(BASE_DIR, "..", "data", "scheduler_jobs.sqlite")
+scheduler = None
 _scheduler_running = False  # Add this flag to track scheduler state
 
 
 def start_scheduler():
     global scheduler, _scheduler_running
     if not _scheduler_running:
-        scheduler = BackgroundScheduler()
+        # Configure SQLite jobstore for unified scheduling
+        jobstore = SQLAlchemyJobStore(url=f'sqlite:///{SCHEDULER_DB_PATH}')
+        scheduler = BackgroundScheduler(jobstores={'default': jobstore})
         scheduler.start()
         _scheduler_running = True
+        logger.info(f"Scheduler started with unified database: {SCHEDULER_DB_PATH}")
         
-        # Add daily reboot job if enabled
+        # Add daily reboot job if enabled (with replace_existing to avoid conflicts)
         if DAILY_REBOOT_ENABLED:
             from system_reboot import safe_system_reboot
             scheduler.add_job(
@@ -363,7 +370,8 @@ def start_scheduler():
                 'cron',
                 hour=DAILY_REBOOT_HOUR,
                 minute=DAILY_REBOOT_MINUTE,
-                id='daily_system_reboot'
+                id='daily_system_reboot',
+                replace_existing=True
             )
             logger.info(f"Scheduled daily system reboot for {DAILY_REBOOT_HOUR:02d}:{DAILY_REBOOT_MINUTE:02d}")
 
@@ -384,7 +392,7 @@ def is_scheduler_running():
     return _scheduler_running and scheduler.running
 
 
-# Update the existing scheduler.start() call
+# Initialize the unified scheduler on module load
 if not _scheduler_running:
     start_scheduler()
 
