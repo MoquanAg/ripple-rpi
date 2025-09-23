@@ -392,6 +392,12 @@ def is_scheduler_running():
     return _scheduler_running and scheduler.running
 
 
+def get_scheduler():
+    """Get the global scheduler instance"""
+    global scheduler
+    return scheduler
+
+
 # Initialize the unified scheduler on module load
 if not _scheduler_running:
     start_scheduler()
