@@ -202,7 +202,7 @@ def schedule_next_water_level_check_static():
             
         next_run = datetime.now() + timedelta(seconds=interval_seconds)
         scheduler.add_job(
-            check_water_level_static,
+            'src.water_level_static:check_water_level_static',
             'date',
             run_date=next_run,
             id='water_level_check',

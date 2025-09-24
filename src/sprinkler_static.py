@@ -151,7 +151,7 @@ def schedule_sprinkler_stop_static(on_seconds):
             
         stop_time = datetime.now() + timedelta(seconds=on_seconds)
         scheduler.add_job(
-            stop_sprinklers_static,
+            'src.sprinkler_static:stop_sprinklers_static',
             'date',
             run_date=stop_time,
             id='sprinkler_stop',
@@ -180,7 +180,7 @@ def schedule_next_sprinkler_cycle_static():
             
         next_run = datetime.now() + timedelta(seconds=wait_seconds)
         scheduler.add_job(
-            start_sprinklers_static,
+            'src.sprinkler_static:start_sprinklers_static',
             'date',
             run_date=next_run,
             id='sprinkler_start',

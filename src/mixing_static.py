@@ -121,7 +121,7 @@ def schedule_mixing_stop_static(duration_seconds):
             
         stop_time = datetime.now() + timedelta(seconds=duration_seconds)
         scheduler.add_job(
-            stop_mixing_pump_static,
+            'src.mixing_static:stop_mixing_pump_static',
             'date',
             run_date=stop_time,
             id='mixing_stop',
@@ -150,7 +150,7 @@ def schedule_next_mixing_cycle_static():
             
         next_run = datetime.now() + timedelta(seconds=interval_seconds)
         scheduler.add_job(
-            start_mixing_pump_static,
+            'src.mixing_static:start_mixing_pump_static',
             'date',
             run_date=next_run,
             id='mixing_start',

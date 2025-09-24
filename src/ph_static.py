@@ -234,7 +234,7 @@ def schedule_ph_stop_static(on_seconds, use_ph_up):
             
         stop_time = datetime.now() + timedelta(seconds=on_seconds)
         scheduler.add_job(
-            stop_ph_pump_static,
+            'src.ph_static:stop_ph_pump_static',
             'date',
             run_date=stop_time,
             id='ph_stop',
@@ -264,7 +264,7 @@ def schedule_next_ph_cycle_static():
             
         next_run = datetime.now() + timedelta(seconds=wait_seconds)
         scheduler.add_job(
-            start_ph_pump_static,
+            'src.ph_static:start_ph_pump_static',
             'date',
             run_date=next_run,
             id='ph_start',

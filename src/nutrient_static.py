@@ -224,7 +224,7 @@ def schedule_nutrient_stop_static(on_seconds):
             
         stop_time = datetime.now() + timedelta(seconds=on_seconds)
         scheduler.add_job(
-            stop_nutrient_pumps_static,
+            'src.nutrient_static:stop_nutrient_pumps_static',
             'date',
             run_date=stop_time,
             id='nutrient_stop',
@@ -263,7 +263,7 @@ def schedule_next_nutrient_cycle_static():
                 
             next_run = datetime.now() + timedelta(seconds=wait_seconds)
             scheduler.add_job(
-                start_nutrient_pumps_static,
+                'src.nutrient_static:start_nutrient_pumps_static',
                 'date',
                 run_date=next_run,
                 id='nutrient_start',
