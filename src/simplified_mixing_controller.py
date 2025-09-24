@@ -117,7 +117,7 @@ class SimplifiedMixingController:
             # Use static function to avoid serialization issues
             from src.mixing_static import stop_mixing_pump_static
             self.scheduler.add_job(
-                stop_mixing_pump_static,
+                'src.mixing_static:stop_mixing_pump_static',
                 'date',
                 run_date=stop_time,
                 id='controller_mixing_stop',

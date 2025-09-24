@@ -143,7 +143,7 @@ class SimplifiedNutrientController:
             # Use static function to avoid serialization issues
             from src.nutrient_static import stop_nutrient_pumps_static
             self.scheduler.add_job(
-                stop_nutrient_pumps_static,
+                'src.nutrient_static:stop_nutrient_pumps_static',
                 'date',
                 run_date=stop_time,
                 id='controller_nutrient_stop',

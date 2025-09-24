@@ -129,7 +129,7 @@ class SimplifiedpHController:
                 
             stop_time = datetime.now() + timedelta(seconds=duration_seconds)
             self.scheduler.add_job(
-                self._stop_ph_pump_and_mark_complete,
+                'src.simplified_ph_controller:SimplifiedpHController._stop_ph_pump_and_mark_complete',
                 'date',
                 run_date=stop_time,
                 id='controller_ph_stop',

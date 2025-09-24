@@ -139,7 +139,7 @@ class SimplifiedSprinklerController:
             # Use static function that communicates with controller
             from src.sprinkler_static import stop_sprinklers_with_controller_callback
             self.scheduler.add_job(
-                stop_sprinklers_with_controller_callback,
+                'src.sprinkler_static:stop_sprinklers_with_controller_callback',
                 'date',
                 run_date=stop_time,
                 id='controller_sprinkler_stop',
