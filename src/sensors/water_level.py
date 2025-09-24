@@ -129,6 +129,11 @@ class WaterLevel:
             if 'SENSORS' in config:
                 for key, value in config['SENSORS'].items():
                     if key.upper().startswith("WATER_LEVEL_"):
+                        # Check if sensor is disabled (null configuration)
+                        if value.strip().lower().startswith('null'):
+                            logger.info(f"Water Level sensor {key} is disabled (null configuration), skipping initialization")
+                            continue
+                        
                         # Parse the sensor configuration
                         parts = [p.strip() for p in value.split(',')]
                         if len(parts) >= 5:  # We need at least 5 parts for the full configuration

@@ -87,6 +87,11 @@ class DO:
             if 'SENSORS' in config:
                 for key, value in config['SENSORS'].items():
                     if key.upper().startswith("DO_"):
+                        # Check if sensor is disabled (null configuration)
+                        if value.strip().lower().startswith('null'):
+                            logger.info(f"DO sensor {key} is disabled (null configuration), skipping initialization")
+                            continue
+                        
                         sensor_id = key
                         cls(sensor_id, port)
                         logger.info(f"Loaded sensor with ID: {sensor_id}")
