@@ -489,6 +489,7 @@ class RippleController:
         self.initialize_sensors()
         self.load_sensor_targets()
         self.apply_plumbing_operational_values()
+        self.apply_plumbing_startup_configuration()
         self.apply_sprinkler_startup_configuration()
         
         # Make sure config file exists before attempting to watch it
@@ -725,6 +726,66 @@ class RippleController:
             
         except Exception as e:
             logger.error(f"Error applying sprinkler startup configuration: {e}")
+            logger.exception("Full exception details:")
+
+    def apply_plumbing_startup_configuration(self):
+        """Apply plumbing startup configuration to relay hardware on startup."""
+        try:
+            logger.info("[STARTUP] Checking plumbing startup configuration...")
+            
+            if not os.path.exists(self.config_file):
+                logger.warning(f"Config file {self.config_file} does not exist")
+                return
+                
+            self.config.read(self.config_file)
+            
+            if not self.config.has_section('PLUMBING'):
+                logger.info("No PLUMBING section found in config - skipping plumbing startup configuration")
+                return
+            
+            # Get relay instance
+            relay = Relay()
+            if not relay:
+                logger.warning("No relay hardware available - cannot apply plumbing startup configuration")
+                return
+            
+            # Apply each plumbing startup configuration
+            startup_configs = [
+                ('ValveOutsideToTank_on_at_startup', 'valve_outside_to_tank', relay.set_valve_outside_to_tank),
+                ('ValveTankToOutside_on_at_startup', 'valve_tank_to_outside', relay.set_valve_tank_to_outside),
+                ('PumpFromTankToGutters_on_at_startup', 'pump_from_tank_to_gutters', relay.set_pump_from_tank_to_gutters)
+            ]
+            
+            for config_key, device_name, relay_method in startup_configs:
+                if not self.config.has_option('PLUMBING', config_key):
+                    logger.info(f"No {config_key} option found - skipping")
+                    continue
+                
+                # Get operational value (second value)
+                operational_value = self._parse_config_value('PLUMBING', config_key, preferred_index=1)
+                
+                # Convert string boolean to actual boolean
+                if isinstance(operational_value, str) and operational_value.lower() in ('true', 'false'):
+                    startup_enabled = operational_value.lower() == 'true'
+                else:
+                    startup_enabled = bool(operational_value)
+                
+                logger.info(f"[STARTUP] {config_key} operational value: {startup_enabled}")
+                
+                # Apply startup configuration to hardware
+                try:
+                    relay_method(startup_enabled)
+                    if startup_enabled:
+                        logger.info(f"[STARTUP] {device_name} turned ON due to {config_key} = true")
+                    else:
+                        logger.info(f"[STARTUP] {device_name} turned OFF due to {config_key} = false")
+                except Exception as e:
+                    logger.error(f"Error applying {config_key} to hardware: {e}")
+            
+            logger.info("[STARTUP] Plumbing startup configuration applied successfully")
+            
+        except Exception as e:
+            logger.error(f"Error applying plumbing startup configuration: {e}")
             logger.exception("Full exception details:")
 
     def reload_specific_sections(self, changed_sections):
@@ -1120,17 +1181,40 @@ class RippleController:
             logger.exception("Full exception details:")
 
     def _activate_sprinklers_on_startup(self):
-        """Initialize simplified sprinkler system on startup - SPRINKLERS START ON"""
+        """Initialize simplified sprinkler system on startup - respects sprinkler_on_at_startup configuration"""
         try:
-            logger.info("==== INITIALIZING SIMPLIFIED SPRINKLER SYSTEM (ON AT STARTUP) ====")
+            logger.info("==== INITIALIZING SIMPLIFIED SPRINKLER SYSTEM ====")
             
-            # NEW BEHAVIOR: Start sprinklers ON at reboot
-            success = self.sprinkler_controller.start_sprinkler_cycle()
+            # Check sprinkler_on_at_startup configuration
+            if not self.config.has_section('Sprinkler'):
+                logger.info("[Startup] No Sprinkler section found - sprinkler system not started")
+                return
+                
+            if not self.config.has_option('Sprinkler', 'sprinkler_on_at_startup'):
+                logger.info("[Startup] No sprinkler_on_at_startup option found - sprinkler system not started")
+                return
             
-            if success:
-                logger.info("[Startup] Simplified sprinkler system STARTED (enabled at reboot)")
+            # Get operational value (second value)
+            operational_value = self._parse_config_value('Sprinkler', 'sprinkler_on_at_startup', preferred_index=1)
+            
+            # Convert string boolean to actual boolean
+            if isinstance(operational_value, str) and operational_value.lower() in ('true', 'false'):
+                startup_enabled = operational_value.lower() == 'true'
             else:
-                logger.info("[Startup] Sprinkler system not started (duration may be 0 or already running)")
+                startup_enabled = bool(operational_value)
+            
+            logger.info(f"[Startup] sprinkler_on_at_startup operational value: {startup_enabled}")
+            
+            if startup_enabled:
+                logger.info("[Startup] Starting sprinkler system (enabled at startup)")
+                success = self.sprinkler_controller.start_sprinkler_cycle()
+                
+                if success:
+                    logger.info("[Startup] Simplified sprinkler system STARTED (enabled at startup)")
+                else:
+                    logger.info("[Startup] Sprinkler system not started (duration may be 0 or already running)")
+            else:
+                logger.info("[Startup] Sprinkler system not started (disabled at startup)")
                 
         except Exception as e:
             logger.error(f"Error initializing simplified sprinkler system: {e}")

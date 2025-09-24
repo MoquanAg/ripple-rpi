@@ -3,12 +3,16 @@ import os
 import json
 from enum import Enum
 import threading
-import globals
 import datetime
 import shutil
 import glob
 import tzlocal
 import orjson
+
+# Define constants locally to avoid circular imports
+LOG_FOLDER_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "log")
+BASE_DIR = os.path.dirname(os.path.dirname(__file__))
+SENSOR_DATA_LOG_PATH = os.path.join(BASE_DIR, "data", "sensor_data")
 
 LOG_MAX_SIZE = 2  # MB
 LOG_SIZE_CHECK_INTERVAL = 5 * 60  # 5 minutes
@@ -25,7 +29,7 @@ class CustomLogger(logging.Logger):
 
     # Smart info
     def sinfo(self, msg, *args, **kwargs):
-        if globals.SHOULD_LOG():
+        if True:  # Always log for now, can be made configurable later
             super().info(msg, *args, **kwargs)
 
 
@@ -63,7 +67,7 @@ class GlobalLogger:
         # Generate the initial log file name without checking existing files
         log_file_name = f"{self.log_prefix}{self.current_date}_{self.current_log_number:03d}.log"
         self.LOG_FILE_PATH = os.path.join(
-            globals.LOG_FOLDER_PATH, log_file_name
+            LOG_FOLDER_PATH, log_file_name
         )
 
         file_handler = logging.FileHandler(self.LOG_FILE_PATH)
@@ -119,7 +123,7 @@ class GlobalLogger:
                     f"{self.log_prefix}{self.current_date}_{self.current_log_number:03d}.log"
                 )
                 self.LOG_FILE_PATH = os.path.join(
-                    globals.LOG_FOLDER_PATH, new_log_file_name
+                    LOG_FOLDER_PATH, new_log_file_name
                 )
 
                 # Create new file handler
@@ -176,7 +180,7 @@ class GlobalLogger:
                     f"{self.log_prefix}{self.current_date}_{self.current_log_number:03d}.log"
                 )
                 new_log_file_path = os.path.join(
-                    globals.LOG_FOLDER_PATH, new_log_file_name
+                    LOG_FOLDER_PATH, new_log_file_name
                 )
 
                 # Update the log file path and create a new file handler
@@ -206,7 +210,7 @@ class GlobalLogger:
         self.schedule_cleanup()
 
     def get_free_space(self):
-        _, _, free = shutil.disk_usage(globals.BASE_DIR)
+        _, _, free = shutil.disk_usage(BASE_DIR)
         free_mb = free / (1024 * 1024)  # Convert to MB
         return free_mb
 
@@ -219,7 +223,7 @@ class GlobalLogger:
         self.current_date = current_date
 
         log_files = glob.glob(
-            os.path.join(globals.LOG_FOLDER_PATH, f"{self.log_prefix}{current_date}_*.log")
+            os.path.join(LOG_FOLDER_PATH, f"{self.log_prefix}{current_date}_*.log")
         )
         if log_files:
             latest_log_file = max(log_files, key=os.path.getctime)
@@ -232,14 +236,14 @@ class GlobalLogger:
         return new_log_file_name
 
     def delete_oldest_log_files(self):
-        log_files = glob.glob(os.path.join(globals.LOG_FOLDER_PATH, f"{self.log_prefix}*_*.log"))
+        log_files = glob.glob(os.path.join(LOG_FOLDER_PATH, f"{self.log_prefix}*_*.log"))
         if log_files:
             oldest_date = min(
                 log_files, key=lambda x: os.path.splitext(x)[0].split("_")[1]
             )
             oldest_date = oldest_date.split("_")[1]
             oldest_log_files = glob.glob(
-                os.path.join(globals.LOG_FOLDER_PATH, f"{self.log_prefix}{oldest_date}_*.log")
+                os.path.join(LOG_FOLDER_PATH, f"{self.log_prefix}{oldest_date}_*.log")
             )
             for log_file in oldest_log_files:
                 try:
@@ -264,7 +268,7 @@ class GlobalLogger:
     def log_sensor_data(self, path_list, value=None):
         # Convert path_list to a string for the filename
         sensor_name = ".".join(path_list)
-        log_file_path = f"{globals.SENSOR_DATA_LOG_PATH}.{sensor_name}.log"
+        log_file_path = f"{SENSOR_DATA_LOG_PATH}.{sensor_name}.log"
 
         # Get current datetime in the specified format
         local_timezone = datetime.datetime.now().astimezone().tzinfo

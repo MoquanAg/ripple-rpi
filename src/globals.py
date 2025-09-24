@@ -5,7 +5,6 @@ from apscheduler.jobstores.base import JobLookupError
 from datetime import datetime
 import json
 import queue
-from lumina_modbus_client import LuminaModbusClient
 import ast
 
 # Absolute path of the current directory
@@ -16,9 +15,18 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 # Logger
 LOG_FOLDER_PATH = os.path.join(BASE_DIR, "..", "log")
 os.makedirs(LOG_FOLDER_PATH, exist_ok=True)
+# Import with sys.path manipulation to avoid circular imports
+import sys
+current_dir = os.path.dirname(os.path.abspath(__file__))
+if current_dir not in sys.path:
+    sys.path.insert(0, current_dir)
+
 from lumina_logger import GlobalLogger
 
 logger = GlobalLogger("RippleGlobals", log_prefix="ripple_").logger
+
+# Import LuminaModbusClient after logger is created to avoid circular imports
+from lumina_modbus_client import LuminaModbusClient
 
 
 #############################################
@@ -364,9 +372,9 @@ def start_scheduler():
         
         # Add daily reboot job if enabled (with replace_existing to avoid conflicts)
         if DAILY_REBOOT_ENABLED:
-            from system_reboot import safe_system_reboot
+            # Use string reference instead of direct function reference to avoid import issues
             scheduler.add_job(
-                safe_system_reboot,
+                'src.system_reboot:safe_system_reboot',
                 'cron',
                 hour=DAILY_REBOOT_HOUR,
                 minute=DAILY_REBOOT_MINUTE,
