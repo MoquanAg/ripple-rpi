@@ -2,20 +2,15 @@ import serial
 import time
 import os, sys
 
+# Add the project root to Python path so we can import src modules
 current_dir = os.path.dirname(__file__)
-parent_dir = os.path.dirname(current_dir)
-sys.path.append(parent_dir)
+project_root = os.path.dirname(os.path.dirname(current_dir))
+sys.path.insert(0, project_root)
 
-try:
-    # Try importing when running from main directory
-    from src.lumina_modbus_event_emitter import ModbusResponse
-    import src.globals as globals
-    from src.lumina_logger import GlobalLogger
-except ImportError:
-    # Import when running from src directory
-    from lumina_modbus_event_emitter import ModbusResponse
-    import globals
-    from lumina_logger import GlobalLogger
+# Now import with absolute paths that work from anywhere
+from src.lumina_modbus_event_emitter import ModbusResponse
+import src.globals as globals
+from src.lumina_logger import GlobalLogger
 
 logger = GlobalLogger("RippleDO", log_prefix="ripple_").logger
 

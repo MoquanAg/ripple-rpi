@@ -2,25 +2,16 @@ import serial
 import time
 import os, sys
 
+# Add the project root to Python path so we can import src modules
 current_dir = os.path.dirname(__file__)
-parent_dir = os.path.dirname(current_dir)
-sys.path.append(parent_dir)
+project_root = os.path.dirname(os.path.dirname(current_dir))
+sys.path.insert(0, project_root)
 
-# If running directly, we need to adjust the imports
-if __name__ == "__main__":
-    # Get the parent of the parent directory to access project root
-    project_root = os.path.dirname(parent_dir)
-    sys.path.append(project_root)
-    from src.lumina_logger import GlobalLogger
-    import src.globals as globals
-    import src.helpers as helpers
-    from src.lumina_modbus_event_emitter import ModbusResponse
-else:
-    # When imported from main.py, src is already in path
-    from lumina_logger import GlobalLogger
-    import globals
-    import helpers
-    from lumina_modbus_event_emitter import ModbusResponse
+# Now import with absolute paths that work from anywhere
+from src.lumina_modbus_event_emitter import ModbusResponse
+import src.globals as globals
+from src.lumina_logger import GlobalLogger
+import src.helpers as helpers
 
 logger = GlobalLogger("RippleRelay", log_prefix="ripple_").logger
 
