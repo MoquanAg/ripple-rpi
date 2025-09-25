@@ -1197,6 +1197,12 @@ async def update_sprinkler_config(sprinkler_config: SprinklerConfig, username: s
             else:
                 logger.warning("No relay hardware available to apply sprinkler startup changes")
         
+        # NOTE: No need to reschedule future cycles here
+        # The file system watcher will handle config changes and the sprinkler controller
+        # will automatically schedule the next cycle when the current cycle stops
+        if 'sprinkler_wait_duration' in applied_changes:
+            logger.info("[API] Wait duration changed - next cycle will use new duration when current cycle stops")
+        
         logger.info(f"Successfully updated sprinkler configuration: {applied_changes}")
         return {
             "status": "success", 
