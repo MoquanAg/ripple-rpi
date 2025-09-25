@@ -40,9 +40,10 @@ REALTIME_MODE_SENSOR_DATA_FETCH_INTERVAL = 10
 REALTIME_MODE_SENSOR_DATA_UPLOAD_INTERVAL = 10
 
 # System reboot configuration
-DAILY_REBOOT_ENABLED = True
-DAILY_REBOOT_HOUR = 4
-DAILY_REBOOT_MINUTE = 0
+WEEKLY_REBOOT_ENABLED = True
+WEEKLY_REBOOT_DAY = 6  # Sunday (0=Monday, 6=Sunday)
+WEEKLY_REBOOT_HOUR = 4
+WEEKLY_REBOOT_MINUTE = 0
 
 #############################################
 #############################################
@@ -370,18 +371,19 @@ def start_scheduler():
         _scheduler_running = True
         logger.info(f"Scheduler started with unified database: {SCHEDULER_DB_PATH}")
         
-        # Add daily reboot job if enabled (with replace_existing to avoid conflicts)
-        if DAILY_REBOOT_ENABLED:
+        # Add weekly reboot job if enabled (with replace_existing to avoid conflicts)
+        if WEEKLY_REBOOT_ENABLED:
             # Use string reference instead of direct function reference to avoid import issues
             scheduler.add_job(
                 'src.system_reboot:safe_system_reboot',
                 'cron',
-                hour=DAILY_REBOOT_HOUR,
-                minute=DAILY_REBOOT_MINUTE,
-                id='daily_system_reboot',
+                day_of_week=WEEKLY_REBOOT_DAY,
+                hour=WEEKLY_REBOOT_HOUR,
+                minute=WEEKLY_REBOOT_MINUTE,
+                id='weekly_system_reboot',
                 replace_existing=True
             )
-            logger.info(f"Scheduled daily system reboot for {DAILY_REBOOT_HOUR:02d}:{DAILY_REBOOT_MINUTE:02d}")
+            logger.info(f"Scheduled weekly system reboot for Sunday at {WEEKLY_REBOOT_HOUR:02d}:{WEEKLY_REBOOT_MINUTE:02d}")
 
 
 def shutdown_scheduler():
