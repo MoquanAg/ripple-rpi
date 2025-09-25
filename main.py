@@ -957,17 +957,16 @@ class RippleController:
                         sprinkler_on_seconds = self._time_to_seconds(sprinkler_on_duration)
                         logger.info(f"[Startup] Parsed sprinkler duration: {sprinkler_on_duration} = {sprinkler_on_seconds} seconds")
                         
-                        # Only activate the sprinkler if duration is positive AND startup is enabled
-                        if sprinkler_on_seconds > 0 and startup_enabled:
-                            logger.info(f"[CONFIG CHANGE] Sprinkler duration > 0 ({sprinkler_on_duration}) and startup enabled, starting sprinkler cycle")
+                        # When config changes, trigger sprinkler immediately if duration is positive
+                        # sprinkler_on_at_startup only controls system startup, not config change behavior
+                        if sprinkler_on_seconds > 0:
+                            logger.info(f"[CONFIG CHANGE] Sprinkler duration > 0 ({sprinkler_on_duration}), starting sprinkler cycle immediately")
                             # Use simplified sprinkler controller
                             try:
                                 self.sprinkler_controller.start_sprinkler_cycle()
                                 logger.info("[CONFIG CHANGE] Sprinkler cycle started via simplified controller")
                             except Exception as e:
                                 logger.error(f"[CONFIG CHANGE] Error starting sprinkler cycle: {e}")
-                        elif sprinkler_on_seconds > 0 and not startup_enabled:
-                            logger.info(f"[CONFIG CHANGE] Sprinkler duration > 0 ({sprinkler_on_duration}) but startup disabled, keeping sprinklers off")
                         elif sprinkler_on_seconds <= 0:
                             logger.info("[CONFIG CHANGE] Sprinkler duration set to zero, keeping sprinklers off")
                         else:
@@ -975,6 +974,11 @@ class RippleController:
                     except Exception as e:
                         logger.error(f"Error in sprinkler control: {e}")
                         logger.exception("Full exception details:")
+                    
+                    # NOTE: No need to reschedule future cycles here
+                    # The simplified sprinkler controller will automatically schedule the next cycle
+                    # when the current cycle stops via stop_sprinklers_with_controller_callback
+                    logger.info("[CONFIG CHANGE] Next sprinkler cycle will be scheduled automatically when current cycle stops")
                         
                     logger.info("Sprinkler configuration updated")
                 
@@ -1185,7 +1189,7 @@ class RippleController:
         try:
             logger.info("==== INITIALIZING SIMPLIFIED SPRINKLER SYSTEM ====")
             
-            # Check sprinkler_on_at_startup configuration
+            # Check sprinkler configuration exists
             if not self.config.has_section('Sprinkler'):
                 logger.info("[Startup] No Sprinkler section found - sprinkler system not started")
                 return
@@ -1205,8 +1209,19 @@ class RippleController:
             
             logger.info(f"[Startup] sprinkler_on_at_startup operational value: {startup_enabled}")
             
+            # Check if sprinkler duration is valid
+            sprinkler_on_duration = self._parse_config_value('Sprinkler', 'sprinkler_on_duration', preferred_index=1)
+            sprinkler_wait_duration = self._parse_config_value('Sprinkler', 'sprinkler_wait_duration', preferred_index=1)
+            
+            on_seconds = self._time_to_seconds(sprinkler_on_duration)
+            wait_seconds = self._time_to_seconds(sprinkler_wait_duration)
+            
+            if on_seconds == 0:
+                logger.warning("[Startup] Sprinkler duration is 0, not initializing sprinkler system")
+                return
+                
             if startup_enabled:
-                logger.info("[Startup] Starting sprinkler system (enabled at startup)")
+                logger.info("[Startup] Starting sprinkler system immediately (enabled at startup)")
                 success = self.sprinkler_controller.start_sprinkler_cycle()
                 
                 if success:
@@ -1214,7 +1229,15 @@ class RippleController:
                 else:
                     logger.info("[Startup] Sprinkler system not started (duration may be 0 or already running)")
             else:
-                logger.info("[Startup] Sprinkler system not started (disabled at startup)")
+                logger.info("[Startup] Sprinkler system not started immediately (disabled at startup)")
+                
+                # Even if not starting immediately, we should schedule the first cycle
+                logger.info(f"[Startup] Scheduling first sprinkler cycle to run in {sprinkler_wait_duration}")
+                
+                # Import and use the static scheduling function
+                from src.sprinkler_static import schedule_next_sprinkler_cycle_static
+                schedule_next_sprinkler_cycle_static()
+                logger.info("[Startup] First sprinkler cycle scheduled successfully")
                 
         except Exception as e:
             logger.error(f"Error initializing simplified sprinkler system: {e}")
