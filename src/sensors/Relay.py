@@ -1694,20 +1694,38 @@ if __name__ == "__main__":
     if relay is not None:  # Only proceed if device is enabled
         # Add initialization delay to ensure stable connection
         print("Initializing relay connection...")
-        time.sleep(0.5)  # Wait 2 seconds for initialization
+        time.sleep(0.5)  # Wait for initialization
     
+        # Turn off all relays using index-based method
+        print("Turning off all relays by index...")
+        # relay.set_relay_at_index("relayone", 5, False)
+        # time.sleep(1)
+        # relay.set_relay_at_index("relayone", 6, True)
+        # time.sleep(1)
+        # relay.set_relay_at_index("relayone", 6, False)
+        # time.sleep(1)
+        # relay.set_relay_at_index("relayone", 7, True)
+        # time.sleep(1)
+        # relay.set_relay_at_index("relayone", 7, False)
+        # time.sleep(2)
+        
+        
+    
+
         # relay.get_status()
         # time.sleep(0.5)
-        # relay.set_nutrient_pumps(True)
-        # time.sleep(20)
-        # relay.set_nutrient_pumps(False)
-        # time.sleep(0.5)
+        relay.set_nutrient_pumps(True)
+        time.sleep(0.5)
+        relay.get_status()
+        time.sleep(10)
+        relay.set_nutrient_pumps(False)
+        time.sleep(0.5)
         
         # relay.set_ph_minus_pump(True)
         # relay.set_valve_tank_to_outside(False)
         # relay.set_valve_outside_to_tank(True)
         # relay.set_mixing_pump(True)
-        relay.set_pump_from_tank_to_gutters(True)
+        # relay.set_pump_from_tank_to_gutters(True)
         # relay.set_sprinklers(False)
         # # relay.set_nanobubbler(True)
         # time.sleep(60)
@@ -1719,4 +1737,4 @@ if __name__ == "__main__":
         # time.sleep(0.5)
         
         relay.get_status()
-        time.sleep(0.5)
+        time.sleep(1.0)
