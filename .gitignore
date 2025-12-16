@@ -187,3 +187,4 @@ data/ripple_scheduler.db
 data/scheduler_jobs.sqlite
 *.db
 *.sqlite
+*.bak
