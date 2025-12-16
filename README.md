@@ -307,17 +307,19 @@ Example JSON messages:
 
 ### Sensor Communication (ttyAMA3)
 - Modbus RTU protocol
-- Uses `lumina_modbus_client.py` for communication
+- Uses `pymodbus_client.py` for direct serial communication with pymodbus library
 - Event-based updates via `lumina_modbus_event_emitter.py`
+- Port-specific locking for sequential access to devices on same serial bus
+- Parallel communication across different serial ports
 
 Example sensor polling:
 ```python
-from lumina_modbus_client import LuminaModbusClient
+from pymodbus_client import PyModbusClient
 from lumina_modbus_event_emitter import ModbusEventEmitter
 
-# Initialize client
-client = LuminaModbusClient()
-client.connect(port='/dev/ttyAMA3', baudrate=9600)
+# Initialize client (singleton pattern)
+client = PyModbusClient()
+client.connect()  # No-op for direct serial communication
 
 # Subscribe to sensor updates
 def handle_sensor_update(response):
@@ -325,14 +327,14 @@ def handle_sensor_update(response):
         # Process sensor data
         pass
 
-client.event_emitter.subscribe('PH_SENSOR', handle_sensor_update)
-client.event_emitter.subscribe('EC_SENSOR', handle_sensor_update)
-client.event_emitter.subscribe('DO_SENSOR', handle_sensor_update)
+client.event_emitter.subscribe('pH', handle_sensor_update)
+client.event_emitter.subscribe('EC', handle_sensor_update)
+client.event_emitter.subscribe('DO', handle_sensor_update)
 ```
 
 ### Relay Control (ttyAMA4)
 - Modbus RTU protocol
-- Uses `lumina_modbus_client.py` for communication
+- Uses `pymodbus_client.py` for direct serial communication
 - Direct control of pumps and valves
 
 Example relay control:
@@ -435,7 +437,7 @@ class CommunicationError(SystemError):
 - `client_example.py` - Example API client
 - `API_README.md` - Detailed API documentation
 - `src/lumina_logger.py` - Logging system
-- `src/lumina_modbus_client.py` - Modbus communication client
+- `src/pymodbus_client.py` - Modbus RTU communication client using pymodbus
 - `src/lumina_modbus_event_emitter.py` - Event handling system
 - `src/sensors/` - Sensor interface modules
 - `src/relays/` - Relay control modules
@@ -446,6 +448,7 @@ class CommunicationError(SystemError):
 
 - Python 3.8+
 - PySerial
+- PyModbus 3.7.4
 - FastAPI
 - Uvicorn
 - Pydantic
@@ -487,7 +490,7 @@ Each log entry includes:
 - `client_example.py` - Example API client
 - `API_README.md` - Detailed API documentation
 - `src/lumina_logger.py` - Logging system
-- `src/lumina_modbus_client.py` - Modbus communication client
+- `src/pymodbus_client.py` - Modbus RTU communication client using pymodbus
 - `src/lumina_modbus_event_emitter.py` - Event handling system
 - `src/sensors/` - Sensor interface modules
 - `src/relays/` - Relay control modules
@@ -498,6 +501,7 @@ Each log entry includes:
 
 - Python 3.8+
 - PySerial
+- PyModbus 3.7.4
 - FastAPI
 - Uvicorn
 - Pydantic
