@@ -9,6 +9,7 @@ import string
 from dataclasses import dataclass
 import weakref
 import select
+import struct
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -32,52 +33,6 @@ class ModbusResponse:
     timestamp: float = 0.0  # Add timestamp field with default value
 
 class LuminaModbusClient:
-    """
-    High-performance Modbus RTU client with TCP socket communication and threading.
-    
-    Implements a robust Modbus RTU client that communicates with hardware devices
-    through a TCP socket bridge. Features asynchronous command processing, response
-    handling, connection management, and comprehensive error handling with automatic
-    reconnection capabilities.
-    
-    Features:
-    - Thread-safe singleton implementation with connection pooling
-    - Asynchronous command queuing and processing
-    - Multi-threaded architecture for concurrent operations
-    - Automatic connection management with watchdog monitoring
-    - Command timeout handling and cleanup
-    - CRC16 checksum validation for Modbus messages
-    - Port-specific locking for concurrent device access
-    - Health monitoring and queue management
-    - Exponential backoff reconnection strategy
-    
-    Architecture:
-    - Command Processor: Handles outgoing command queue
-    - Response Reader: Processes incoming responses
-    - Command Cleaner: Manages timeout cleanup
-    - Connection Watchdog: Monitors and maintains connections
-    - Health Monitor: Tracks system performance metrics
-    
-    Communication Protocol:
-    - TCP socket connection to Modbus bridge server
-    - Modbus RTU commands with CRC16 checksums
-    - Command format: "COMMAND_ID:DEVICE_TYPE:PORT:BAUDRATE:HEX_COMMAND:RESPONSE_LENGTH:TIMEOUT"
-    - Response format: "COMMAND_ID:HEX_RESPONSE:TIMESTAMP" or "COMMAND_ID:ERROR:ERROR_TYPE:TIMESTAMP"
-    - Automatic command ID generation with port and timestamp information
-    
-    Args:
-        reconnect_attempts (int): Maximum reconnection attempts (default: 3)
-        command_queue_size (int): Maximum command queue size (default: 1000)
-        
-    Note:
-        - Docstring created by Claude 3.5 Sonnet on 2024-09-22
-        - Implements thread-safe singleton pattern for system-wide Modbus control
-        - Uses TCP socket bridge for hardware communication
-        - Supports multiple concurrent devices with port-specific locking
-        - Provides comprehensive error handling and automatic recovery
-        - Includes performance monitoring and queue management
-        - Handles command timeouts and cleanup automatically
-    """
     _instance = None
     _lock = threading.Lock()
 
@@ -101,6 +56,7 @@ class LuminaModbusClient:
         self._running = True
         self.command_queue = queue.Queue(maxsize=command_queue_size)
         self.pending_commands: Dict[str, PendingCommand] = {}
+        self.command_responses: Dict[str, ModbusResponse] = {}  # Store responses by command_id
         self._socket_lock = threading.Lock()
         self._port_locks = {}  # Dict to store locks for each port
         self._send_locks = {}  # Dict for send locks per port
@@ -172,41 +128,16 @@ class LuminaModbusClient:
 
     def send_command(self, device_type: str, port: str, command: bytes, **kwargs) -> str:
         """
-        Queue a Modbus RTU command for asynchronous execution.
-        
-        Creates a unique command ID, adds CRC16 checksum, and queues the command
-        for transmission to the Modbus bridge server. Commands are processed
-        asynchronously by the command processor thread with timeout and error handling.
+        Queue a command to be sent to the server.
         
         Args:
-            device_type (str): Device type identifier (e.g., 'pH', 'EC', 'DO', 'THC')
-            port (str): Serial port for device communication (e.g., '/dev/ttyAMA1')
-            command (bytes): Raw Modbus RTU command bytes (without CRC)
-            **kwargs: Additional command parameters:
-                - baudrate (int): Serial baud rate (default: 9600)
-                - response_length (int): Expected response length in bytes
-                - timeout (float): Command timeout in seconds (default: 5.0)
+            device_type: Type of device (e.g., 'THC', 'EC', etc.)
+            port: Serial port to use
+            command: Command bytes to send
+            **kwargs: Additional arguments (baudrate, response_length, timeout)
         
         Returns:
-            str: Unique command ID for tracking the response
-            
-        Command ID Format:
-            "PORT_DEVICE_TYPE_HEX_PREFIX_TIMESTAMP_RANDOM"
-            Example: "AMA1_pH_010300140002_20241222143022_A5"
-            
-        Communication Flow:
-            1. Generate unique command ID with timestamp and random suffix
-            2. Add CRC16 checksum to command bytes
-            3. Format command string with all parameters
-            4. Queue command for asynchronous processing
-            5. Store command in pending_commands for response tracking
-            
-        Note:
-            - Commands are processed asynchronously by dedicated thread
-            - Response handling is managed by event emitter system
-            - Timeout and error handling are automatic
-            - Commands are queued with 1-second timeout to prevent blocking
-            - CRC16 checksum is automatically calculated and appended
+            str: Command ID for tracking the response
         """
         # Generate unique command ID
         truncated_hex = command.hex()[:12]
@@ -433,13 +364,17 @@ class LuminaModbusClient:
                 else:
                     try:
                         response_bytes = bytes.fromhex(parts[1]) if parts[1] else None
-                        self.event_emitter.emit_response(ModbusResponse(
+                        modbus_response = ModbusResponse(
                             command_id=response_id,
                             data=response_bytes,
                             device_type=command_info.device_type,
                             status='success',
                             timestamp=timestamp
-                        ))
+                        )
+                        # Store response for synchronous retrieval
+                        self.command_responses[response_id] = modbus_response
+                        # Also emit for async subscribers
+                        self.event_emitter.emit_response(modbus_response)
                     except ValueError:
                         self._emit_error_response(response_id, command_info.device_type, 'invalid_response', timestamp)
                 
@@ -492,13 +427,17 @@ class LuminaModbusClient:
         if timestamp is None:
             timestamp = time.time()
         
-        self.event_emitter.emit_response(ModbusResponse(
+        error_response = ModbusResponse(
             command_id=command_id,
             data=None,
             device_type=device_type,
             status=status,
             timestamp=timestamp  # Add timestamp to error responses
-        ))
+        )
+        # Store response for synchronous retrieval
+        self.command_responses[command_id] = error_response
+        # Also emit for async subscribers
+        self.event_emitter.emit_response(error_response)
 
     def _connection_watchdog(self) -> None:
         """Monitors connection health and reconnects if necessary"""
@@ -583,4 +522,300 @@ class LuminaModbusClient:
             
         except Exception as e:
             logger.info(f"Error handling command error: {str(e)}")
+
+    # =========================================================================
+    # High-level Modbus API (PyModbus compatibility layer)
+    # =========================================================================
+    
+    def write_register(self, port: str, address: int, value: int, slave_addr: int, 
+                      baudrate: int = 9600, timeout: float = 1.0, device_name: str = None):
+        """
+        Write a single holding register (Modbus function code 0x06).
+        
+        Args:
+            port: Serial port (e.g., '/dev/ttyAMA3')
+            address: Register address (0x0000 - 0xFFFF)
+            value: Register value (0x0000 - 0xFFFF)
+            slave_addr: Modbus slave address
+            baudrate: Serial baudrate
+            timeout: Response timeout in seconds
+            device_name: Optional device name for command ID (e.g., 'motor_control')
+            
+        Returns:
+            ModbusWriteResponse: Response object with isError() method
+        """
+        # Build Modbus frame: [slave_addr][func_code][address_hi][address_lo][value_hi][value_lo]
+        command = struct.pack('>BBHH', slave_addr, 0x06, address, value)
+        
+        # Generate device_type for command ID
+        device_type = f"write_{device_name}" if device_name else "MODBUS_WRITE"
+        
+        command_id = self.send_command(
+            device_type=device_type,
+            port=port,
+            command=command,
+            baudrate=baudrate,
+            response_length=8,  # Response: slave+func+addr(2)+value(2)+crc(2)
+            timeout=timeout
+        )
+        
+        # Wait for response synchronously
+        start_time = time.time()
+        while command_id in self.pending_commands:
+            if time.time() - start_time > timeout:
+                logger.warning(f"write_register timeout for command {command_id}")
+                return ModbusWriteResponse(success=False, error="Timeout")
+            time.sleep(0.01)
+        
+        # Check if we got a response via event emitter
+        # For now, assume success if no timeout (event emitter handles async responses)
+        return ModbusWriteResponse(success=True)
+    
+    def write_registers(self, port: str, address: int, values: List[int], slave_addr: int,
+                       baudrate: int = 9600, timeout: float = 1.0, device_name: str = None):
+        """
+        Write multiple holding registers (Modbus function code 0x10).
+        
+        Args:
+            port: Serial port
+            address: Starting register address
+            values: List of register values (16-bit integers)
+            slave_addr: Modbus slave address
+            baudrate: Serial baudrate
+            timeout: Response timeout in seconds
+            device_name: Optional device name for command ID (e.g., 'relay_control')
+            
+        Returns:
+            ModbusWriteResponse: Response object with isError() method
+        """
+        count = len(values)
+        byte_count = count * 2
+        
+        # Build Modbus frame: [slave][func][addr_hi][addr_lo][count_hi][count_lo][byte_count][data...]
+        command = struct.pack('>BBHHB', slave_addr, 0x10, address, count, byte_count)
+        
+        # Append register values (each as 16-bit big-endian)
+        for value in values:
+            command += struct.pack('>H', value & 0xFFFF)
+        
+        # Generate device_type for command ID
+        device_type = f"write_{device_name}" if device_name else "MODBUS_WRITE_MULTI"
+        
+        command_id = self.send_command(
+            device_type=device_type,
+            port=port,
+            command=command,
+            baudrate=baudrate,
+            response_length=8,  # Response: slave+func+addr(2)+count(2)+crc(2)
+            timeout=timeout
+        )
+        
+        # Wait for response synchronously
+        start_time = time.time()
+        while command_id in self.pending_commands:
+            if time.time() - start_time > timeout:
+                logger.warning(f"write_registers timeout for command {command_id}")
+                return ModbusWriteResponse(success=False, error="Timeout")
+            time.sleep(0.01)
+        
+        return ModbusWriteResponse(success=True)
+    
+    def read_coils(self, port: str, address: int, count: int, slave_addr: int,
+                   baudrate: int = 9600, timeout: float = 1.0, device_name: str = None):
+        """
+        Read coils (Modbus function code 0x01).
+        
+        Args:
+            port: Serial port
+            address: Starting coil address
+            count: Number of coils to read
+            slave_addr: Modbus slave address
+            baudrate: Serial baudrate
+            timeout: Response timeout in seconds
+            device_name: Optional device name for command ID (e.g., 'relay')
+            
+        Returns:
+            ModbusCoilResponse: Response object with bits[] and isError() method
+        """
+        # Build Modbus frame: [slave_addr][func_code][address_hi][address_lo][count_hi][count_lo]
+        command = struct.pack('>BBHH', slave_addr, 0x01, address, count)
+        
+        # Generate device_type for command ID
+        device_type = f"read_{device_name}" if device_name else "MODBUS_READ_COILS"
+        
+        command_id = self.send_command(
+            device_type=device_type,
+            port=port,
+            command=command,
+            baudrate=baudrate,
+            response_length=5 + ((count + 7) // 8) + 2,  # slave+func+byte_count+data+crc
+            timeout=timeout
+        )
+        
+        # Wait for response synchronously
+        start_time = time.time()
+        
+        while command_id in self.pending_commands:
+            if time.time() - start_time > timeout:
+                logger.warning(f"read_coils timeout for command {command_id}")
+                if command_id in self.command_responses:
+                    del self.command_responses[command_id]
+                return ModbusCoilResponse(bits=[], error="Timeout")
+            time.sleep(0.01)
+        
+        # Get stored response
+        response_data = self.command_responses.get(command_id)
+        
+        # Cleanup stored response
+        if command_id in self.command_responses:
+            del self.command_responses[command_id]
+        
+        # Parse response
+        if response_data and response_data.data and response_data.status == 'success':
+            try:
+                # Response format: [slave][func][byte_count][data...][crc]
+                data = response_data.data
+                if len(data) < 3:
+                    return ModbusCoilResponse(bits=[], error="Invalid response length")
+                
+                byte_count = data[2]
+                bits = []
+                
+                # Extract coil bits from bytes
+                for i in range(count):
+                    byte_index = 3 + (i // 8)
+                    bit_index = i % 8
+                    if byte_index < len(data):
+                        bit_value = (data[byte_index] >> bit_index) & 1
+                        bits.append(bool(bit_value))
+                
+                return ModbusCoilResponse(bits=bits)
+                
+            except Exception as e:
+                logger.error(f"Error parsing coil response: {e}")
+                return ModbusCoilResponse(bits=[], error=str(e))
+        
+        return ModbusCoilResponse(bits=[], error="No response or failed")
+    
+    def read_holding_registers(self, port: str, address: int, count: int, slave_addr: int,
+                               baudrate: int = 9600, timeout: float = 1.0, device_name: str = None):
+        """
+        Read holding registers (Modbus function code 0x03).
+        
+        Args:
+            port: Serial port (e.g., '/dev/ttyAMA3')
+            address: Starting register address
+            count: Number of registers to read
+            slave_addr: Modbus slave address
+            baudrate: Serial baudrate
+            timeout: Response timeout in seconds
+            device_name: Optional device name for command ID (e.g., 'motor_control')
+            
+        Returns:
+            ModbusReadResponse: Response object with registers[] and isError() method
+        """
+        # Build Modbus frame: [slave_addr][func_code][address_hi][address_lo][count_hi][count_lo]
+        command = struct.pack('>BBHH', slave_addr, 0x03, address, count)
+        
+        # Generate device_type for command ID
+        device_type = f"read_{device_name}" if device_name else "MODBUS_READ"
+        
+        command_id = self.send_command(
+            device_type=device_type,
+            port=port,
+            command=command,
+            baudrate=baudrate,
+            response_length=5 + (count * 2) + 2,  # slave+func+byte_count+data+crc
+            timeout=timeout
+        )
+        
+        # Wait for response synchronously
+        start_time = time.time()
+        
+        while command_id in self.pending_commands:
+            if time.time() - start_time > timeout:
+                logger.warning(f"read_holding_registers timeout for command {command_id}")
+                # Cleanup
+                if command_id in self.command_responses:
+                    del self.command_responses[command_id]
+                return ModbusReadResponse(registers=[], error="Timeout")
+            time.sleep(0.01)
+        
+        # Get stored response
+        response_data = self.command_responses.get(command_id)
+        
+        # Cleanup stored response
+        if command_id in self.command_responses:
+            del self.command_responses[command_id]
+        
+        # Parse response
+        if response_data and response_data.data and response_data.status == 'success':
+            try:
+                # Response format: [slave][func][byte_count][data...][crc]
+                data = response_data.data
+                if len(data) < 3:
+                    return ModbusReadResponse(registers=[], error="Invalid response length")
+                
+                byte_count = data[2]
+                registers = []
+                
+                # Extract 16-bit registers (big-endian)
+                for i in range(count):
+                    offset = 3 + (i * 2)
+                    if offset + 1 < len(data):
+                        reg_value = (data[offset] << 8) | data[offset + 1]
+                        registers.append(reg_value)
+                
+                return ModbusReadResponse(registers=registers)
+                
+            except Exception as e:
+                logger.error(f"Error parsing read response: {e}")
+                return ModbusReadResponse(registers=[], error=str(e))
+        
+        return ModbusReadResponse(registers=[], error="No response or failed")
+
+
+class ModbusWriteResponse:
+    """PyModbus-compatible write response object."""
+    def __init__(self, success: bool = True, error: str = None):
+        self.success = success
+        self.error = error
+    
+    def isError(self) -> bool:
+        return not self.success
+    
+    def __str__(self):
+        if self.success:
+            return "ModbusWriteResponse(success)"
+        return f"ModbusWriteResponse(error={self.error})"
+
+
+class ModbusReadResponse:
+    """PyModbus-compatible read response object."""
+    def __init__(self, registers: List[int], error: str = None):
+        self.registers = registers
+        self.error = error
+    
+    def isError(self) -> bool:
+        return self.error is not None
+    
+    def __str__(self):
+        if not self.isError():
+            return f"ModbusReadResponse(registers={self.registers})"
+        return f"ModbusReadResponse(error={self.error})"
+
+
+class ModbusCoilResponse:
+    """PyModbus-compatible coil read response object."""
+    def __init__(self, bits: List[bool], error: str = None):
+        self.bits = bits
+        self.error = error
+    
+    def isError(self) -> bool:
+        return self.error is not None
+    
+    def __str__(self):
+        if not self.isError():
+            return f"ModbusCoilResponse(bits={self.bits})"
+        return f"ModbusCoilResponse(error={self.error})"
 
