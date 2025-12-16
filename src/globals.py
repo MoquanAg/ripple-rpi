@@ -25,7 +25,7 @@ from lumina_logger import GlobalLogger
 
 logger = GlobalLogger("RippleGlobals", log_prefix="ripple_").logger
 
-# Import LuminaModbusClient after logger is created to avoid circular imports
+# Import LuminaModbusClient for TCP communication with lumina-modbus-server
 from lumina_modbus_client import LuminaModbusClient
 
 
@@ -518,5 +518,6 @@ def should_task_be_executing(task_id):
 
 modbus_command_queue = queue.Queue()
 
+# TCP client connecting to lumina-modbus-server at 127.0.0.1:8888
 modbus_client = LuminaModbusClient()
-modbus_client.connect()  # or modbus_client.connect(host='your_host', port=your_port)
+modbus_client.connect(host='127.0.0.1', port=8888)  # Connect to lumina-modbus-server TCP service
