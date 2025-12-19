@@ -309,6 +309,10 @@ class EC:
             - Timeout: 1.0 seconds
             - Command ID is stored for response matching
         """
+        if any(info.get('type') == 'get_status' for info in self.pending_commands.values()):
+            logger.debug("Skip get_status: previous request still pending")
+            return
+
         command = bytearray([
             self.address,     # Slave address
             0x03,            # Function code (Read Holding Registers)
@@ -321,7 +325,7 @@ class EC:
             command=command,
             baudrate=self.baud_rate,
             response_length=37,  # 1(addr) + 1(func) + 1(byte count) + 32(data) + 2(CRC)
-            timeout=1.0
+            timeout=10
         )
         self.pending_commands[command_id] = {'type': 'get_status'}
         logger.debug(f"Sent get status command for EC_{self.sensor_id} with UUID: {command_id}")
@@ -1100,14 +1104,9 @@ if __name__ == "__main__":
     
     # Now run the normal loop
     print("\nStarting normal polling loop:")
-    while True:
-        print("Getting basic status data from all sensors...")
-        EC.get_statuses_async()
-        # Wait a bit before requesting additional data
-        time.sleep(1)
-        # Get additional data for all sensors
-        # print("Getting additional data from all sensors...")
-        # for _, sensor_instance in EC._instances.items():
-        #     sensor_instance.get_additional_data_async()
-        #     time.sleep(0.1)  # Small delay between sensors
-        time.sleep(10)  # Update every 30 seconds 
+for i in range(50):
+    print(f"[{i+1}/50] Getting basic status data from all sensors...")
+    EC.get_statuses_async()
+    time.sleep(1)
+
+print("Done. Polled 50 times.")
