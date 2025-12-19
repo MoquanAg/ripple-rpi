@@ -1712,13 +1712,13 @@ if __name__ == "__main__":
         
     
 
-        # relay.get_status()
-        # time.sleep(0.5)
-        relay.set_nutrient_pumps(True)
-        time.sleep(0.5)
         relay.get_status()
-        time.sleep(10)
-        relay.set_nutrient_pumps(False)
+        # time.sleep(0.5)
+        # relay.set_nutrient_pumps(True)
+        # time.sleep(0.5)
+        # relay.get_status()
+        # time.sleep(10)
+        # relay.set_nutrient_pumps(False)
         time.sleep(0.5)
         
         # relay.set_ph_minus_pump(True)
