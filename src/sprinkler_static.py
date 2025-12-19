@@ -50,6 +50,25 @@ def get_sprinkler_config():
         logger.error(f"Error reading sprinkler config: {e}")
         return "00:00:00", "00:00:00"
 
+def is_sprinkler_scheduling_enabled():
+    """Check if automatic sprinkler scheduling is enabled in config"""
+    try:
+        config_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'config', 'device.conf')
+        config = configparser.ConfigParser()
+        config.read(config_path)
+        
+        if not config.has_option('Sprinkler', 'sprinkler_scheduling_enabled'):
+            # Default to enabled if option doesn't exist (backward compatibility)
+            return True
+            
+        enabled_str = config.get('Sprinkler', 'sprinkler_scheduling_enabled')
+        # Get operational value (second value after comma)
+        operational_value = enabled_str.split(',')[1].strip().lower()
+        return operational_value == 'true'
+    except Exception as e:
+        logger.error(f"Error checking sprinkler_scheduling_enabled: {e}")
+        return True  # Default to enabled on error
+
 def parse_duration(duration_str):
     """Parse HH:MM:SS to seconds"""
     try:
@@ -62,6 +81,11 @@ def start_sprinklers_static():
     """Static function to start sprinklers - safe for APScheduler"""
     try:
         logger.info("==== STATIC SPRINKLER START TRIGGERED ====")
+        
+        # Check if scheduling is enabled
+        if not is_sprinkler_scheduling_enabled():
+            logger.info("[STATIC] Sprinkler scheduling is DISABLED - skipping start")
+            return
         
         # Get configuration
         on_duration_str, wait_duration_str = get_sprinkler_config()
@@ -165,6 +189,11 @@ def schedule_sprinkler_stop_static(on_seconds):
 def schedule_next_sprinkler_cycle_static():
     """Schedule the next sprinkler cycle using APScheduler"""
     try:
+        # Check if scheduling is enabled
+        if not is_sprinkler_scheduling_enabled():
+            logger.info("[STATIC] Sprinkler scheduling is DISABLED - not scheduling next cycle")
+            return
+        
         # Get configuration
         on_duration_str, wait_duration_str = get_sprinkler_config()
         wait_seconds = parse_duration(wait_duration_str)

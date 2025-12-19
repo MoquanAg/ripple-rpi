@@ -924,6 +924,29 @@ class RippleController:
                             logger.info("Sprinklers turned off as part of configuration change procedure")
                     except Exception as e:
                         logger.error(f"Error turning off sprinklers: {e}")
+                    
+                    # Check master toggle: sprinkler_scheduling_enabled
+                    scheduling_enabled = True  # Default to enabled for backward compatibility
+                    if self.config.has_option('Sprinkler', 'sprinkler_scheduling_enabled'):
+                        scheduling_value = self._parse_config_value('Sprinkler', 'sprinkler_scheduling_enabled', 1)
+                        if isinstance(scheduling_value, str):
+                            scheduling_enabled = scheduling_value.lower() == 'true'
+                        else:
+                            scheduling_enabled = bool(scheduling_value)
+                    logger.info(f"[CONFIG CHANGE] sprinkler_scheduling_enabled: {scheduling_enabled}")
+                    
+                    if not scheduling_enabled:
+                        logger.info("[CONFIG CHANGE] Sprinkler scheduling is DISABLED - stopping all cycles and clearing schedule")
+                        try:
+                            self.sprinkler_controller.stop_current_cycle()
+                            # Clear any pending scheduled jobs
+                            from src.sprinkler_static import stop_sprinkler_schedule
+                            stop_sprinkler_schedule()
+                        except Exception as e:
+                            logger.warning(f"[CONFIG CHANGE] Error stopping sprinkler schedule: {e}")
+                        # Skip the rest of sprinkler config handling
+                        logger.info("Sprinkler configuration updated (scheduling disabled)")
+                        continue
                         
                     # Now update the configuration values using operational values (second value)
                     sprinkler_on_duration = self._parse_config_value('Sprinkler', 'sprinkler_on_duration', 1)
@@ -1185,13 +1208,28 @@ class RippleController:
             logger.exception("Full exception details:")
 
     def _activate_sprinklers_on_startup(self):
-        """Initialize simplified sprinkler system on startup - respects sprinkler_on_at_startup configuration"""
+        """Initialize simplified sprinkler system on startup - respects sprinkler_scheduling_enabled and sprinkler_on_at_startup configuration"""
         try:
             logger.info("==== INITIALIZING SIMPLIFIED SPRINKLER SYSTEM ====")
             
             # Check sprinkler configuration exists
             if not self.config.has_section('Sprinkler'):
                 logger.info("[Startup] No Sprinkler section found - sprinkler system not started")
+                return
+            
+            # Check master toggle: sprinkler_scheduling_enabled
+            scheduling_enabled = True  # Default to enabled for backward compatibility
+            if self.config.has_option('Sprinkler', 'sprinkler_scheduling_enabled'):
+                scheduling_value = self._parse_config_value('Sprinkler', 'sprinkler_scheduling_enabled', preferred_index=1)
+                if isinstance(scheduling_value, str):
+                    scheduling_enabled = scheduling_value.lower() == 'true'
+                else:
+                    scheduling_enabled = bool(scheduling_value)
+            
+            logger.info(f"[Startup] sprinkler_scheduling_enabled: {scheduling_enabled}")
+            
+            if not scheduling_enabled:
+                logger.info("[Startup] Sprinkler scheduling is DISABLED - no automatic cycles will run")
                 return
                 
             if not self.config.has_option('Sprinkler', 'sprinkler_on_at_startup'):
