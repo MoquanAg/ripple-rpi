@@ -205,15 +205,15 @@ class ConfigFileHandler(FileSystemEventHandler):
         try:
             # Check if file exists and is not empty before trying to read it
             if not os.path.exists('config/action.json') or os.path.getsize('config/action.json') == 0:
-                logger.warning("Action file does not exist or is empty")
+                logger.debug("Action file does not exist or is empty")
                 return
-                
+
             # Read the action file
             try:
                 with open('config/action.json', 'r') as f:
                     file_content = f.read().strip()
                     if not file_content:
-                        logger.warning("Action file is empty")
+                        logger.debug("Action file is empty")
                         return
                     new_actions = json.loads(file_content)
             except json.JSONDecodeError as e:
@@ -222,22 +222,24 @@ class ConfigFileHandler(FileSystemEventHandler):
                 with open('config/action.json', 'w') as f:
                     json.dump({}, f)
                 return
-                
+
+            # Skip processing if actions is empty dict (file was cleared)
+            # This prevents spurious events from file clearing
+            if not new_actions:
+                logger.debug("Action file contains empty dict, nothing to process")
+                return
+
             # Check if actions are different from last state
             if new_actions != self.last_action_state:
                 logger.info(f"New actions detected: {new_actions}")
-                
+
                 # Get relay instance first
                 relay_instance = Relay()
                 if not relay_instance:
                     logger.warning("Failed to get relay instance, cannot process actions")
                     return
-                
-                # First, clear the action file to acknowledge receipt
-                # This helps prevent race conditions
-                with open('config/action.json', 'w') as f:
-                    json.dump({}, f)
-                logger.info("Action file cleared before processing to prevent race conditions")
+
+                # NOTE: File clearing moved to AFTER processing to prevent action loss on crash
                 
                 # Read dynamic mappings from config file
                 # Make sure config is up-to-date
@@ -399,11 +401,24 @@ class ConfigFileHandler(FileSystemEventHandler):
                 
                 # Update last state
                 self.last_action_state = new_actions.copy()
-                
-                # Only clear the action file if we've finished processing all actions
+
+                # Re-check file before clearing to handle concurrent requests
+                try:
+                    with open('config/action.json', 'r') as f:
+                        current_content = json.load(f)
+                    # Only clear if no new actions arrived during processing
+                    if current_content == new_actions or not current_content:
+                        with open('config/action.json', 'w') as f:
+                            json.dump({}, f)
+                        logger.info("Action file cleared after successful processing")
+                    else:
+                        logger.info("New actions detected during processing, will process next cycle")
+                except Exception as e:
+                    logger.error(f"Error checking/clearing action file: {e}")
+
                 logger.info("All actions processed")
             else:
-                logger.info("No new actions detected")
+                logger.debug("No new actions detected")
                 
         except Exception as e:
             logger.error(f"Error processing actions: {e}")
@@ -1122,10 +1137,14 @@ class RippleController:
         try:
             logger.info("Starting Ripple controller")
             # Old scheduler removed - simplified controllers auto-start
-            
+
             # Run immediate checks for all systems at startup
             self._run_startup_checks()
-            
+
+            # Write initial status file
+            self.write_status_file()
+            logger.info("Initial status file written to data/system_status.txt")
+
             self.run_main_loop()
         except Exception as e:
             logger.error(f"Error starting Ripple controller: {e}")
@@ -1387,24 +1406,164 @@ class RippleController:
             logger.info("Configuration and action file monitoring stopped")
         except Exception as e:
             logger.error(f"Error during shutdown: {e}")
-            
+
+    def write_status_file(self):
+        """Write human-readable system status to a text file for debugging.
+
+        Creates a status file in the data directory with current system state,
+        similar to lumina-edge's scheduled_tasks_main.txt approach.
+        """
+        try:
+            status_file = os.path.join(self.data_dir, 'system_status.txt')
+
+            # Get current timestamp
+            now = datetime.now()
+
+            # Collect system status
+            lines = []
+            lines.append("=" * 60)
+            lines.append("RIPPLE SYSTEM STATUS")
+            lines.append(f"Generated: {now.strftime('%Y-%m-%d %H:%M:%S')}")
+            lines.append("=" * 60)
+            lines.append("")
+
+            # Relay states
+            lines.append("RELAY STATES:")
+            lines.append("-" * 40)
+            try:
+                relay = Relay()
+                if relay and relay.relay_statuses:
+                    for name, state in sorted(relay.relay_statuses.items()):
+                        status = "ON" if state else "OFF"
+                        lines.append(f"  {name}: {status}")
+                else:
+                    lines.append("  (No relay data available)")
+            except Exception as e:
+                lines.append(f"  (Error reading relays: {e})")
+            lines.append("")
+
+            # Water level sensors
+            lines.append("WATER LEVELS:")
+            lines.append("-" * 40)
+            try:
+                water_levels = WaterLevel.get_statuses_async()
+                if water_levels:
+                    for name, data in sorted(water_levels.items()):
+                        if isinstance(data, dict):
+                            level = data.get('level', 'N/A')
+                            lines.append(f"  {name}: {level}%")
+                        else:
+                            lines.append(f"  {name}: {data}")
+                else:
+                    lines.append("  (No water level data available)")
+            except Exception as e:
+                lines.append(f"  (Error reading water levels: {e})")
+            lines.append("")
+
+            # pH sensors
+            lines.append("PH SENSORS:")
+            lines.append("-" * 40)
+            try:
+                ph_statuses = pH.get_statuses_async()
+                if ph_statuses:
+                    for name, data in sorted(ph_statuses.items()):
+                        if isinstance(data, dict):
+                            value = data.get('ph', 'N/A')
+                            lines.append(f"  {name}: {value}")
+                        else:
+                            lines.append(f"  {name}: {data}")
+                else:
+                    lines.append("  (No pH data available)")
+            except Exception as e:
+                lines.append(f"  (Error reading pH: {e})")
+            lines.append("")
+
+            # EC sensors
+            lines.append("EC SENSORS:")
+            lines.append("-" * 40)
+            try:
+                ec_statuses = EC.get_statuses_async()
+                if ec_statuses:
+                    for name, data in sorted(ec_statuses.items()):
+                        if isinstance(data, dict):
+                            value = data.get('ec', 'N/A')
+                            lines.append(f"  {name}: {value}")
+                        else:
+                            lines.append(f"  {name}: {data}")
+                else:
+                    lines.append("  (No EC data available)")
+            except Exception as e:
+                lines.append(f"  (Error reading EC: {e})")
+            lines.append("")
+
+            # Controller states
+            lines.append("CONTROLLER STATES:")
+            lines.append("-" * 40)
+            try:
+                if self.sprinkler_controller:
+                    enabled = getattr(self.sprinkler_controller, 'scheduling_enabled', 'N/A')
+                    lines.append(f"  Sprinkler scheduling: {'Enabled' if enabled else 'Disabled'}")
+                if self.nutrient_controller:
+                    lines.append(f"  Nutrient controller: Active")
+                if self.ph_controller:
+                    lines.append(f"  pH controller: Active")
+                if self.mixing_controller:
+                    lines.append(f"  Mixing controller: Active")
+                if self.water_level_controller:
+                    lines.append(f"  Water level controller: Active")
+            except Exception as e:
+                lines.append(f"  (Error reading controller states: {e})")
+            lines.append("")
+
+            # Next update
+            lines.append(f"Next status update: ~5 minutes")
+            lines.append("=" * 60)
+
+            # Write to file
+            with open(status_file, 'w') as f:
+                f.write('\n'.join(lines))
+
+            logger.debug(f"Status file updated: {status_file}")
+
+        except Exception as e:
+            logger.error(f"Error writing status file: {e}")
+
     def run_main_loop(self):
         """Main loop for the Ripple controller"""
         logger.info("Starting main control loop")
+
+        # Counters for periodic tasks
+        loop_count = 0
+        STATUS_FILE_INTERVAL = 30  # Write status file every 30 loops (5 minutes at 10s interval)
+
         try:
             while True:
+                loop_count += 1
+
                 # Get data from all sensors
                 self.update_sensor_data()
-                
+
                 # Save sensor data
                 self.save_sensor_data()
-                
+
                 # Process any pending commands or events
                 self.process_events()
-                
+
+                # Periodic action file check as failsafe (in case watchdog misses events)
+                # Runs every loop (10s) - safe because process_actions() has early-exit checks
+                try:
+                    self.event_handler.process_actions()
+                except Exception as e:
+                    logger.error(f"Error in periodic action check: {e}")
+
+                # Write human-readable status file periodically (every 5 minutes)
+                if loop_count % STATUS_FILE_INTERVAL == 0:
+                    self.write_status_file()
+                    loop_count = 0  # Reset counter to prevent overflow
+
                 # Wait for next cycle
                 time.sleep(10)  # 10 second interval between sensor readings
-                
+
         except KeyboardInterrupt:
             logger.info("Main loop interrupted by user")
         except Exception as e:

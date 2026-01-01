@@ -865,10 +865,10 @@ async def update_action(request: dict, username: str = Depends(verify_credential
         # Process special case for sprinkler with device_id support
         processed_request = request.copy()
         device_id = processed_request.pop('device_id', None)  # Extract device_id if present
-        
+
         if 'sprinkler' in processed_request:
             sprinkler_value = processed_request.pop('sprinkler')
-            
+
             if device_id:
                 # Use device-specific sprinkler control - execute directly
                 logger.info(f"Using device-specific sprinkler control for device_id: {device_id}, value: {sprinkler_value}")
@@ -888,13 +888,81 @@ async def update_action(request: dict, username: str = Depends(verify_credential
                 processed_request['sprinkler_a'] = sprinkler_value
                 processed_request['sprinkler_b'] = sprinkler_value
                 logger.info(f"Mapped 'sprinkler' to both sprinkler_a and sprinkler_b with value {sprinkler_value}")
-        
-        # Save to action.json
+
+        # Execute relay commands directly for immediate feedback
+        # This ensures the action is actually performed, not just written to file
+        execution_results = {}
+        failed_actions = []
+
+        if processed_request:
+            try:
+                from src.sensors.Relay import Relay
+                relay = Relay()
+
+                if relay:
+                    # API field name to device name mapping
+                    api_to_device = {
+                        'nutrient_pump_a': 'NutrientPumpA',
+                        'nutrient_pump_b': 'NutrientPumpB',
+                        'nutrient_pump_c': 'NutrientPumpC',
+                        'ph_up_pump': 'pHUpPump',
+                        'ph_down_pump': 'pHDownPump',
+                        'valve_outside_to_tank': 'ValveOutsideToTank',
+                        'valve_tank_to_outside': 'ValveTankToOutside',
+                        'mixing_pump': 'MixingPump',
+                        'pump_from_tank_to_gutters': 'PumpFromTankToGutters',
+                        'sprinkler_a': 'SprinklerA',
+                        'sprinkler_b': 'SprinklerB',
+                        'pump_from_collector_tray_to_tank': 'PumpFromCollectorTrayToTank',
+                        'nanobubbler': 'Nanobubbler'
+                    }
+
+                    for action, state in processed_request.items():
+                        device_name = api_to_device.get(action)
+                        if device_name:
+                            try:
+                                result = relay.set_relay(device_name, state)
+                                execution_results[action] = {"success": True, "result": result}
+                                logger.info(f"Executed {action} -> {device_name} = {state}, result: {result}")
+                            except Exception as e:
+                                execution_results[action] = {"success": False, "error": str(e)}
+                                failed_actions.append(action)
+                                logger.error(f"Failed to execute {action}: {e}")
+                        else:
+                            logger.warning(f"No device mapping for action: {action}")
+                            execution_results[action] = {"success": False, "error": "No device mapping"}
+                            failed_actions.append(action)
+                else:
+                    logger.warning("No relay hardware available")
+                    for action in processed_request:
+                        execution_results[action] = {"success": False, "error": "No relay hardware"}
+                        failed_actions.append(action)
+
+            except Exception as e:
+                logger.error(f"Error executing relay commands: {e}")
+                for action in processed_request:
+                    execution_results[action] = {"success": False, "error": str(e)}
+                    failed_actions.append(action)
+
+        # Save to action.json as backup/log (main.py will also see this)
         with open('config/action.json', 'w') as f:
             json.dump(processed_request, f, indent=2)
-            
-        logger.info(f"Action updated successfully: {processed_request}")
-        return {"status": "success", "message": "Action updated successfully"}
+
+        # Return detailed status
+        if failed_actions:
+            logger.warning(f"Some actions failed: {failed_actions}")
+            return {
+                "status": "partial",
+                "message": f"Some actions failed: {failed_actions}",
+                "results": execution_results
+            }
+
+        logger.info(f"All actions executed successfully: {processed_request}")
+        return {
+            "status": "success",
+            "message": "All actions executed successfully",
+            "results": execution_results
+        }
     except Exception as e:
         logger.error(f"Error updating action: {e}")
         return {
