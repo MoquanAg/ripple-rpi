@@ -58,9 +58,11 @@ class LuminaModbusClient:
         self.pending_commands: Dict[str, PendingCommand] = {}
         self.command_responses: Dict[str, ModbusResponse] = {}  # Store responses by command_id
         self._socket_lock = threading.Lock()
+        self._port_locks_lock = threading.Lock()  # Lock for creating port-specific locks
         self._port_locks = {}  # Dict to store locks for each port
         self._send_locks = {}  # Dict for send locks per port
         self._recv_locks = {}  # Dict for receive locks per port
+        self._request_times_lock = threading.Lock()  # Lock for request_times dict
         
         # Connection details
         self._host = None
@@ -100,7 +102,7 @@ class LuminaModbusClient:
                     try:
                         self.socket.close()
                         logger.debug("Closed existing socket")
-                    except:
+                    except Exception:
                         pass
                 
                 self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -146,8 +148,9 @@ class LuminaModbusClient:
         send_time = time.strftime('%Y%m%d%H%M%S')
         command_id = f"{port_name}_{device_type}_{truncated_hex}_{send_time}_{random_suffix}"
         
-        # Store creation time
-        self.request_times[command_id] = time.time()
+        # Store creation time (thread-safe)
+        with self._request_times_lock:
+            self.request_times[command_id] = time.time()
         
         # Add CRC to command
         command_with_crc = command + self.calculate_crc16(command)
@@ -238,12 +241,13 @@ class LuminaModbusClient:
             return False
 
     def _get_port_locks(self, port: str):
-        """Get or create locks for a specific port"""
-        if port not in self._port_locks:
-            self._port_locks[port] = threading.Lock()
-            self._send_locks[port] = threading.Lock()
-            self._recv_locks[port] = threading.Lock()
-        return (self._port_locks[port], self._send_locks[port], self._recv_locks[port])
+        """Get or create locks for a specific port (thread-safe)"""
+        with self._port_locks_lock:
+            if port not in self._port_locks:
+                self._port_locks[port] = threading.Lock()
+                self._send_locks[port] = threading.Lock()
+                self._recv_locks[port] = threading.Lock()
+            return (self._port_locks[port], self._send_locks[port], self._recv_locks[port])
 
     def _process_commands(self) -> None:
         """Process commands from the queue and send to server."""
@@ -345,12 +349,13 @@ class LuminaModbusClient:
                 return
             
             response_id = parts[0]
-            
-            # Calculate total time if we have the creation time
-            if response_id in self.request_times:
-                total_time = time.time() - self.request_times[response_id]
+
+            # Calculate total time if we have the creation time (thread-safe)
+            with self._request_times_lock:
+                request_start_time = self.request_times.pop(response_id, None)
+            if request_start_time is not None:
+                total_time = time.time() - request_start_time
                 logger.info(f"Request {response_id} took {total_time:.3f} seconds")
-                del self.request_times[response_id]  # Cleanup
             
             if response_id in self.pending_commands:
                 command_info = self.pending_commands[response_id]
@@ -459,7 +464,7 @@ class LuminaModbusClient:
         self.is_connected = False
         try:
             self.socket.close()
-        except:
+        except Exception:
             pass
 
         retry_count = 0
@@ -484,7 +489,7 @@ class LuminaModbusClient:
             if self.socket:
                 try:
                     self.socket.close()
-                except:
+                except Exception:
                     pass
         
         # Wait for threads to finish

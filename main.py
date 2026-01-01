@@ -1381,7 +1381,9 @@ class RippleController:
                 
             # Old scheduler removed - simplified controllers handle their own shutdown
             self.observer.stop()
-            self.observer.join()
+            self.observer.join(timeout=5)  # Add timeout to prevent indefinite blocking
+            if self.observer.is_alive():
+                logger.warning("File observer did not stop cleanly within timeout")
             logger.info("Configuration and action file monitoring stopped")
         except Exception as e:
             logger.error(f"Error during shutdown: {e}")
@@ -1798,7 +1800,7 @@ class RippleController:
             # Return first part as a fallback
             try:
                 return self.config.get(section, key).split(',')[0].strip()
-            except:
+            except Exception:
                 return ""
 
 if __name__ == "__main__":

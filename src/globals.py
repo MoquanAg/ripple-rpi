@@ -173,7 +173,7 @@ def count_enabled_devices(prefix, section):
                     if not is_invalid_value(value) and not is_invalid_value(parts[0]):
                         count += 1
         return count
-    except:
+    except Exception:
         return 0
 
 def get_availability_value(key, default=0):
@@ -185,7 +185,7 @@ def get_availability_value(key, default=0):
         if key == "num_gutters":
             return int(DEVICE_CONFIG_FILE.get("SYSTEM", "num_gutters", fallback=default))
         return int(DEVICE_CONFIG_FILE.get('SYSTEM', key))
-    except:
+    except Exception:
         return default
 
 def get_device_address(section, key, default_hex='0x00'):
@@ -215,7 +215,7 @@ def get_device_address(section, key, default_hex='0x00'):
             value = DEVICE_CONFIG_FILE[section][key].split(',')[4].strip()  # Get address from 5th field
             return int(value, 16)
         return int(default_hex, 16)
-    except:
+    except Exception:
         return int(default_hex, 16)
 
 def get_device_port(section, key, default_port='/dev/ttyAMA2'):
@@ -224,7 +224,7 @@ def get_device_port(section, key, default_port='/dev/ttyAMA2'):
         if section in DEVICE_CONFIG_FILE and key in DEVICE_CONFIG_FILE[section]:
             return DEVICE_CONFIG_FILE[section][key].split(',')[3].strip()  # Get port from 4th field
         return default_port
-    except:
+    except Exception:
         return default_port
 
 def get_device_position(section, key, default_position=''):
@@ -233,7 +233,7 @@ def get_device_position(section, key, default_position=''):
         if section in DEVICE_CONFIG_FILE and key in DEVICE_CONFIG_FILE[section]:
             return DEVICE_CONFIG_FILE[section][key].split(',')[1].strip()  # Get position from 2nd field
         return default_position
-    except:
+    except Exception:
         return default_position
 
 def get_device_baudrate(section, key, default_baudrate=9600):
@@ -242,7 +242,7 @@ def get_device_baudrate(section, key, default_baudrate=9600):
         if section in DEVICE_CONFIG_FILE and key in DEVICE_CONFIG_FILE[section]:
             return int(DEVICE_CONFIG_FILE[section][key].split(',')[5].strip())  # Get baudrate from 6th field
         return default_baudrate
-    except:
+    except Exception:
         return default_baudrate
 
 # Map system values to availabilities
@@ -286,7 +286,7 @@ def saved_sensor_data():
         with open(SAVED_SENSOR_DATA_PATH, "r") as file:
             sensor_data = json.load(file)
             return sensor_data
-    except:
+    except Exception:
         return None
 
 
@@ -302,7 +302,7 @@ def get_relay_assignment(relay_board, index):
             assignments = DEVICE_CONFIG_FILE[section][key].split(',')
             return [x.strip() for x in assignments]
         return []
-    except:
+    except Exception:
         return []
 
 # Get relay assignments
@@ -417,7 +417,7 @@ def remove_scheduler_job(job_id):
     try:
         scheduler.remove_job(job_id)
         logger.info(f"Removed existing job from BackgroundScheduler: {job_id}")
-    except:
+    except Exception:
         logger.info(f"No existing job found in BackgroundScheduler with id: {job_id}")
 
 

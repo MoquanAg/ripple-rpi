@@ -97,23 +97,51 @@ app = FastAPI(title="Ripple Fertigation API",
               description="REST API for monitoring and controlling the Ripple fertigation system",
               version="1.0.0")
 
-# Add CORS middleware to allow requests from other origins
+# Add CORS middleware - restrict to local network access only
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allows all origins
+    allow_origins=[
+        "http://localhost",
+        "http://localhost:8000",
+        "http://127.0.0.1",
+        "http://127.0.0.1:8000",
+        "http://0.0.0.0:8000",
+    ],
     allow_credentials=True,
-    allow_methods=["*"],  # Allows all methods
-    allow_headers=["*"],  # Allows all headers
+    allow_methods=["GET", "POST", "PUT", "DELETE"],
+    allow_headers=["*"],
 )
 
 # Basic authentication
 security = HTTPBasic()
 
-# Read credentials from device.conf
+# Read credentials from device.conf with validation
 config = configparser.ConfigParser()
-config.read('config/device.conf')
-USERNAME = config.get('SYSTEM', 'username').strip('"')
-PASSWORD = config.get('SYSTEM', 'password').strip('"')
+config_path = os.path.join(current_dir, 'config', 'device.conf')
+
+# Default credentials (should be overridden by config)
+USERNAME = "admin"
+PASSWORD = "admin"
+
+try:
+    if os.path.exists(config_path):
+        config.read(config_path)
+        if config.has_section('SYSTEM'):
+            if config.has_option('SYSTEM', 'username'):
+                USERNAME = config.get('SYSTEM', 'username').strip('"').strip()
+            if config.has_option('SYSTEM', 'password'):
+                PASSWORD = config.get('SYSTEM', 'password').strip('"').strip()
+
+            if not USERNAME or not PASSWORD:
+                logger.warning("Empty username or password in config, using defaults")
+                USERNAME = USERNAME or "admin"
+                PASSWORD = PASSWORD or "admin"
+        else:
+            logger.warning("No SYSTEM section in device.conf, using default credentials")
+    else:
+        logger.error(f"Config file not found at {config_path}, using default credentials")
+except Exception as e:
+    logger.error(f"Error reading config file: {e}, using default credentials")
 
 def verify_credentials(credentials: HTTPBasicCredentials = Depends(security)):
     correct_username = secrets.compare_digest(credentials.username, USERNAME)
@@ -197,8 +225,32 @@ def _parse_config_value(section, key, config_parser, preferred_index=1):
         # Return first part as a fallback
         try:
             return config_parser.get(section, key).split(',')[0].strip()
-        except:
+        except Exception:
             return ""
+
+
+def _safe_get_second_value(config_parser, section, key, default=""):
+    """
+    Safely get the second comma-separated value from a config entry.
+
+    Args:
+        config_parser: ConfigParser instance
+        section (str): Config section name
+        key (str): Config key name
+        default (str): Default value if second value doesn't exist
+
+    Returns:
+        str: The second value or default
+    """
+    try:
+        raw_value = config_parser.get(section, key)
+        parts = raw_value.split(',')
+        if len(parts) > 1:
+            return parts[1].strip()
+        return default
+    except Exception as e:
+        logger.warning(f"Could not get second value for {section}.{key}: {e}")
+        return default
 
 def get_valid_relay_fields():
     """
@@ -304,57 +356,57 @@ def update_device_conf(instruction_set: Dict) -> bool:
         fertigation = instruction_set['current_phase']['details']['action_fertigation']
         
         # Update pH settings - keep second value unchanged
-        current_ph_target = config.get('pH', 'ph_target').split(',')[1].strip()
+        current_ph_target = _safe_get_second_value(config, 'pH', 'ph_target', fertigation['target_ph'])
         config.set('pH', 'ph_target', f"{fertigation['target_ph']}, {current_ph_target}")
-        
-        current_ph_deadband = config.get('pH', 'ph_deadband').split(',')[1].strip()
+
+        current_ph_deadband = _safe_get_second_value(config, 'pH', 'ph_deadband', fertigation['target_ph_deadband'])
         config.set('pH', 'ph_deadband', f"{fertigation['target_ph_deadband']}, {current_ph_deadband}")
-        
-        current_ph_min = config.get('pH', 'ph_min').split(',')[1].strip()
+
+        current_ph_min = _safe_get_second_value(config, 'pH', 'ph_min', fertigation['target_ph_min'])
         config.set('pH', 'ph_min', f"{fertigation['target_ph_min']}, {current_ph_min}")
-        
-        current_ph_max = config.get('pH', 'ph_max').split(',')[1].strip()
+
+        current_ph_max = _safe_get_second_value(config, 'pH', 'ph_max', fertigation['target_ph_max'])
         config.set('pH', 'ph_max', f"{fertigation['target_ph_max']}, {current_ph_max}")
-        
+
         # Update EC settings - keep second value unchanged
-        current_ec_target = config.get('EC', 'ec_target').split(',')[1].strip()
+        current_ec_target = _safe_get_second_value(config, 'EC', 'ec_target', fertigation['target_ec'])
         config.set('EC', 'ec_target', f"{fertigation['target_ec']}, {current_ec_target}")
-        
-        current_ec_deadband = config.get('EC', 'ec_deadband').split(',')[1].strip()
+
+        current_ec_deadband = _safe_get_second_value(config, 'EC', 'ec_deadband', fertigation['target_ec_deadband'])
         config.set('EC', 'ec_deadband', f"{fertigation['target_ec_deadband']}, {current_ec_deadband}")
-        
-        current_ec_min = config.get('EC', 'ec_min').split(',')[1].strip()
+
+        current_ec_min = _safe_get_second_value(config, 'EC', 'ec_min', fertigation['target_ec_min'])
         config.set('EC', 'ec_min', f"{fertigation['target_ec_min']}, {current_ec_min}")
-        
-        current_ec_max = config.get('EC', 'ec_max').split(',')[1].strip()
+
+        current_ec_max = _safe_get_second_value(config, 'EC', 'ec_max', fertigation['target_ec_max'])
         config.set('EC', 'ec_max', f"{fertigation['target_ec_max']}, {current_ec_max}")
-        
+
         # Update NutrientPump settings - keep second value unchanged
-        current_abc_ratio = config.get('NutrientPump', 'abc_ratio').split(',')[1].strip()
+        current_abc_ratio = _safe_get_second_value(config, 'NutrientPump', 'abc_ratio', fertigation['abc_ratio'])
         config.set('NutrientPump', 'abc_ratio', f'"{fertigation["abc_ratio"]}", {current_abc_ratio}')
-        
+
         # Update Sprinkler settings - keep second value unchanged
-        current_sprinkler_on = config.get('Sprinkler', 'sprinkler_on_duration').split(',')[1].strip()
+        current_sprinkler_on = _safe_get_second_value(config, 'Sprinkler', 'sprinkler_on_duration', fertigation['sprinkler_on_duration'])
         config.set('Sprinkler', 'sprinkler_on_duration', f"{fertigation['sprinkler_on_duration']}, {current_sprinkler_on}")
-        
-        current_sprinkler_wait = config.get('Sprinkler', 'sprinkler_wait_duration').split(',')[1].strip()
+
+        current_sprinkler_wait = _safe_get_second_value(config, 'Sprinkler', 'sprinkler_wait_duration', fertigation['sprinkler_wait_duration'])
         config.set('Sprinkler', 'sprinkler_wait_duration', f"{fertigation['sprinkler_wait_duration']}, {current_sprinkler_wait}")
-        
+
         # Update WaterTemperature settings - keep second value unchanged
-        current_temp = config.get('WaterTemperature', 'target_water_temperature').split(',')[1].strip()
+        current_temp = _safe_get_second_value(config, 'WaterTemperature', 'target_water_temperature', fertigation['target_water_temperature_min'])
         config.set('WaterTemperature', 'target_water_temperature', f"{fertigation['target_water_temperature_min']}, {current_temp}")
-        
-        current_temp_min = config.get('WaterTemperature', 'target_water_temperature_min').split(',')[1].strip()
+
+        current_temp_min = _safe_get_second_value(config, 'WaterTemperature', 'target_water_temperature_min', fertigation['target_water_temperature_min'])
         config.set('WaterTemperature', 'target_water_temperature_min', f"{fertigation['target_water_temperature_min']}, {current_temp_min}")
-        
-        current_temp_max = config.get('WaterTemperature', 'target_water_temperature_max').split(',')[1].strip()
+
+        current_temp_max = _safe_get_second_value(config, 'WaterTemperature', 'target_water_temperature_max', fertigation['target_water_temperature_max'])
         config.set('WaterTemperature', 'target_water_temperature_max', f"{fertigation['target_water_temperature_max']}, {current_temp_max}")
-        
+
         # Update Recirculation settings - keep second value unchanged
-        current_recirc_on = config.get('Recirculation', 'recirculation_on_duration').split(',')[1].strip()
+        current_recirc_on = _safe_get_second_value(config, 'Recirculation', 'recirculation_on_duration', fertigation['recirculation_on_duration'])
         config.set('Recirculation', 'recirculation_on_duration', f"{fertigation['recirculation_on_duration']}, {current_recirc_on}")
-        
-        current_recirc_wait = config.get('Recirculation', 'recirculation_wait_duration').split(',')[1].strip()
+
+        current_recirc_wait = _safe_get_second_value(config, 'Recirculation', 'recirculation_wait_duration', fertigation['recirculation_wait_duration'])
         config.set('Recirculation', 'recirculation_wait_duration', f"{fertigation['recirculation_wait_duration']}, {current_recirc_wait}")
         
         # Write updated config back to file
@@ -423,57 +475,57 @@ def update_device_conf_from_manual(command: ManualCommand) -> bool:
         config.read('config/device.conf')
         
         # Update pH settings - keep second value unchanged
-        current_ph_target = config.get('pH', 'ph_target').split(',')[1].strip()
+        current_ph_target = _safe_get_second_value(config, 'pH', 'ph_target', str(command.target_ph))
         config.set('pH', 'ph_target', f"{command.target_ph}, {current_ph_target}")
-        
-        current_ph_deadband = config.get('pH', 'ph_deadband').split(',')[1].strip()
+
+        current_ph_deadband = _safe_get_second_value(config, 'pH', 'ph_deadband', str(command.target_ph_deadband))
         config.set('pH', 'ph_deadband', f"{command.target_ph_deadband}, {current_ph_deadband}")
-        
-        current_ph_min = config.get('pH', 'ph_min').split(',')[1].strip()
+
+        current_ph_min = _safe_get_second_value(config, 'pH', 'ph_min', str(command.target_ph_min))
         config.set('pH', 'ph_min', f"{command.target_ph_min}, {current_ph_min}")
-        
-        current_ph_max = config.get('pH', 'ph_max').split(',')[1].strip()
+
+        current_ph_max = _safe_get_second_value(config, 'pH', 'ph_max', str(command.target_ph_max))
         config.set('pH', 'ph_max', f"{command.target_ph_max}, {current_ph_max}")
-        
+
         # Update EC settings - keep second value unchanged
-        current_ec_target = config.get('EC', 'ec_target').split(',')[1].strip()
+        current_ec_target = _safe_get_second_value(config, 'EC', 'ec_target', str(command.target_ec))
         config.set('EC', 'ec_target', f"{command.target_ec}, {current_ec_target}")
-        
-        current_ec_deadband = config.get('EC', 'ec_deadband').split(',')[1].strip()
+
+        current_ec_deadband = _safe_get_second_value(config, 'EC', 'ec_deadband', str(command.target_ec_deadband))
         config.set('EC', 'ec_deadband', f"{command.target_ec_deadband}, {current_ec_deadband}")
-        
-        current_ec_min = config.get('EC', 'ec_min').split(',')[1].strip()
+
+        current_ec_min = _safe_get_second_value(config, 'EC', 'ec_min', str(command.target_ec_min))
         config.set('EC', 'ec_min', f"{command.target_ec_min}, {current_ec_min}")
-        
-        current_ec_max = config.get('EC', 'ec_max').split(',')[1].strip()
+
+        current_ec_max = _safe_get_second_value(config, 'EC', 'ec_max', str(command.target_ec_max))
         config.set('EC', 'ec_max', f"{command.target_ec_max}, {current_ec_max}")
-        
+
         # Update NutrientPump settings - keep second value unchanged
-        current_abc_ratio = config.get('NutrientPump', 'abc_ratio').split(',')[1].strip()
+        current_abc_ratio = _safe_get_second_value(config, 'NutrientPump', 'abc_ratio', command.abc_ratio)
         config.set('NutrientPump', 'abc_ratio', f'"{command.abc_ratio}", {current_abc_ratio}')
-        
+
         # Update Sprinkler settings - keep second value unchanged
-        current_sprinkler_on = config.get('Sprinkler', 'sprinkler_on_duration').split(',')[1].strip()
+        current_sprinkler_on = _safe_get_second_value(config, 'Sprinkler', 'sprinkler_on_duration', command.sprinkler_on_duration)
         config.set('Sprinkler', 'sprinkler_on_duration', f"{command.sprinkler_on_duration}, {current_sprinkler_on}")
-        
-        current_sprinkler_wait = config.get('Sprinkler', 'sprinkler_wait_duration').split(',')[1].strip()
+
+        current_sprinkler_wait = _safe_get_second_value(config, 'Sprinkler', 'sprinkler_wait_duration', command.sprinkler_wait_duration)
         config.set('Sprinkler', 'sprinkler_wait_duration', f"{command.sprinkler_wait_duration}, {current_sprinkler_wait}")
-        
+
         # Update WaterTemperature settings - keep second value unchanged
-        current_temp = config.get('WaterTemperature', 'target_water_temperature').split(',')[1].strip()
+        current_temp = _safe_get_second_value(config, 'WaterTemperature', 'target_water_temperature', str(command.target_water_temperature_min))
         config.set('WaterTemperature', 'target_water_temperature', f"{command.target_water_temperature_min}, {current_temp}")
-        
-        current_temp_min = config.get('WaterTemperature', 'target_water_temperature_min').split(',')[1].strip()
+
+        current_temp_min = _safe_get_second_value(config, 'WaterTemperature', 'target_water_temperature_min', str(command.target_water_temperature_min))
         config.set('WaterTemperature', 'target_water_temperature_min', f"{command.target_water_temperature_min}, {current_temp_min}")
-        
-        current_temp_max = config.get('WaterTemperature', 'target_water_temperature_max').split(',')[1].strip()
+
+        current_temp_max = _safe_get_second_value(config, 'WaterTemperature', 'target_water_temperature_max', str(command.target_water_temperature_max))
         config.set('WaterTemperature', 'target_water_temperature_max', f"{command.target_water_temperature_max}, {current_temp_max}")
-        
+
         # Update Recirculation settings - keep second value unchanged
-        current_recirc_on = config.get('Recirculation', 'recirculation_on_duration').split(',')[1].strip()
+        current_recirc_on = _safe_get_second_value(config, 'Recirculation', 'recirculation_on_duration', command.recirculation_on_duration)
         config.set('Recirculation', 'recirculation_on_duration', f"{command.recirculation_on_duration}, {current_recirc_on}")
-        
-        current_recirc_wait = config.get('Recirculation', 'recirculation_wait_duration').split(',')[1].strip()
+
+        current_recirc_wait = _safe_get_second_value(config, 'Recirculation', 'recirculation_wait_duration', command.recirculation_wait_duration)
         config.set('Recirculation', 'recirculation_wait_duration', f"{command.recirculation_wait_duration}, {current_recirc_wait}")
         
         # Write updated config back to file
