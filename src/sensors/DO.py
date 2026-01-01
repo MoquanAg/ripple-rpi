@@ -1,4 +1,3 @@
-import serial
 import time
 import os, sys
 
@@ -161,14 +160,6 @@ class DO:
         self.modbus_client = globals.modbus_client
         self.modbus_client.event_emitter.subscribe('DO', self._handle_response)
         self.pending_commands = {}
-
-    def open_connection(self):
-        self.ser = serial.Serial(self.port, self.baud_rate, serial.EIGHTBITS, serial.PARITY_NONE, serial.STOPBITS_ONE)
-        
-    def close_connection(self):
-        self.ser.close()
-
-
 
     def get_status_async(self):
         """

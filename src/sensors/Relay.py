@@ -1,4 +1,3 @@
-import serial
 import time
 import os, sys
 
@@ -112,7 +111,6 @@ class Relay:
         self.port = globals.get_device_port('RELAY_CONTROL', 'RelayOne', '/dev/ttyAMA4')
         self.data_path = globals.SAVED_SENSOR_DATA_PATH
         self.address = 0x01  # Default address
-        self.ser = serial.Serial()
         # Get baud rate from config file
         self.baud_rate = globals.get_device_baudrate('RELAY_CONTROL', 'RelayOne', 38400)
         self.relay_statuses = {}  # Changed to dict to store multiple relay states
