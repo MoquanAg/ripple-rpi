@@ -1412,12 +1412,26 @@ class RippleController:
 
         Creates a status file in the data directory with current system state,
         similar to lumina-edge's scheduled_tasks_main.txt approach.
+        
+        Reads from saved_sensor_data.json cache (populated by main loop) rather
+        than querying sensors directly - avoids creating fresh instances with
+        empty data.
         """
         try:
             status_file = os.path.join(self.data_dir, 'system_status.txt')
+            sensor_data_file = os.path.join(self.data_dir, 'saved_sensor_data.json')
 
             # Get current timestamp
             now = datetime.now()
+            
+            # Load cached sensor data
+            cached_data = {}
+            try:
+                if os.path.exists(sensor_data_file):
+                    with open(sensor_data_file, 'r') as f:
+                        cached_data = json.load(f)
+            except Exception as e:
+                logger.warning(f"Could not load cached sensor data: {e}")
 
             # Collect system status
             lines = []
@@ -1427,69 +1441,83 @@ class RippleController:
             lines.append("=" * 60)
             lines.append("")
 
-            # Relay states
+            # Relay states - read from cached data
             lines.append("RELAY STATES:")
             lines.append("-" * 40)
             try:
-                relay = Relay()
-                if relay and relay.relay_statuses:
-                    for name, state in sorted(relay.relay_statuses.items()):
-                        status = "ON" if state else "OFF"
-                        lines.append(f"  {name}: {status}")
+                relay_metrics = cached_data.get('data', {}).get('relay_metrics', {})
+                relay_points = relay_metrics.get('measurements', {}).get('points', [])
+                if relay_points:
+                    for point in relay_points:
+                        device = point.get('tags', {}).get('device', 'none')
+                        if device and device != 'none':
+                            status = "ON" if point.get('fields', {}).get('status', 0) else "OFF"
+                            lines.append(f"  {device}: {status}")
                 else:
-                    lines.append("  (No relay data available)")
+                    # Fallback: try raw relay array
+                    relays = cached_data.get('relays', {})
+                    if relays:
+                        for name, states in relays.items():
+                            if name != 'last_updated' and isinstance(states, list):
+                                lines.append(f"  {name}: {states}")
+                    else:
+                        lines.append("  (No relay data available)")
             except Exception as e:
                 lines.append(f"  (Error reading relays: {e})")
             lines.append("")
 
-            # Water level sensors
+            # Water level sensors - read from cached data
             lines.append("WATER LEVELS:")
             lines.append("-" * 40)
             try:
-                water_levels = WaterLevel.get_statuses_async()
-                if water_levels:
-                    for name, data in sorted(water_levels.items()):
-                        if isinstance(data, dict):
-                            level = data.get('level', 'N/A')
-                            lines.append(f"  {name}: {level}%")
-                        else:
-                            lines.append(f"  {name}: {data}")
-                else:
+                water_data = cached_data.get('data', {}).get('water_metrics', {})
+                # Look for water level specific data in the cache
+                found_water = False
+                for key, value in water_data.items():
+                    if 'level' in key.lower() or 'water' in key.lower():
+                        measurements = value.get('measurements', {}).get('points', [])
+                        for point in measurements:
+                            location = point.get('tags', {}).get('location', 'unknown')
+                            level = point.get('fields', {}).get('value', 'N/A')
+                            lines.append(f"  {location}: {level}%")
+                            found_water = True
+                if not found_water:
                     lines.append("  (No water level data available)")
             except Exception as e:
                 lines.append(f"  (Error reading water levels: {e})")
             lines.append("")
 
-            # pH sensors
+            # pH sensors - read from cached data
             lines.append("PH SENSORS:")
             lines.append("-" * 40)
             try:
-                ph_statuses = pH.get_statuses_async()
-                if ph_statuses:
-                    for name, data in sorted(ph_statuses.items()):
-                        if isinstance(data, dict):
-                            value = data.get('ph', 'N/A')
-                            lines.append(f"  {name}: {value}")
-                        else:
-                            lines.append(f"  {name}: {data}")
+                ph_data = cached_data.get('data', {}).get('water_metrics', {}).get('ph', {})
+                ph_points = ph_data.get('measurements', {}).get('points', [])
+                if ph_points:
+                    for point in ph_points:
+                        location = point.get('tags', {}).get('location', 'unknown')
+                        value = point.get('fields', {}).get('value', 'N/A')
+                        temp = point.get('fields', {}).get('temperature', 'N/A')
+                        lines.append(f"  {location}: pH {value} (temp: {temp}°C)")
                 else:
                     lines.append("  (No pH data available)")
             except Exception as e:
                 lines.append(f"  (Error reading pH: {e})")
             lines.append("")
 
-            # EC sensors
+            # EC sensors - read from cached data
             lines.append("EC SENSORS:")
             lines.append("-" * 40)
             try:
-                ec_statuses = EC.get_statuses_async()
-                if ec_statuses:
-                    for name, data in sorted(ec_statuses.items()):
-                        if isinstance(data, dict):
-                            value = data.get('ec', 'N/A')
-                            lines.append(f"  {name}: {value}")
-                        else:
-                            lines.append(f"  {name}: {data}")
+                ec_data = cached_data.get('data', {}).get('water_metrics', {}).get('ec', {})
+                ec_points = ec_data.get('measurements', {}).get('points', [])
+                if ec_points:
+                    for point in ec_points:
+                        location = point.get('tags', {}).get('location', 'unknown')
+                        value = point.get('fields', {}).get('value', 'N/A')
+                        tds = point.get('fields', {}).get('tds', 'N/A')
+                        temp = point.get('fields', {}).get('temperature', 'N/A')
+                        lines.append(f"  {location}: EC {value} mS/cm, TDS {tds} ppm (temp: {temp}°C)")
                 else:
                     lines.append("  (No EC data available)")
             except Exception as e:
@@ -1532,19 +1560,17 @@ class RippleController:
         """Main loop for the Ripple controller"""
         logger.info("Starting main control loop")
 
-        # Counters for periodic tasks
-        loop_count = 0
-        STATUS_FILE_INTERVAL = 30  # Write status file every 30 loops (5 minutes at 10s interval)
-
         try:
             while True:
-                loop_count += 1
-
                 # Get data from all sensors
                 self.update_sensor_data()
 
                 # Save sensor data
                 self.save_sensor_data()
+
+                # Update status file immediately after sensor data is saved
+                # This ensures system_status.txt always reflects latest sensor data
+                self.write_status_file()
 
                 # Process any pending commands or events
                 self.process_events()
@@ -1555,11 +1581,6 @@ class RippleController:
                     self.event_handler.process_actions()
                 except Exception as e:
                     logger.error(f"Error in periodic action check: {e}")
-
-                # Write human-readable status file periodically (every 5 minutes)
-                if loop_count % STATUS_FILE_INTERVAL == 0:
-                    self.write_status_file()
-                    loop_count = 0  # Reset counter to prevent overflow
 
                 # Wait for next cycle
                 time.sleep(10)  # 10 second interval between sensor readings
