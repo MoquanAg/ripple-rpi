@@ -188,3 +188,6 @@ data/scheduler_jobs.sqlite
 *.db
 *.sqlite
 *.bak
+
+# System status files (runtime generated)
+data/system_status.txt
