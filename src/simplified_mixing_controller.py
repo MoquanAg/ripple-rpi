@@ -33,7 +33,7 @@ from src.mixing_static import (
 try:
     from src.lumina_logger import GlobalLogger
     logger = GlobalLogger("SimplifiedMixing", log_prefix="ripple_").logger
-except:
+except Exception:
     import logging
     logger = logging.getLogger(__name__)
 
@@ -61,11 +61,32 @@ class SimplifiedMixingController:
         except Exception as e:
             logger.error(f"Error setting up scheduler: {e}")
             return None
-            
+
+    def _check_hardware_running_state(self):
+        """Check if mixing pump is actually running based on hardware state"""
+        try:
+            from src.sensors.Relay import Relay
+            relay = Relay()
+            if not relay:
+                logger.warning("No relay available for state check")
+                return False
+
+            # Check MixingPump hardware state
+            mixing_pump_state = relay.get_relay_state("MixingPump")
+
+            hardware_running = bool(mixing_pump_state)
+            logger.info(f"Hardware state check - MixingPump: {mixing_pump_state}, Running: {hardware_running}")
+            return hardware_running
+
+        except Exception as e:
+            logger.error(f"Error checking hardware state: {e}")
+            return False
+
     def start_mixing_cycle(self):
         """Start mixing cycle with dual protection"""
-        if self.is_running:
-            logger.warning("Mixing cycle already running")
+        # Check hardware state instead of software state
+        if self._check_hardware_running_state():
+            logger.warning("Mixing cycle already running (hardware check)")
             return False
             
         try:
@@ -153,7 +174,7 @@ class SimplifiedMixingController:
                     except Exception as e:
                         logger.error(f"[CONTROLLER] FAILSAFE error: {e}")
                         
-            self.failsafe_timer = threading.Thread(target=failsafe_stop, daemon=True)
+            self.failsafe_timer = threading.Thread(target=failsafe_stop, daemon=False)
             self.failsafe_timer.start()
             logger.info(f"[CONTROLLER] Failsafe timer started: {duration}s")
             

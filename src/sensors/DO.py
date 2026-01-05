@@ -13,7 +13,6 @@ from src.lumina_logger import GlobalLogger
 
 logger = GlobalLogger("RippleDO", log_prefix="ripple_").logger
 
-import math
 try:
     # Try importing when running from main directory
     import src.helpers as helpers
@@ -284,4 +283,4 @@ if __name__ == "__main__":
 
     while True:
         DO.get_statuses_async()
-        time.sleep(5)  # Update every 2 seconds
+        time.sleep(5)  # Update every 5 seconds

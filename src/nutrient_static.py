@@ -22,8 +22,8 @@ _scheduling_lock = threading.Lock()
 # Global logger import
 try:
     from src.lumina_logger import GlobalLogger
-    logger = GlobalLogger("SprinklerStatic", log_prefix="ripple_").logger
-except:
+    logger = GlobalLogger("NutrientStatic", log_prefix="ripple_").logger
+except Exception:
     import logging
     logger = logging.getLogger(__name__)
 
@@ -60,7 +60,7 @@ def parse_duration(duration_str):
     try:
         parts = duration_str.split(':')
         return int(parts[0]) * 3600 + int(parts[1]) * 60 + int(parts[2])
-    except:
+    except Exception:
         return 0
 
 def get_ec_targets():

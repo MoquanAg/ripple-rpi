@@ -32,7 +32,7 @@ from src.water_level_static import (
 try:
     from src.lumina_logger import GlobalLogger
     logger = GlobalLogger("SimplifiedWaterLevel", log_prefix="ripple_").logger
-except:
+except Exception:
     import logging
     logger = logging.getLogger(__name__)
 

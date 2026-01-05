@@ -281,11 +281,19 @@ class LEDDriver:
     def send_pwm_frequency_commands(self):
         # command_1 = bytearray([0x02, 0x05, 0x42, 0x01, 0x03, 0xE8, 0x00, 0x03, 0x38])
         command_1 = bytearray([0x02, 0x05, 0x42, 0x02, 0x03, 0xE8, 0x00, 0x03, 0x39])
-        self.serial.write(command_1)
         try:
-            response = self.serial.read(7)
+            with serial.Serial(
+                port=self.port,
+                baudrate=115200,
+                parity=serial.PARITY_NONE,
+                stopbits=serial.STOPBITS_ONE,
+                bytesize=serial.EIGHTBITS,
+                timeout=1,
+            ) as ser:
+                ser.write(command_1)
+                response = ser.read(7)
         except serial.serialutil.SerialException as e:
-            logger.warning(f"warning for {id}: {str(e)}")
+            logger.warning(f"warning for send_pwm_frequency_commands: {str(e)}")
             return -1
 
         logger.info(response)
@@ -293,6 +301,7 @@ class LEDDriver:
             logger.warning("len(response) != 7")
             return -1
         if response[3] == SUCCESS_CODE:
+            response_checksum = 0x00
             for i in range(len(response) - 1):
                 response_checksum = response_checksum ^ response[i]
             if response[-1] == response_checksum and command_1[3] == response[4]:
