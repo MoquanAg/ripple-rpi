@@ -1092,9 +1092,9 @@ if __name__ == "__main__":
     
     # Now run the normal loop
     print("\nStarting normal polling loop:")
-for i in range(50):
-    print(f"[{i+1}/50] Getting basic status data from all sensors...")
-    EC.get_statuses_async()
-    time.sleep(1)
+    for i in range(50):
+        print(f"[{i+1}/50] Getting basic status data from all sensors...")
+        EC.get_statuses_async()
+        time.sleep(1)
 
-print("Done. Polled 50 times.")
+    print("Done. Polled 50 times.")
