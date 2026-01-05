@@ -1,4 +1,3 @@
-import serial
 import time
 import os, sys
 import struct
@@ -193,7 +192,6 @@ class EC:
         self.port = globals.get_device_port('SENSORS', 'EC_main', '/dev/ttyAMA2')
         self.data_path = globals.SAVED_SENSOR_DATA_PATH
         self.address = globals.get_device_address('SENSORS', 'EC_main', '0x21')
-        self.ser = serial.Serial()
         self.baud_rate = globals.get_device_baudrate('SENSORS', 'EC_main', 9600)
         self.position = "main"
         self.ec = None
@@ -207,12 +205,6 @@ class EC:
         self.modbus_client = globals.modbus_client
         self.modbus_client.event_emitter.subscribe('EC', self._handle_response)
         self.pending_commands = {}
-
-    def open_connection(self):
-        self.ser = serial.Serial(self.port, self.baud_rate, serial.EIGHTBITS, serial.PARITY_NONE, serial.STOPBITS_ONE)
-        
-    def close_connection(self):
-        self.ser.close()
 
     def load_address(self):
         """
@@ -248,45 +240,34 @@ class EC:
         """
         Attempt to read the slave address directly from the sensor using register 0x0050.
         This is used when the address is not available in the config file.
+        Uses LuminaModbusClient for all Modbus communication.
         """
         # We need to try common addresses since we don't know the current address
         common_addresses = [1, 2, 3, 4, 5]  # Add more if needed
-        
+
         for test_address in common_addresses:
             try:
-                self.address = test_address
-                command = bytearray([
-                    test_address,
-                    0x03,           # Read holding registers
-                    0x00, 0x50,    # Register address 0x0050 (slave address)
-                    0x00, 0x01     # Read 1 register
-                ])
-                
-                # Try to open serial connection
-                if not self.ser.is_open:
-                    self.ser.port = self.port
-                    self.ser.baudrate = self.baud_rate
-                    self.ser.timeout = 0.5
-                    self.ser.open()
-                
-                # Send command
-                self.ser.write(command)
-                response = self.ser.read(7)  # 7 bytes expected for this response
-                
-                if len(response) == 7 and response[0] == test_address:
-                    actual_address = response[4]  # Second byte of the value
+                # Use LuminaModbusClient's synchronous read_holding_registers
+                response = self.modbus_client.read_holding_registers(
+                    port=self.port,
+                    address=self.REGISTERS['slave_addr'],  # 0x0050
+                    count=1,
+                    slave_addr=test_address,
+                    baudrate=self.baud_rate,
+                    timeout=0.5,
+                    device_name='EC_addr_probe'
+                )
+
+                if not response.isError() and response.registers:
+                    actual_address = response.registers[0] & 0xFF  # Get low byte
                     if 1 <= actual_address <= 253:
                         self.address = actual_address
                         logger.info(f"Successfully read address {actual_address} from sensor {self.sensor_id}")
                         return
-            
+
             except Exception as e:
                 logger.debug(f"Failed to read address using test address {test_address}: {e}")
-            
-            finally:
-                if self.ser.is_open:
-                    self.ser.close()
-        
+
         # If we get here, we couldn't read the address
         logger.warning(f"Could not read address from sensor {self.sensor_id}. Using default address 1")
         self.address = 1
@@ -826,32 +807,39 @@ class EC:
         
     def is_connected(self):
         """
-        Check if the sensor is physically connected by checking hardware flow control signals.
-        Returns True if the port exists and hardware signals indicate a device is connected, False otherwise.
+        Check if the sensor is connected by attempting a Modbus read operation.
+
+        Verifies sensor connectivity by sending a Modbus read request through
+        the LuminaModbusClient. If the sensor responds successfully, it is
+        considered connected.
+
+        Returns:
+            bool: True if the sensor responds to Modbus commands, False otherwise.
+
+        Note:
+            - Uses LuminaModbusClient for communication through lumina-modbus-server
+            - Attempts to read the EC register (0x0000) with a short timeout
+            - Returns False on timeout or communication error
         """
         try:
-            if not os.path.exists(self.port):
-                logger.debug(f"Port {self.port} does not exist")
-                return False
-                
-            # Try to open the port with hardware flow control
-            test_ser = serial.Serial()
-            test_ser.port = self.port
-            test_ser.baudrate = self.baud_rate
-            test_ser.rts = True  # Enable RTS
-            test_ser.dtr = True  # Enable DTR
-            test_ser.open()
-            
-            # Check if we can read hardware signals
-            connected = test_ser.dsr  # Check DSR signal
-            test_ser.close()
-            
+            # Try to read EC register to verify connectivity
+            response = self.modbus_client.read_holding_registers(
+                port=self.port,
+                address=self.REGISTERS['ec'],  # 0x0000
+                count=1,
+                slave_addr=self.address,
+                baudrate=self.baud_rate,
+                timeout=0.5,
+                device_name='EC_connectivity_check'
+            )
+
+            connected = not response.isError() and response.registers is not None
             if not connected:
-                logger.debug(f"Port {self.port} exists but no device detected (no DSR signal)")
+                logger.debug(f"EC sensor {self.sensor_id} not responding")
             return connected
-            
-        except (serial.SerialException, OSError) as e:
-            logger.debug(f"Port {self.port} is not accessible: {e}")
+
+        except Exception as e:
+            logger.debug(f"EC sensor {self.sensor_id} connectivity check failed: {e}")
             return False
 
     @classmethod

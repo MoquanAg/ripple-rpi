@@ -1,0 +1,174 @@
+# Ripple
+
+Intelligent fertigation control system for vertical farming. Automates nutrient dosing, pH control, water management, and irrigation scheduling. Runs on Raspberry Pi CM5.
+
+## Tech Stack
+
+- Python 3.11
+- FastAPI + Uvicorn (REST API on port 5000)
+- lumina-modbus-server (TCP bridge at `~/lumina-modbus-server`, port 8888)
+- APScheduler + SQLite (persistent task scheduling)
+- Watchdog (config file hot-reload)
+- Pydantic 1.x (data validation)
+
+## Architecture
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                      Ripple Application                     │
+│  ┌──────────┐  ┌──────────┐  ┌──────────────────────────┐  │
+│  │ main.py  │  │server.py │  │  Simplified Controllers  │  │
+│  │Controller│  │ REST API │  │ (sprinkler, nutrient,    │  │
+│  │          │  │ :5000    │  │  pH, mixing, water_level)│  │
+│  └────┬─────┘  └────┬─────┘  └───────────┬──────────────┘  │
+│       │             │                    │                  │
+│       └─────────────┴────────────────────┘                  │
+│                         │                                   │
+│              ┌──────────┴──────────┐                       │
+│              │ LuminaModbusClient  │                       │
+│              │   (TCP Socket)      │                       │
+│              └──────────┬──────────┘                       │
+└─────────────────────────┼───────────────────────────────────┘
+                          │ TCP :8888
+┌─────────────────────────┴───────────────────────────────────┐
+│              lumina-modbus-server (~/lumina-modbus-server)  │
+│                    Modbus RTU Bridge                        │
+└───────────┬─────────────────────────────────┬───────────────┘
+            │ Serial                          │ Serial
+     ┌──────┴──────┐                   ┌──────┴──────┐
+     │  /dev/ttyAMA2   │                   │  /dev/ttyAMA1   │
+     │  Sensors (9600) │                   │ Relays (38400)  │
+     └─────────────┘                   └─────────────┘
+```
+
+## Project Structure
+
+```
+main.py             # Main controller orchestrating all subsystems
+server.py           # FastAPI REST API server (port 5000)
+config/             # device.conf (INI), action.json (commands)
+data/               # saved_sensor_data.json, system_status.txt
+log/                # Rotating log files
+src/
+  globals.py        # Global config, scheduler setup, modbus client init
+  helpers.py        # Utility functions (JSON parsing, datetime)
+  lumina_logger.py  # File-based logging with rotation
+  lumina_modbus_client.py        # TCP client to lumina-modbus-server (singleton)
+  lumina_modbus_event_emitter.py # Pub-sub for async Modbus responses
+  sensors/          # Hardware drivers (pH, EC, DO, water_level, Relay)
+  simplified_*_controller.py     # Control modules with dual-layer protection
+  *_static.py       # Static functions for scheduler serialization
+samples/            # Example JSON files (action.json, instruction sets)
+```
+
+## Commands
+
+```bash
+# Start full system (main + server)
+./start_ripple.sh
+
+# Start components individually
+python main.py      # Main controller
+python server.py    # REST API server
+
+# Setup/install
+./setup_ripple.sh
+
+# Dependencies
+pip install -r requirements.txt
+
+# IMPORTANT: lumina-modbus-server must be running first
+# cd ~/lumina-modbus-server && ./start_server.sh
+```
+
+## Key Patterns
+
+- **Singleton pattern** for hardware: `LuminaModbusClient`, `Relay` (prevents resource conflicts)
+- **TCP Modbus bridge**: LuminaModbusClient connects to lumina-modbus-server via TCP socket (port 8888), which handles actual serial Modbus RTU communication
+- **Dual-layer protection**: APScheduler (primary) + failsafe thread (backup) for critical operations
+- **Static functions**: Controllers delegate to `*_static.py` modules to avoid APScheduler serialization issues
+- **Port-specific locking**: Sequential Modbus access per serial port, parallel across different ports
+- **Event-driven**: `ModbusEventEmitter` pub-sub pattern for async response handling
+- **Hot-reload**: Watchdog monitors device.conf and action.json for live configuration updates
+
+## Configuration
+
+- `config/device.conf` - System config (sensors, relays, parameters) in INI format
+- `config/action.json` - Manual relay commands (JSON)
+- Instruction sets - Grow cycle configs from central server (server_instruction_set.json)
+
+### Config Value Format
+
+Many config values use dual-value format: `default_value, operational_value`
+- First value: server/default setting
+- Second value: current operational setting (what's actually used)
+
+## Hardware
+
+| Port | Baud | Purpose |
+|------|------|---------|
+| ttyAMA2 | 9600 | Sensors (pH 0x02, EC 0x03, DO 0x04, WaterLevel 0x05) |
+| ttyAMA1 | 38400 | Relay board (0x01) - supports 4/8/16-channel boards |
+
+### Relay Board Support
+
+The system supports configurable multi-channel relay boards (4, 8, or 16 channels). The code handles up to 16 ports per board. Channel count depends on hardware configuration in device.conf.
+
+## Important Files
+
+- `main.py` - Entry point, RippleController orchestrator
+- `server.py` - FastAPI REST API with HTTP Basic Auth (port 5000)
+- `src/globals.py` - Central config, APScheduler instance, modbus client init
+- `src/lumina_modbus_client.py` - TCP socket client to lumina-modbus-server (NOT direct serial)
+- `src/lumina_modbus_event_emitter.py` - Pub-sub for Modbus responses
+- `src/sensors/Relay.py` - Multi-channel relay board control (4/8/16-channel)
+- `src/sensors/pH.py`, `ec.py`, `DO.py`, `water_level.py` - Sensor drivers
+- `src/simplified_nutrient_controller.py` - Nutrient A/B/C pump control
+- `src/simplified_ph_controller.py` - pH up/down pump control
+- `src/simplified_sprinkler_controller.py` - Sprinkler scheduling
+- `src/simplified_water_level_controller.py` - Tank level and auto-refill
+- `src/*_static.py` - Static functions for APScheduler job serialization
+
+## API Endpoints (port 5000)
+
+- `GET /api/v1/status` - Full system status (sensors, relays, config)
+- `GET /api/v1/system` - System info and version
+- `POST /api/v1/action` - Control relays/devices
+- `POST /api/v1/server_instruction_set` - Server-driven configuration
+- `POST /api/v1/user_instruction_set` - User manual adjustments
+- `GET/POST /api/v1/plumbing` - Plumbing valve/pump configuration
+- `GET/POST /api/v1/sprinkler` - Sprinkler configuration
+- `POST /api/v1/system/reboot` - Reboot system
+- `POST /api/v1/system/restart` - Restart Ripple application
+
+## Development Notes
+
+### Critical Requirements
+
+- **lumina-modbus-server MUST be running** before starting Ripple (provides Modbus RTU bridge on TCP port 8888)
+- ALWAYS use singleton pattern for Modbus client and relay access
+- Static functions in `*_static.py` cannot reference instance variables (APScheduler constraint)
+- Missing hardware should degrade gracefully, not crash
+
+### Best Practices
+
+- Use `LuminaModbusClient` singleton - never create direct serial connections
+- All Modbus operations go through lumina-modbus-server TCP bridge
+- Check `globals.HAS_*` flags before accessing hardware (e.g., `globals.HAS_RELAY`)
+- Use case-insensitive matching for relay device names
+- Logs rotate daily at 2MB max per file in `log/` directory
+- Test with sensors disconnected to verify graceful degradation
+
+### Debugging
+
+- Check `log/ripple_*.log` for application logs
+- Check `data/system_status.txt` for human-readable status (updated every 5 min)
+- Check `data/saved_sensor_data.json` for current sensor readings
+- Verify lumina-modbus-server is running: `curl http://127.0.0.1:8888` or check its logs
+
+### Common Issues
+
+1. **No sensor data**: Ensure lumina-modbus-server is running
+2. **Relay not responding**: Check device.conf RELAY_CONTROL section and Modbus address
+3. **API 401 errors**: Check SYSTEM username/password in device.conf
+4. **Scheduler jobs not running**: Check APScheduler logs, verify SQLite job store
