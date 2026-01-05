@@ -423,12 +423,12 @@ def main():
                        help='Comma-separated list of baud rates (default: 4800,9600,38400)')
     parser.add_argument('--start-addr', type=str, default='0x01',
                        help='Start address in hex (default: 0x01)')
-    parser.add_argument('--end-addr', type=str, default='0xFF',
-                       help='End address in hex (default: 0xFF)')
+    parser.add_argument('--end-addr', type=str, default='0x50',
+                       help='End address in hex (default: 0x50 for quick scan, use 0xFF for full scan)')
     parser.add_argument('--timeout', type=float, default=0.3,
                        help='Timeout per probe in seconds (default: 0.3)')
-    parser.add_argument('--quick', action='store_true',
-                       help='Quick scan (addresses 0x01-0x50, common bauds only)')
+    parser.add_argument('--full', action='store_true',
+                       help='Full scan (addresses 0x01-0xFF). Default is quick scan (0x01-0x50)')
     parser.add_argument('--sequential', action='store_true',
                        help='Scan ports sequentially instead of in parallel')
 
@@ -440,11 +440,13 @@ def main():
     start_addr = int(args.start_addr, 16)
     end_addr = int(args.end_addr, 16)
 
-    # Quick scan mode
-    if args.quick:
-        print("Quick scan mode enabled")
+    # Full scan mode (default is quick scan)
+    if args.full:
+        print("Full scan mode enabled (0x01-0xFF)")
+        end_addr = 0xFF
+    else:
+        print("Quick scan mode (default). Use --full for addresses 0x01-0xFF")
         end_addr = min(end_addr, 0x50)
-        baud_rates = [9600, 38400]  # Most common
 
     # Create scanner and run
     scanner = ModbusScanner()
