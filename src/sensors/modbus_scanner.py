@@ -263,11 +263,29 @@ class ModbusScanner:
         Returns:
             Dict with device info if found, None otherwise
         """
-        # Try each device type pattern
-        for device_type, pattern in self.DEVICE_PATTERNS.items():
-            # Skip if baud rate doesn't match typical values for this device
-            # (but still try as a fallback)
+        # Optimize: Try device types in order of likelihood based on baud rate
+        # This reduces unnecessary timeouts
+        device_types_to_try = []
+
+        # Relays are almost always at 38400
+        if baud_rate == 38400:
+            device_types_to_try = ['Relay', 'pH', 'EC', 'DO', 'Water_Level']
+        # Sensors are almost always at 9600 or 4800
+        else:
+            device_types_to_try = ['pH', 'EC', 'DO', 'Water_Level', 'Relay']
+
+        # Try each device type pattern in optimized order
+        for device_type in device_types_to_try:
+            pattern = self.DEVICE_PATTERNS[device_type]
             baud_match = baud_rate in pattern['typical_bauds']
+
+            # Skip unlikely combinations to save time
+            # Don't try sensors at 38400 baud unless typical
+            if baud_rate == 38400 and device_type != 'Relay':
+                continue
+            # Don't try relays at 4800/9600 baud
+            if baud_rate in [4800, 9600] and device_type == 'Relay':
+                continue
 
             try:
                 # Read holding registers
@@ -308,6 +326,7 @@ class ModbusScanner:
                     # Check if values are reasonable for this device type
                     try:
                         if pattern['value_check'](values):
+                            # Found a match! Return immediately, don't try other device types
                             return {
                                 'type': device_type,
                                 'port': port,
@@ -324,6 +343,7 @@ class ModbusScanner:
 
             except Exception as e:
                 # Connection failed, try next device type
+                # Note: This is expected for most addresses (no device present)
                 continue
 
         return None
@@ -400,8 +420,8 @@ def main():
                        help='Start address in hex (default: 0x01)')
     parser.add_argument('--end-addr', type=str, default='0xFF',
                        help='End address in hex (default: 0xFF)')
-    parser.add_argument('--timeout', type=float, default=0.5,
-                       help='Timeout per probe in seconds (default: 0.5)')
+    parser.add_argument('--timeout', type=float, default=0.3,
+                       help='Timeout per probe in seconds (default: 0.3)')
     parser.add_argument('--quick', action='store_true',
                        help='Quick scan (addresses 0x01-0x50, common bauds only)')
     parser.add_argument('--sequential', action='store_true',
