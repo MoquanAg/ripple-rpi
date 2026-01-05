@@ -6,8 +6,13 @@ Checks prerequisites and launches the modbus scanner.
 """
 
 import sys
+import os
 import subprocess
 import urllib.request
+
+# Ensure we're running from the project root
+script_dir = os.path.dirname(os.path.abspath(__file__))
+os.chdir(script_dir)
 
 def check_lumina_server():
     """Check if lumina-modbus-server is running."""

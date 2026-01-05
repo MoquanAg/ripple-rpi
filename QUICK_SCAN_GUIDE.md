@@ -6,13 +6,18 @@
 # 1. Start the modbus server (required!)
 cd ~/lumina-modbus-server && ./start_server.sh
 
-# 2. Quick scan for devices (recommended)
+# 2. Navigate to the ripple-rpi directory
+cd ~/ripple-rpi
+
+# 3. Quick scan for devices (recommended)
 ./scan_modbus_devices.py --quick
 
-# 3. Copy the output config to config/device.conf
+# 4. Copy the output config to config/device.conf
 ```
 
 ## Common Commands
+
+**Important**: Always run from the project root directory (`~/ripple-rpi`)
 
 ```bash
 # Quick scan (fast, covers most cases)

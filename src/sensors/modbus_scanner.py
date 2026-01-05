@@ -21,19 +21,22 @@ from typing import Dict, List, Tuple, Optional
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from threading import Lock
 
-# Add the project root to Python path
+# Add the project root and src directory to Python path
 current_dir = os.path.dirname(__file__)
 project_root = os.path.dirname(os.path.dirname(current_dir))
+src_dir = os.path.join(project_root, 'src')
 sys.path.insert(0, project_root)
+sys.path.insert(0, src_dir)
 
 # Import lumina modbus client for TCP bridge communication
 try:
-    from src.lumina_modbus_client import LuminaModbusClient
-    from src.lumina_logger import GlobalLogger
+    from lumina_modbus_client import LuminaModbusClient
+    from lumina_logger import GlobalLogger
     USING_TCP_BRIDGE = True
-except ImportError:
+except ImportError as e:
     USING_TCP_BRIDGE = False
-    print("Warning: Could not import LuminaModbusClient. Make sure lumina-modbus-server is running.")
+    print(f"Warning: Could not import LuminaModbusClient: {e}")
+    print("Make sure lumina-modbus-server is running and you're running from the project root.")
 
 
 logger = GlobalLogger("ModbusScanner", log_prefix="scanner_").logger if USING_TCP_BRIDGE else None

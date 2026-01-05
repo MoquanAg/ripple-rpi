@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git -C /Users/cqin/dev/ripple-rpi diff --name-only)",
+      "Bash(git -C /Users/cqin/dev/ripple-rpi diff)",
+      "Bash(git --no-pager diff --no-ext-diff)",
+      "Bash(chmod:*)"
+    ]
+  }
+}
