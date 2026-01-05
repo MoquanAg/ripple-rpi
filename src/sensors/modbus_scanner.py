@@ -95,6 +95,11 @@ class ModbusScanner:
         """Initialize the scanner with Modbus client."""
         if USING_TCP_BRIDGE:
             self.modbus_client = LuminaModbusClient()
+            # Connect to the modbus server
+            if not self.modbus_client.connect():
+                print("ERROR: Could not connect to Modbus server at 127.0.0.1:8888")
+                print("Make sure lumina-modbus-server is running.")
+                sys.exit(1)
         else:
             print("ERROR: LuminaModbusClient not available. Cannot scan.")
             sys.exit(1)
