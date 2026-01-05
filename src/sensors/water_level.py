@@ -14,8 +14,7 @@ from src.lumina_logger import GlobalLogger
 
 logger = GlobalLogger("RippleWaterLevel", log_prefix="ripple_").logger
 
-import math
-import helpers
+import src.helpers as helpers
 
 class WaterLevel:
     """
@@ -168,10 +167,10 @@ class WaterLevel:
     def init(self, sensor_id, port='/dev/ttyAMA2'):
         logger.info(f"Initializing the Water Level instance for {sensor_id} in {port}.")
         self.sensor_id = sensor_id
-        self.port = globals.get_device_port('SENSORS', 'WATER_LEVEL_main', '/dev/ttyAMA2')
+        self.port = globals.get_device_port('SENSORS', sensor_id, '/dev/ttyAMA2')
         self.data_path = globals.SAVED_SENSOR_DATA_PATH
-        self.address = globals.get_device_address('SENSORS', 'WATER_LEVEL_main', '0x31')
-        self.baud_rate = globals.get_device_baudrate('SENSORS', 'WATER_LEVEL_main', 9600)
+        self.address = globals.get_device_address('SENSORS', sensor_id, '0x31')
+        self.baud_rate = globals.get_device_baudrate('SENSORS', sensor_id, 9600)
         self.position = "main"
         self.level = None
         self.temperature = None

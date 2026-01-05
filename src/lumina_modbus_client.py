@@ -24,14 +24,6 @@ class PendingCommand:
     response_length: int
     timeout: float
 
-@dataclass
-class ModbusResponse:
-    command_id: str
-    data: Optional[bytes]
-    device_type: str
-    status: str
-    timestamp: float = 0.0  # Add timestamp field with default value
-
 class LuminaModbusClient:
     _instance = None
     _lock = threading.Lock()

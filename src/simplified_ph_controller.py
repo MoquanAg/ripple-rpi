@@ -33,7 +33,7 @@ from src.ph_static import (
 try:
     from src.lumina_logger import GlobalLogger
     logger = GlobalLogger("SimplifiedpH", log_prefix="ripple_").logger
-except:
+except Exception:
     import logging
     logger = logging.getLogger(__name__)
 
@@ -154,7 +154,7 @@ class SimplifiedpHController:
                     logger.warning(f"[FAILSAFE] pH pump still running after {failsafe_seconds}s - emergency stop!")
                     self._emergency_stop_ph_pump()
                     
-            self.current_thread = threading.Thread(target=failsafe_stop, daemon=True)
+            self.current_thread = threading.Thread(target=failsafe_stop, daemon=False)
             self.current_thread.start()
             logger.info(f"[CONTROLLER] Failsafe timer started ({failsafe_seconds}s)")
             

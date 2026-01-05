@@ -33,7 +33,7 @@ from src.nutrient_static import (
 try:
     from src.lumina_logger import GlobalLogger
     logger = GlobalLogger("SimplifiedNutrient", log_prefix="ripple_").logger
-except:
+except Exception:
     import logging
     logger = logging.getLogger(__name__)
 
@@ -181,34 +181,13 @@ class SimplifiedNutrientController:
                     except Exception as e:
                         logger.error(f"[CONTROLLER] FAILSAFE error: {e}")
                         
-            self.failsafe_timer = threading.Thread(target=failsafe_stop, daemon=True)
+            self.failsafe_timer = threading.Thread(target=failsafe_stop, daemon=False)
             self.failsafe_timer.start()
             logger.info(f"[CONTROLLER] Failsafe timer started: {duration}s")
             
         except Exception as e:
             logger.error(f"Error starting failsafe timer: {e}")
             
-    def _stop_sprinklers_and_mark_complete(self):
-        """Stop sprinklers and mark cycle complete (called by APScheduler)"""
-        try:
-            if self.is_running:
-                from src.sensors.Relay import Relay
-                relay = Relay()
-                if relay:
-                    relay.set_sprinklers(False)
-                    self.is_running = False
-                    logger.info("[CONTROLLER] APScheduler stopped sprinklers")
-                    
-                    # Schedule next cycle using static function
-                    from src.sprinkler_static import schedule_next_sprinkler_cycle_static
-                    schedule_next_sprinkler_cycle_static()
-                else:
-                    logger.error("[CONTROLLER] APScheduler: No relay available")
-            else:
-                logger.info("[CONTROLLER] APScheduler triggered but sprinklers already stopped")
-                
-        except Exception as e:
-            logger.error(f"[CONTROLLER] Error in APScheduler stop: {e}")
             
     def stop_current_cycle(self):
         """Stop current nutrient cycle"""

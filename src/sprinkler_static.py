@@ -18,7 +18,7 @@ from datetime import datetime, timedelta
 try:
     from src.lumina_logger import GlobalLogger
     logger = GlobalLogger("SprinklerStatic", log_prefix="ripple_").logger
-except:
+except Exception:
     import logging
     logger = logging.getLogger(__name__)
 
@@ -74,7 +74,7 @@ def parse_duration(duration_str):
     try:
         parts = duration_str.split(':')
         return int(parts[0]) * 3600 + int(parts[1]) * 60 + int(parts[2])
-    except:
+    except Exception:
         return 0
 
 def start_sprinklers_static():

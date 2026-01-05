@@ -169,14 +169,14 @@ class EC:
         process its response independently through the event emitter.
         
         Note:
-            - Uses a small delay (0.01s) between sensors to avoid command conflicts
+            - Uses a 0.3s delay between sensors to match THC sensor spacing and avoid conflicts
             - Responses are handled asynchronously via _handle_response method
             - Each sensor maintains its own pending commands queue
         """
         tasks = []
         for _, sensor_instance in EC._instances.items():
             sensor_instance.get_status_async()
-            time.sleep(0.01)  # Small delay between sensors
+            time.sleep(0.3)  # Match THC sensor spacing
 
     def __new__(cls, sensor_id, *args, **kwargs):
         if sensor_id not in cls._instances:

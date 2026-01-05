@@ -9,8 +9,8 @@ def safe_system_reboot():
     """Safely reboot the system after shutting down all components."""
     try:
         # Import globals inside function to avoid circular import
-        import globals
-        from globals import logger
+        import src.globals as globals
+        from src.globals import logger
         
         logger.info("Initiating system reboot sequence...")
         
