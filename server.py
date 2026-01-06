@@ -1132,7 +1132,7 @@ async def update_plumbing_config(plumbing_config: PlumbingConfig, username: str 
         }
         
         # Update provided fields
-        for api_field, value in plumbing_config.dict(exclude_unset=True).items():
+        for api_field, value in plumbing_config.model_dump(exclude_unset=True).items():
             if value is not None and api_field in field_mapping:
                 config_field = field_mapping[api_field]
                 
@@ -1267,7 +1267,7 @@ async def update_sprinkler_config(sprinkler_config: SprinklerConfig, username: s
             config.add_section('Sprinkler')
         
         # Update provided fields
-        for api_field, value in sprinkler_config.dict(exclude_unset=True).items():
+        for api_field, value in sprinkler_config.model_dump(exclude_unset=True).items():
             if value is not None:
                 # Get current value to preserve default (first) value
                 if config.has_option('Sprinkler', api_field):
