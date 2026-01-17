@@ -245,6 +245,33 @@ def get_device_baudrate(section, key, default_baudrate=9600):
     except Exception:
         return default_baudrate
 
+def get_relay_channels(section, key, default_channels=16):
+    """
+    Get relay board channel count from configuration.
+
+    Reads the 7th field (index 6) from the relay configuration to determine
+    the number of channels on the relay board (4, 8, or 16).
+
+    Args:
+        section (str): Configuration section name (e.g., 'RELAY_CONTROL')
+        key (str): Relay identifier within the section
+        default_channels (int): Default channel count if not found (default: 16)
+
+    Returns:
+        int: Number of relay channels (4, 8, or 16)
+    """
+    try:
+        if section in DEVICE_CONFIG_FILE and key in DEVICE_CONFIG_FILE[section]:
+            parts = DEVICE_CONFIG_FILE[section][key].split(',')
+            if len(parts) >= 7:
+                channels = int(parts[6].strip())
+                if channels in [4, 8, 16]:
+                    return channels
+                logger.warning(f"Invalid channel count {channels} for {key}, using default {default_channels}")
+        return default_channels
+    except Exception:
+        return default_channels
+
 # Map system values to availabilities
 MOTOR_SET = get_availability_value("motor_set")
 HAS_LASER = get_availability("laser")

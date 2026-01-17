@@ -243,32 +243,47 @@ class Relay:
     def get_status(self):
         """
         Queue status request commands for all configured relay boards.
-        
+
         Sends Modbus RTU commands to read the current state of all relay ports
         on each configured relay board. Results are processed asynchronously
         through the modbus event emitter system.
-        
+
+        Response length is calculated dynamically based on the relay board's
+        channel count (4, 8, or 16 channels):
+            response_length = 5 + ceil(num_coils / 8)
+            - 16 channels: 5 + 2 = 7 bytes
+            - 8 channels:  5 + 1 = 6 bytes
+            - 4 channels:  5 + 1 = 6 bytes
+
         Note:
-            - Docstring created by Claude 3.5 Sonnet on 2024-09-22
             - Sends read coil status commands (function code 0x01) to all relay boards
-            - Requests status for 16 coils (ports 0x00 to 0x0F) on each board
+            - Requests status for configured number of coils on each board
             - Uses configured timeout and baud rate for each relay board
             - Tracks pending commands for response correlation
         """
         for relay_name, address in self.relay_addresses.items():
             logger.info(f"Sending status request to {relay_name} at address 0x{address:02X}")
             try:
-                # Request status for 16 coils (0x00 to 0x0F)
-                command = bytearray([address, 0x01, 0x00, 0x00, 0x00, 0x10])
-                logger.info(f"Command bytes: {[f'0x{b:02X}' for b in command]}")
-                
+                # Get channel count for this relay (default 16)
+                channels = self.relay_channels.get(relay_name, 16)
+
+                # Calculate response length dynamically:
+                # Response format: [addr][func][byte_count][data...][crc_lo][crc_hi]
+                # byte_count = ceil(num_coils / 8), using integer math: (channels + 7) // 8
+                data_bytes = (channels + 7) // 8
+                response_length = 5 + data_bytes  # 1+1+1+data_bytes+2
+
+                # Build command to request status for configured number of coils
+                command = bytearray([address, 0x01, 0x00, 0x00, 0x00, channels])
+                logger.info(f"Command bytes: {[f'0x{b:02X}' for b in command]}, channels: {channels}, response_length: {response_length}")
+
                 timeout = 2.0
                 command_id = self.modbus_client.send_command(
                     device_type="relay",
                     port=self.port,  # Use the port from config
                     command=command,
                     baudrate=self.baud_rate,
-                    response_length=6,  # This should be 7 for 16 ports
+                    response_length=response_length,
                     timeout=timeout,
                 )
                 logger.info(f"baudrate: {self.baud_rate}")
@@ -279,7 +294,7 @@ class Relay:
                     "timestamp": time.time(),
                     "timeout": timeout
                 }
-                
+
             except Exception as e:
                 logger.error(f"Failed to send command for {relay_name}: {e}")
                 self.save_null_data()
@@ -409,12 +424,13 @@ class Relay:
         )
 
     def load_addresses(self):
-        """Load relay addresses and assignments from config file"""
+        """Load relay addresses, channel counts, and assignments from config file"""
         config = globals.DEVICE_CONFIG_FILE
         try:
             self.relay_addresses = {}
             self.relay_board_names = {}  # Map from config key to display name
-            
+            self.relay_channels = {}  # Map from config key to channel count (4, 8, or 16)
+
             logger.info(f"Available config sections: {config.sections()}")
             if "RELAY_CONTROL" in config:
                 logger.info(f"RELAY_CONTROL section content: {dict(config['RELAY_CONTROL'])}")
@@ -425,7 +441,11 @@ class Relay:
                         hex_address = int(parts[4].strip(), 16)
                         # Use the exact key from the config (e.g., "relayone")
                         self.relay_addresses[key] = hex_address
-                        
+
+                        # Load channel count from config (7th field, default 16)
+                        channels = globals.get_relay_channels('RELAY_CONTROL', key, 16)
+                        self.relay_channels[key] = channels
+
                         # Construct relay_board name as "relay_type" (e.g., "relay_ripple")
                         # from the first two comma-separated values
                         if len(parts) >= 2:
@@ -434,8 +454,8 @@ class Relay:
                             board_name = f"{relay_type}_{relay_name}"
                             self.relay_board_names[key] = board_name
                             logger.info(f"Relay board name for {key}: {board_name}")
-                        
-                        logger.info(f"Loaded {key} address: 0x{hex_address:02X} (decimal: {hex_address})")
+
+                        logger.info(f"Loaded {key} address: 0x{hex_address:02X}, channels: {channels}")
                 logger.info(f"Final relay_addresses: {self.relay_addresses}")
                 logger.info(f"Final relay_board_names: {self.relay_board_names}")
             else:
