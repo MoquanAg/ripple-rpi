@@ -145,7 +145,7 @@ class DO:
         """
         logger.info(f"Initializing the DO instance for {sensor_id} in {port}.")
         self.sensor_id = sensor_id
-        self.port = port
+        self.port = globals.get_device_port('SENSORS', sensor_id, port)
         self.data_path = globals.SAVED_SENSOR_DATA_PATH
         self.address = globals.get_device_address('SENSORS', sensor_id, '0x40')
         self.baud_rate = globals.get_device_baudrate('SENSORS', sensor_id, 9600)
