@@ -134,14 +134,14 @@ def mock_config(tmp_path, monkeypatch):
             with open(self.config_path, "w") as f:
                 config.write(f)
 
-        def set_abc_ratio(self, a, b, c):
+        def set_abc_ratio(self, ratio):
             """Update nutrient ABC ratio in config"""
             import configparser
             config = configparser.ConfigParser()
             config.read(self.config_path)
             if "NutrientPump" not in config:
                 config.add_section("NutrientPump")
-            config.set("NutrientPump", "nutrient_abc_ratio", f"1:1:1, {a}:{b}:{c}")
+            config.set("NutrientPump", "nutrient_abc_ratio", f"1:1:1, {ratio}")
             with open(self.config_path, "w") as f:
                 config.write(f)
 
@@ -175,6 +175,11 @@ fertigation_model = v2
 nutrient_pump_on_duration = 00:00:05, 00:00:05
 nutrient_pump_wait_duration = 00:05:00, 00:05:00
 target_ec = 1.0, 1.2
+nutrient_abc_ratio = 1:1:1, 1:1:1
+
+[EC]
+ec_target = 1.0, 1.2
+ec_deadband = 0.1, 0.1
 
 [Sprinkler]
 sprinkler_scheduling_enabled = true

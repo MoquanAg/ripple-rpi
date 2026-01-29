@@ -45,6 +45,10 @@ def mock_relay(monkeypatch):
     mock = MockRelay()
     mock.reset()
 
+    # Wrap set_relay in a MagicMock to track calls
+    original_set_relay = mock.set_relay
+    mock.set_relay = MagicMock(side_effect=original_set_relay)
+
     # Patch the Relay import wherever it's used
     monkeypatch.setattr("src.sensors.Relay.Relay", lambda: mock)
 

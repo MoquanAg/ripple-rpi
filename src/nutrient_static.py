@@ -88,11 +88,11 @@ def get_abc_ratio_from_config():
         config_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'config', 'device.conf')
         config = configparser.ConfigParser()
         config.read(config_path)
-        
+
         # Get operational values (second value after comma)
-        ratio_str = config.get('NutrientPump', 'abc_ratio')
+        ratio_str = config.get('NutrientPump', 'nutrient_abc_ratio')
         ratio_values = ratio_str.split(',')[1].strip()
-        
+
         # Parse "1:1:0" format
         parts = ratio_values.split(':')
         return [int(parts[0]), int(parts[1]), int(parts[2])]
