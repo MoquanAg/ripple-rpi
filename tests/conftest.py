@@ -98,14 +98,15 @@ def mock_config(tmp_path, monkeypatch):
         def __init__(self, config_path):
             self.config_path = config_path
 
-        def set_ec_target(self, target_ec):
-            """Update target EC in config"""
+        def set_ec_target(self, target_ec, deadband=0.1):
+            """Update target EC and deadband in config"""
             import configparser
             config = configparser.ConfigParser()
             config.read(self.config_path)
-            if "NutrientPump" not in config:
-                config.add_section("NutrientPump")
-            config.set("NutrientPump", "target_ec", f"1.0, {target_ec}")
+            if "EC" not in config:
+                config.add_section("EC")
+            config.set("EC", "ec_target", f"1.0, {target_ec}")
+            config.set("EC", "ec_deadband", f"0.1, {deadband}")
             with open(self.config_path, "w") as f:
                 config.write(f)
 
