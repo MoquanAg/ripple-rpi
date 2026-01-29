@@ -191,3 +191,6 @@ data/scheduler_jobs.sqlite
 
 # System status files (runtime generated)
 data/system_status.txt
+
+# Git worktrees
+.worktrees/
