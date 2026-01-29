@@ -11,6 +11,8 @@ import pytest
 from unittest.mock import MagicMock, patch
 import sys
 from pathlib import Path
+from freezegun import freeze_time
+from datetime import datetime, timedelta
 
 # Ensure project root is in path
 project_root = Path(__file__).parent.parent.parent
@@ -277,3 +279,179 @@ class TestPumpControlABCRatio:
         assert ("NutrientPumpA", False) in relay_calls
         assert ("NutrientPumpB", False) in relay_calls
         assert ("NutrientPumpC", False) in relay_calls
+
+
+class TestEndToEndCycleFlow:
+    """Test complete nutrient dosing cycles with timing"""
+
+    def test_pumps_run_for_configured_duration(self, mock_ec_sensor_configurable, mock_relay, mock_config, monkeypatch):
+        """Stop job should be scheduled at start + on_duration"""
+        # Arrange
+        mock_ec_sensor_configurable.ec = 0.8
+        mock_config.set_nutrient_duration(on="00:00:05", wait="00:05:00")
+
+        mock_logger = MagicMock()
+        monkeypatch.setattr("src.nutrient_static.logger", mock_logger)
+
+        mock_scheduler = MagicMock()
+        monkeypatch.setattr("src.nutrient_static.get_scheduler", lambda: mock_scheduler)
+
+        # Mock config functions
+        monkeypatch.setattr("src.nutrient_static.get_ec_targets", lambda: (1.2, 0.1))
+        monkeypatch.setattr("src.nutrient_static.get_abc_ratio_from_config", lambda: [1, 1, 0])
+        monkeypatch.setattr("src.nutrient_static.get_nutrient_config", lambda: ("00:00:05", "00:05:00"))
+
+        # Act
+        with freeze_time("2026-01-29 12:00:00") as frozen_time:
+            from src.nutrient_static import start_nutrient_pumps_static
+            start_nutrient_pumps_static()
+
+            # Assert - stop should be scheduled 5 seconds later
+            expected_time = datetime(2026, 1, 29, 12, 0, 5)
+            mock_scheduler.add_job.assert_called()
+            call_args = mock_scheduler.add_job.call_args
+            assert call_args[1]['id'] == 'nutrient_stop'
+            # Verify run_date is approximately 5 seconds from now
+            run_date = call_args[1]['run_date']
+            assert abs((run_date - expected_time).total_seconds()) < 1
+
+    def test_next_cycle_scheduled_after_wait(self, mock_relay, mock_config, monkeypatch):
+        """After stop, next start should be scheduled at stop + wait_duration"""
+        # Arrange
+        mock_config.set_nutrient_duration(on="00:00:05", wait="00:05:00")
+
+        mock_logger = MagicMock()
+        monkeypatch.setattr("src.nutrient_static.logger", mock_logger)
+
+        mock_scheduler = MagicMock()
+        mock_scheduler.get_job.return_value = None  # No existing job
+        monkeypatch.setattr("src.nutrient_static.get_scheduler", lambda: mock_scheduler)
+
+        # Mock config functions
+        monkeypatch.setattr("src.nutrient_static.get_nutrient_config", lambda: ("00:00:05", "00:05:00"))
+
+        # Act
+        with freeze_time("2026-01-29 12:00:00") as frozen_time:
+            from src.nutrient_static import stop_nutrient_pumps_static
+            stop_nutrient_pumps_static()
+
+            # Assert - start should be scheduled 5 minutes later
+            expected_time = datetime(2026, 1, 29, 12, 5, 0)
+            mock_scheduler.add_job.assert_called()
+            call_args = mock_scheduler.add_job.call_args
+            assert call_args[1]['id'] == 'nutrient_start'
+            run_date = call_args[1]['run_date']
+            assert abs((run_date - expected_time).total_seconds()) < 1
+
+    def test_skip_dosing_when_ec_adequate_schedule_next(self, mock_ec_sensor_configurable, mock_relay, mock_config, monkeypatch):
+        """When EC adequate, skip dosing but schedule next check"""
+        # Arrange
+        mock_ec_sensor_configurable.ec = 1.5  # High EC
+        mock_config.set_nutrient_duration(on="00:00:05", wait="00:05:00")
+
+        mock_logger = MagicMock()
+        monkeypatch.setattr("src.nutrient_static.logger", mock_logger)
+
+        mock_scheduler = MagicMock()
+        mock_scheduler.get_job.return_value = None  # No existing job
+        monkeypatch.setattr("src.nutrient_static.get_scheduler", lambda: mock_scheduler)
+
+        # Mock config functions
+        monkeypatch.setattr("src.nutrient_static.get_ec_targets", lambda: (1.2, 0.1))
+        monkeypatch.setattr("src.nutrient_static.get_abc_ratio_from_config", lambda: [1, 1, 0])
+        monkeypatch.setattr("src.nutrient_static.get_nutrient_config", lambda: ("00:00:05", "00:05:00"))
+
+        # Act
+        from src.nutrient_static import start_nutrient_pumps_static
+        start_nutrient_pumps_static()
+
+        # Assert - pumps should not start
+        relay_calls = [call[0] for call in mock_relay.set_relay.call_args_list]
+        pump_on_calls = [call for call in relay_calls if call[1] == True]
+        assert len(pump_on_calls) == 0
+
+        # But next cycle should be scheduled
+        mock_scheduler.add_job.assert_called()
+
+    def test_complete_nutrient_cycle(self, mock_ec_sensor_configurable, mock_relay, mock_config, monkeypatch):
+        """Test full cycle: start → stop → next start"""
+        # Arrange
+        mock_ec_sensor_configurable.ec = 0.8
+        mock_config.set_nutrient_duration(on="00:00:05", wait="00:05:00")
+
+        mock_logger = MagicMock()
+        monkeypatch.setattr("src.nutrient_static.logger", mock_logger)
+
+        mock_scheduler = MagicMock()
+        mock_scheduler.get_job.return_value = None  # No existing job
+        monkeypatch.setattr("src.nutrient_static.get_scheduler", lambda: mock_scheduler)
+
+        # Mock config functions
+        monkeypatch.setattr("src.nutrient_static.get_ec_targets", lambda: (1.2, 0.1))
+        monkeypatch.setattr("src.nutrient_static.get_abc_ratio_from_config", lambda: [1, 1, 0])
+        monkeypatch.setattr("src.nutrient_static.get_nutrient_config", lambda: ("00:00:05", "00:05:00"))
+
+        # Act
+        with freeze_time("2026-01-29 12:00:00") as frozen_time:
+            from src.nutrient_static import start_nutrient_pumps_static, stop_nutrient_pumps_static
+
+            # 1. Start cycle
+            start_nutrient_pumps_static()
+            relay_calls = [call[0] for call in mock_relay.set_relay.call_args_list]
+            assert ("NutrientPumpA", True) in relay_calls
+
+            # 2. Advance time and stop
+            mock_relay.set_relay.reset_mock()
+            frozen_time.tick(delta=timedelta(seconds=5))
+            stop_nutrient_pumps_static()
+            relay_calls = [call[0] for call in mock_relay.set_relay.call_args_list]
+            assert ("NutrientPumpA", False) in relay_calls
+
+            # 3. Verify next cycle scheduled
+            call_args = mock_scheduler.add_job.call_args
+            assert call_args[1]['id'] == 'nutrient_start'
+
+    def test_no_scheduling_when_duration_zero(self, mock_ec_sensor_configurable, mock_relay, mock_config, monkeypatch):
+        """on_duration=0 should disable the system"""
+        # Arrange
+        mock_ec_sensor_configurable.ec = 0.8
+        mock_config.set_nutrient_duration(on="00:00:00", wait="00:05:00")
+
+        mock_logger = MagicMock()
+        monkeypatch.setattr("src.nutrient_static.logger", mock_logger)
+
+        mock_scheduler = MagicMock()
+        monkeypatch.setattr("src.nutrient_static.get_scheduler", lambda: mock_scheduler)
+
+        # Mock config functions
+        monkeypatch.setattr("src.nutrient_static.get_ec_targets", lambda: (1.2, 0.1))
+        monkeypatch.setattr("src.nutrient_static.get_abc_ratio_from_config", lambda: [1, 1, 0])
+        monkeypatch.setattr("src.nutrient_static.get_nutrient_config", lambda: ("00:00:00", "00:05:00"))
+
+        # Act
+        from src.nutrient_static import start_nutrient_pumps_static
+        start_nutrient_pumps_static()
+
+        # Assert - no jobs should be scheduled
+        assert mock_scheduler.add_job.call_count == 0
+
+    def test_wait_duration_zero_no_next_cycle(self, mock_relay, mock_config, monkeypatch):
+        """wait_duration=0 should not schedule next cycle"""
+        # Arrange
+        mock_config.set_nutrient_duration(on="00:00:05", wait="00:00:00")
+
+        mock_logger = MagicMock()
+        monkeypatch.setattr("src.nutrient_static.logger", mock_logger)
+
+        mock_scheduler = MagicMock()
+        monkeypatch.setattr("src.nutrient_static.get_scheduler", lambda: mock_scheduler)
+
+        # Mock config functions
+        monkeypatch.setattr("src.nutrient_static.get_nutrient_config", lambda: ("00:00:05", "00:00:00"))
+
+        # Act
+        from src.nutrient_static import stop_nutrient_pumps_static
+        stop_nutrient_pumps_static()
+
+        # Assert - no next cycle scheduled
+        assert mock_scheduler.add_job.call_count == 0

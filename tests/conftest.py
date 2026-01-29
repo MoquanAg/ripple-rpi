@@ -145,19 +145,15 @@ def mock_config(tmp_path, monkeypatch):
             with open(self.config_path, "w") as f:
                 config.write(f)
 
-        def set_nutrient_duration(self, duration_seconds):
-            """Update nutrient pump duration in config"""
+        def set_nutrient_duration(self, on, wait):
+            """Update nutrient pump on and wait durations in config"""
             import configparser
             config = configparser.ConfigParser()
             config.read(self.config_path)
             if "NutrientPump" not in config:
                 config.add_section("NutrientPump")
-            # Convert seconds to HH:MM:SS format
-            hours = duration_seconds // 3600
-            minutes = (duration_seconds % 3600) // 60
-            seconds = duration_seconds % 60
-            duration_str = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
-            config.set("NutrientPump", "nutrient_pump_on_duration", f"00:00:05, {duration_str}")
+            config.set("NutrientPump", "nutrient_pump_on_duration", f"00:00:05, {on}")
+            config.set("NutrientPump", "nutrient_pump_wait_duration", f"00:05:00, {wait}")
             with open(self.config_path, "w") as f:
                 config.write(f)
 
