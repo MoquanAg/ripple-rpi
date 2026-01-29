@@ -1301,25 +1301,31 @@ class RippleController:
             logger.exception("Full exception details:")
 
     def _activate_nutrient_pumps_on_startup(self):
-        """Initialize simplified nutrient system on startup - NUTRIENT PUMPS START OFF"""
+        """Initialize simplified nutrient system on startup with automatic EC-based dosing"""
         try:
-            logger.info("==== INITIALIZING SIMPLIFIED NUTRIENT SYSTEM (OFF AT STARTUP) ====")
-            
-            # NEW BEHAVIOR: Ensure nutrient pumps are OFF at reboot
+            logger.info("==== INITIALIZING SIMPLIFIED NUTRIENT SYSTEM WITH AUTO-DOSING ====")
+
+            # Ensure nutrient pumps are OFF at reboot before starting auto-dosing
             from src.sensors.Relay import Relay
             relay = Relay()
             if relay:
                 # Explicitly turn off nutrient pumps at startup
                 relay.set_nutrient_pump("A", False)
-                relay.set_nutrient_pump("B", False) 
+                relay.set_nutrient_pump("B", False)
                 relay.set_nutrient_pump("C", False)
                 logger.info("[Startup] Nutrient pumps explicitly set to OFF at reboot")
             else:
                 logger.warning("[Startup] No relay available to ensure nutrient pumps are off")
-                
-            # Do NOT call start_nutrient_cycle() - keep them off
-            logger.info("[Startup] Nutrient system initialized in OFF state (no auto-start)")
-                
+
+            # Initialize automatic EC-based nutrient dosing schedule
+            from src.nutrient_static import initialize_nutrient_schedule
+            success = initialize_nutrient_schedule()
+
+            if success:
+                logger.info("[Startup] Automatic EC-based nutrient dosing schedule initialized successfully")
+            else:
+                logger.info("[Startup] Nutrient dosing schedule not started (duration may be 0)")
+
         except Exception as e:
             logger.error(f"Error initializing simplified nutrient system: {e}")
             logger.exception("Full exception details:")
