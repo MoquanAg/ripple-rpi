@@ -235,5 +235,8 @@ def test_relay_readback_timeout_triggers_safe_default(mock_relay, tmp_path):
             relay=mock_relay
         )
         safe = False
+    finally:
+        # Restore original method
+        mock_relay.get_relay_state = original_get
     assert safe == False
     assert is_emergency_active(flag_path) == True

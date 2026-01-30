@@ -46,6 +46,7 @@ class MockRelay:
     def reset(self):
         """Reset all relay states (for test cleanup)"""
         self.relay_states = {}
+        self._stuck_relays = {}
 
 @pytest.fixture
 def mock_relay(monkeypatch):

@@ -95,15 +95,8 @@ def test_all_sensors_invalid_complete_shutdown(mock_ec_sensor, mock_ph_sensor,
     assert is_emergency_active(flag_path) == True
 
 
-def test_negative_duration_uses_default(tmp_path, monkeypatch):
+def test_negative_duration_uses_default():
     """Negative pump duration falls back to safe default"""
-    from src import globals as ripple_globals
-    config_file = tmp_path / "device.conf"
-    config_file.write_text("""
-[NutrientPump]
-nutrient_pump_on_duration = 00:05:00, -00:10:00
-""")
-    monkeypatch.setattr(ripple_globals, 'CONFIG_FILE', str(config_file))
     duration_str = "-00:10:00"
     try:
         parts = duration_str.lstrip('-').split(':')
@@ -122,15 +115,8 @@ nutrient_pump_on_duration = 00:05:00, -00:10:00
     ("a:b:c", [1, 1, 0]),
     ("1:1", [1, 1, 0]),
 ])
-def test_invalid_abc_ratio_uses_default(invalid_ratio, expected_default, tmp_path, monkeypatch):
+def test_invalid_abc_ratio_uses_default(invalid_ratio, expected_default):
     """Invalid ABC ratio falls back to 1:1:0"""
-    from src import globals as ripple_globals
-    config_file = tmp_path / "device.conf"
-    config_file.write_text(f"""
-[NutrientPump]
-nutrient_abc_ratio = 1:1:0, {invalid_ratio}
-""")
-    monkeypatch.setattr(ripple_globals, 'CONFIG_FILE', str(config_file))
     try:
         parts = invalid_ratio.split(':')
         ratio = [int(p) for p in parts]
@@ -148,15 +134,8 @@ nutrient_abc_ratio = 1:1:0, {invalid_ratio}
     ("1.0, -2.0", 1.2),
     ("1.0, abc", 1.2),
 ])
-def test_extreme_ec_target_uses_default(invalid_ec, expected_default, tmp_path, monkeypatch):
+def test_extreme_ec_target_uses_default(invalid_ec, expected_default):
     """Out-of-range EC target falls back to 1.2 mS/cm"""
-    from src import globals as ripple_globals
-    config_file = tmp_path / "device.conf"
-    config_file.write_text(f"""
-[NutrientPump]
-ec_target = {invalid_ec}
-""")
-    monkeypatch.setattr(ripple_globals, 'CONFIG_FILE', str(config_file))
     try:
         parts = invalid_ec.split(',')
         ec_target = float(parts[1].strip())
@@ -170,7 +149,8 @@ ec_target = {invalid_ec}
 def test_new_command_rejected_during_critical_phase(mock_relay):
     """New command rejected when dosing is active"""
     from src.critical_phase_lock import is_in_critical_phase, can_accept_new_command
-    mock_relay.set_relay("NutrientPumpA", True)
+    # Set relay state directly without MagicMock wrapper
+    mock_relay.relay_states["NutrientPumpA"] = True
     critical = is_in_critical_phase(relay=mock_relay)
     assert critical == True
     can_accept = can_accept_new_command(relay=mock_relay)
@@ -189,23 +169,13 @@ def test_new_command_accepted_during_normal_phase(mock_relay):
     assert can_accept == True
 
 
-def test_crash_recovery_resets_to_defaults(tmp_path, monkeypatch, mock_relay):
+def test_crash_recovery_resets_to_defaults(mock_relay):
     """System restart after crash resets pumps to config defaults"""
-    from src import globals as ripple_globals
-    config_file = tmp_path / "device.conf"
-    config_file.write_text("""
-[NutrientPump]
-default_state = off
+    # Simulate crash state - pumps in unknown/stuck states
+    mock_relay.relay_states["NutrientPumpA"] = True
+    mock_relay.relay_states["MixingPump"] = False
 
-[MixingPump]
-default_state = on
-
-[RecirculationPump]
-default_state = on
-""")
-    monkeypatch.setattr(ripple_globals, 'CONFIG_FILE', str(config_file))
-    mock_relay.set_relay("NutrientPumpA", True)
-    mock_relay.set_relay("MixingPump", False)
+    # Simulate startup reset to config defaults
     pump_defaults = {
         "NutrientPumpA": False,
         "NutrientPumpB": False,
@@ -216,6 +186,7 @@ default_state = on
         "RecirculationPump": True
     }
     for pump_name, default_state in pump_defaults.items():
-        mock_relay.set_relay(pump_name, default_state)
+        mock_relay.relay_states[pump_name] = default_state
+
     assert mock_relay.get_relay_state("NutrientPumpA") == False
     assert mock_relay.get_relay_state("MixingPump") == True
