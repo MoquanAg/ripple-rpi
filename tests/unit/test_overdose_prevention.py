@@ -85,3 +85,32 @@ def test_all_dosing_pumps_have_30sec_timeout(pump_name, mock_relay, tmp_path):
         check_pump_timeouts(emergency_flag_path=flag_path)
 
         assert is_emergency_active(flag_path) == True
+
+
+def test_daily_runtime_limit_prevents_overdose(mock_runtime_tracker):
+    """60 minute daily limit blocks excessive dosing"""
+    mock_runtime_tracker.add_dosing_event("NutrientPumpA", duration_seconds=3600)
+    can_dose = mock_runtime_tracker.can_dose(planned_duration=1)
+    assert can_dose == False
+
+
+def test_runtime_tracking_persists_across_restart(tmp_path):
+    """Runtime data survives system restart"""
+    from src.runtime_tracker import DosingRuntimeTracker
+
+    storage_path = str(tmp_path / "runtime.json")
+
+    tracker1 = DosingRuntimeTracker(storage_path=storage_path)
+    tracker1.add_dosing_event("NutrientPumpA", duration_seconds=1800)
+
+    tracker2 = DosingRuntimeTracker(storage_path=storage_path)
+    assert tracker2.get_today_total_runtime() == 1800
+
+
+def test_runtime_tracking_excludes_operational_pumps(tmp_path):
+    """Only dosing pumps count toward daily limit"""
+    from src.runtime_tracker import DosingRuntimeTracker
+
+    tracker = DosingRuntimeTracker(storage_path=str(tmp_path / "runtime.json"))
+    tracker.add_dosing_event("NutrientPumpA", duration_seconds=300)
+    assert tracker.get_today_total_runtime() == 300
