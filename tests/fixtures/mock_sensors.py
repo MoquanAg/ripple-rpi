@@ -31,6 +31,33 @@ class MockWaterLevel(MockSensor):
     """Mock water level sensor"""
     pass
 
+class MockECConfigurable(MockSensor):
+    """Mock EC sensor with configurable value"""
+    def __init__(self, sensor_id):
+        super().__init__(value=1.0)
+        self.ec = 1.0  # Default EC value
+
+    def read(self):
+        return self.ec
+
+class MockpHConfigurable(MockSensor):
+    """Mock pH sensor with configurable value"""
+    def __init__(self, sensor_id):
+        super().__init__(value=6.5)
+        self.ph = 6.5  # Default pH value
+
+    def read(self):
+        return self.ph
+
+class MockWaterLevelConfigurable(MockSensor):
+    """Mock water level sensor with configurable value"""
+    def __init__(self, sensor_id):
+        super().__init__(value=80.0)
+        self.level = 80.0  # Default level %
+
+    def read(self):
+        return self.level
+
 @pytest.fixture
 def mock_ec_sensor(monkeypatch):
     """EC sensor returning configurable value"""

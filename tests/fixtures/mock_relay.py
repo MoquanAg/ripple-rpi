@@ -18,8 +18,16 @@ class MockRelay:
         return True
 
     def get_relay_state(self, device_name):
-        """Get relay state from memory"""
+        """Get relay state (check for stuck override first)"""
+        stuck_relays = getattr(self, '_stuck_relays', {})
+        if device_name in stuck_relays:
+            return stuck_relays[device_name]
         return self.relay_states.get(device_name, False)
+
+    def _force_stuck_state(self, device_name: str, stuck_state: bool):
+        """Force relay to stay in specific state (for testing stuck relays)"""
+        self._stuck_relays = getattr(self, '_stuck_relays', {})
+        self._stuck_relays[device_name] = stuck_state
 
     # Add methods for specific devices
     def set_nutrient_pump(self, pump_id, state):
@@ -38,12 +46,17 @@ class MockRelay:
     def reset(self):
         """Reset all relay states (for test cleanup)"""
         self.relay_states = {}
+        self._stuck_relays = {}
 
 @pytest.fixture
 def mock_relay(monkeypatch):
     """Fixture that mocks Relay singleton"""
     mock = MockRelay()
     mock.reset()
+
+    # Wrap set_relay in a MagicMock to track calls
+    original_set_relay = mock.set_relay
+    mock.set_relay = MagicMock(side_effect=original_set_relay)
 
     # Patch the Relay import wherever it's used
     monkeypatch.setattr("src.sensors.Relay.Relay", lambda: mock)
