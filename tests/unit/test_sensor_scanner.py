@@ -353,3 +353,42 @@ class TestScanIntegration:
         assert len(progress_calls) == 2
         assert progress_calls[0]['address'] == '0x01'
         assert progress_calls[1]['address'] == '0x02'
+
+
+# ---------------------------------------------------------------------------
+# Format output tests
+# ---------------------------------------------------------------------------
+class TestFormatResults:
+    def test_format_table_output(self):
+        from src.sensor_scanner import format_results
+        results = [
+            {
+                'sensor_type': 'ph',
+                'port': '/dev/ttyAMA2',
+                'baud_rate': 9600,
+                'address': '0x11',
+                'address_decimal': 17,
+                'sample_reading': {'ph': 7.02, 'temperature': 25.1},
+            }
+        ]
+        output = format_results(results)
+        assert 'ph' in output.lower()
+        assert '/dev/ttyAMA2' in output
+        assert '0x11' in output
+
+    def test_format_device_conf_snippet(self):
+        from src.sensor_scanner import format_device_conf
+        results = [
+            {'sensor_type': 'ph', 'port': '/dev/ttyAMA2', 'baud_rate': 9600, 'address': '0x11', 'address_decimal': 17, 'sample_reading': {}},
+            {'sensor_type': 'ec', 'port': '/dev/ttyAMA2', 'baud_rate': 9600, 'address': '0x21', 'address_decimal': 33, 'sample_reading': {}},
+        ]
+        output = format_device_conf(results)
+        assert 'ph_main' in output
+        assert 'ec_main' in output
+        assert '/dev/ttyAMA2' in output
+        assert '0x11' in output
+
+    def test_format_empty_results(self):
+        from src.sensor_scanner import format_results
+        output = format_results([])
+        assert 'No sensors found' in output

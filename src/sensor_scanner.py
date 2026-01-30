@@ -268,3 +268,130 @@ class SensorScanner:
                 'range_max': range_max,
             },
         }
+
+
+# ── output formatting ────────────────────────────────────────────────────────
+
+SENSOR_DISPLAY_NAMES = {
+    'ph': 'pH',
+    'ec': 'EC',
+    'do': 'DO',
+    'water_level': 'Water Level',
+}
+
+SENSOR_DESCRIPTIONS = {
+    'ph': 'pH Sensor',
+    'ec': 'EC Sensor',
+    'do': 'DO Sensor',
+    'water_level': 'Water Level Sensor',
+}
+
+
+def _format_sample(sensor_type, reading):
+    """Format sample reading for display."""
+    if sensor_type == 'ph':
+        parts = []
+        if 'ph' in reading:
+            parts.append(f"pH={reading['ph']:.2f}")
+        if 'temperature' in reading:
+            parts.append(f"Temp={reading['temperature']:.1f}\u00b0C")
+        return '  '.join(parts)
+    elif sensor_type == 'ec':
+        return f"EC={reading['ec']:.3f} mS/cm" if 'ec' in reading else ''
+    elif sensor_type == 'do':
+        return f"DO={reading['do']:.2f} mg/L" if 'do' in reading else ''
+    elif sensor_type == 'water_level':
+        return f"Level={reading['level']} cm" if 'level' in reading else ''
+    return ''
+
+
+def format_results(results):
+    """Format scan results as a readable table."""
+    if not results:
+        return 'No sensors found.'
+
+    lines = [f'Found {len(results)} sensor(s):']
+    for r in results:
+        name = SENSOR_DISPLAY_NAMES.get(r['sensor_type'], r['sensor_type'])
+        sample = _format_sample(r['sensor_type'], r.get('sample_reading', {}))
+        lines.append(
+            f"  {name:<12} {r['port']:<16} {r['address']:<6} {r['baud_rate']:<6} {sample}"
+        )
+    return '\n'.join(lines)
+
+
+def format_device_conf(results):
+    """Generate suggested device.conf [SENSORS] entries."""
+    if not results:
+        return ''
+
+    type_counts = {}
+    lines = ['Suggested device.conf [SENSORS] entries:']
+
+    for r in results:
+        stype = r['sensor_type']
+        count = type_counts.get(stype, 0)
+        type_counts[stype] = count + 1
+        position = 'main' if count == 0 else f'secondary_{count}'
+        desc = SENSOR_DESCRIPTIONS.get(stype, stype)
+        key = f'{stype}_{position}'
+        lines.append(
+            f'  {key} = {stype}, {position}, "{desc}", {r["port"]}, {r["address"]}, {r["baud_rate"]}'
+        )
+
+    return '\n'.join(lines)
+
+
+if __name__ == '__main__':
+    import argparse
+    import sys
+    import os
+
+    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    sys.path.insert(0, project_root)
+
+    import src.globals as globals
+
+    parser = argparse.ArgumentParser(description='Scan for Modbus sensors')
+    parser.add_argument('--ports', nargs='+', default=DEFAULT_PORTS,
+                        help='Serial ports to scan')
+    parser.add_argument('--baud-rates', nargs='+', type=int, default=DEFAULT_BAUD_RATES,
+                        help='Baud rates to try')
+    parser.add_argument('--addr-start', type=lambda x: int(x, 0), default=DEFAULT_ADDR_START,
+                        help='Start address (hex or decimal)')
+    parser.add_argument('--addr-end', type=lambda x: int(x, 0), default=DEFAULT_ADDR_END,
+                        help='End address (hex or decimal)')
+    parser.add_argument('--types', nargs='+', default=DEFAULT_SENSOR_TYPES,
+                        choices=DEFAULT_SENSOR_TYPES, help='Sensor types to scan for')
+    parser.add_argument('--no-short-circuit', action='store_true',
+                        help='Try all probes per address even after a match')
+
+    args = parser.parse_args()
+
+    def print_progress(info):
+        sys.stdout.write(
+            f"\rScanning {info['port']} @ {info['baud_rate']} baud — addr {info['address']}"
+        )
+        sys.stdout.flush()
+
+    scanner = SensorScanner(
+        modbus_client=globals.modbus_client,
+        ports=args.ports,
+        baud_rates=args.baud_rates,
+        addr_start=args.addr_start,
+        addr_end=args.addr_end,
+        sensor_types=args.types,
+        short_circuit=not args.no_short_circuit,
+        on_progress=print_progress,
+    )
+
+    print('Starting sensor scan...')
+    start_time = time.time()
+    results = scanner.scan()
+    duration = time.time() - start_time
+
+    print(f'\n\nScan completed in {duration:.1f}s\n')
+    print(format_results(results))
+    if results:
+        print()
+        print(format_device_conf(results))
