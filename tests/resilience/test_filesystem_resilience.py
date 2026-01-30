@@ -59,13 +59,10 @@ class TestSensorDataResilience:
         sensor_file = str(tmp_path / "saved_sensor_data.json")
         file_corruptor.write_garbage(sensor_file)
 
-        try:
-            save_data([], {"ec": 1.5}, sensor_file)
-            with open(sensor_file, 'r') as f:
-                result = json.loads(f.read())
-            assert "ec" in result
-        except Exception as e:
-            pytest.xfail(f"Garbage JSON crashes save_data: {e}")
+        save_data([], {"ec": 1.5}, sensor_file)
+        with open(sensor_file, 'r') as f:
+            result = json.loads(f.read())
+        assert "ec" in result
 
     def test_sensor_data_json_missing(self, tmp_path):
         """
@@ -145,12 +142,9 @@ class TestRuntimeTrackerResilience:
         tracker_file = str(tmp_path / "runtime_tracker_history.json")
         file_corruptor.write_garbage(tracker_file)
 
-        try:
-            tracker = DosingRuntimeTracker(storage_path=tracker_file)
-            # load_history catches JSONDecodeError and resets
-            assert tracker.get_today_total_runtime() == 0
-        except (UnicodeDecodeError, Exception) as e:
-            pytest.xfail(f"Garbage binary in runtime tracker crashes load_history: {e}")
+        tracker = DosingRuntimeTracker(storage_path=tracker_file)
+        # load_history catches JSONDecodeError and UnicodeDecodeError, resets
+        assert tracker.get_today_total_runtime() == 0
 
     def test_runtime_tracker_partial_write(self, tmp_path, file_corruptor):
         """
@@ -266,13 +260,12 @@ nutrient_pump_on_duration = 00:00:10, 00:00:15
 
         config = configparser.ConfigParser()
         try:
-            loaded = config.read(str(config_file))
-            # ConfigParser.read() returns list of successfully read files
-            assert config is not None
-            # No sections parsed from invalid content
-            assert len(config.sections()) == 0
-        except configparser.MissingSectionHeaderError:
-            pytest.xfail("ConfigParser raises MissingSectionHeaderError on content without section headers")
+            config.read(str(config_file))
+        except (configparser.MissingSectionHeaderError, configparser.ParsingError):
+            pass  # Expected: globals.py catches this and uses defaults
+
+        # Either way, config should have no parsed sections (defaults used)
+        assert len(config.sections()) == 0
 
     def test_device_conf_permission_denied(self, tmp_path, file_corruptor):
         """

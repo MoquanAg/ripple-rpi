@@ -14,6 +14,7 @@ from pathlib import Path
 from unittest.mock import patch, MagicMock
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore
+from apscheduler.jobstores.memory import MemoryJobStore as APMemoryJobStore
 
 
 def _sample_job():
@@ -44,6 +45,51 @@ def _init_scheduler_from_path(db_path):
         return None, e
 
 
+def _init_scheduler_with_recovery(db_path):
+    """Initialize a scheduler with 3-tier recovery logic matching globals.start_scheduler().
+
+    1. Try SQLAlchemyJobStore with timeout
+    2. On failure: delete corrupt DB, retry with fresh SQLAlchemyJobStore
+    3. On second failure: fall back to APMemoryJobStore
+
+    Returns (scheduler, error) tuple. Error is None on success.
+    """
+    # Tier 1: Try with existing DB
+    try:
+        jobstore = SQLAlchemyJobStore(
+            url=f'sqlite:///{db_path}',
+            engine_options={'connect_args': {'timeout': 10}}
+        )
+        scheduler = BackgroundScheduler(jobstores={'default': jobstore})
+        scheduler.start()
+        return scheduler, None
+    except Exception as e1:
+        pass
+
+    # Tier 2: Delete corrupt DB and retry
+    try:
+        if os.path.exists(db_path):
+            os.remove(db_path)
+        jobstore = SQLAlchemyJobStore(
+            url=f'sqlite:///{db_path}',
+            engine_options={'connect_args': {'timeout': 10}}
+        )
+        scheduler = BackgroundScheduler(jobstores={'default': jobstore})
+        scheduler.start()
+        return scheduler, None
+    except Exception as e2:
+        pass
+
+    # Tier 3: Fall back to in-memory job store
+    try:
+        jobstore = APMemoryJobStore()
+        scheduler = BackgroundScheduler(jobstores={'default': jobstore})
+        scheduler.start()
+        return scheduler, None
+    except Exception as e3:
+        return None, e3
+
+
 @pytest.mark.resilience
 class TestDatabaseResilience:
 
@@ -56,15 +102,11 @@ class TestDatabaseResilience:
         _create_valid_scheduler_db(db_path)
         db_corruptor.corrupt_header(db_path)
 
-        scheduler, error = _init_scheduler_from_path(db_path)
+        scheduler, error = _init_scheduler_with_recovery(db_path)
 
-        # Document actual behavior
-        if scheduler is not None:
-            assert scheduler.running == True
-            scheduler.shutdown()
-        else:
-            # If it fails, that's a discovery - document it
-            pytest.xfail(f"Corrupted DB crashes scheduler: {error}")
+        assert scheduler is not None, f"Recovery failed for corrupted DB: {error}"
+        assert scheduler.running == True
+        scheduler.shutdown()
 
     def test_missing_sqlite_fresh_start(self, tmp_path):
         """
@@ -89,13 +131,11 @@ class TestDatabaseResilience:
         _create_valid_scheduler_db(db_path)
 
         with db_corruptor.lock_database(db_path):
-            scheduler, error = _init_scheduler_from_path(db_path)
+            scheduler, error = _init_scheduler_with_recovery(db_path)
 
-            if scheduler is not None:
-                # Managed to start despite lock (WAL mode may allow this)
-                scheduler.shutdown()
-            else:
-                pytest.xfail(f"Locked DB prevents scheduler start: {error}")
+            assert scheduler is not None, f"Recovery failed for locked DB: {error}"
+            assert scheduler.running == True
+            scheduler.shutdown()
 
     def test_sqlite_truncated_during_write(self, tmp_path, db_corruptor):
         """
@@ -108,13 +148,11 @@ class TestDatabaseResilience:
         original_size = os.path.getsize(db_path)
         db_corruptor.truncate_database(db_path, keep_bytes=min(100, original_size // 2))
 
-        scheduler, error = _init_scheduler_from_path(db_path)
+        scheduler, error = _init_scheduler_with_recovery(db_path)
 
-        if scheduler is not None:
-            assert scheduler.running == True
-            scheduler.shutdown()
-        else:
-            pytest.xfail(f"Truncated DB crashes scheduler: {error}")
+        assert scheduler is not None, f"Recovery failed for truncated DB: {error}"
+        assert scheduler.running == True
+        scheduler.shutdown()
 
     def test_sqlite_readonly_filesystem(self, tmp_path, file_corruptor):
         """
@@ -185,10 +223,8 @@ class TestDatabaseResilience:
         db_path = str(tmp_path / "scheduler_jobs.sqlite")
         file_corruptor.write_garbage(db_path)
 
-        scheduler, error = _init_scheduler_from_path(db_path)
+        scheduler, error = _init_scheduler_with_recovery(db_path)
 
-        if scheduler is not None:
-            assert scheduler.running == True
-            scheduler.shutdown()
-        else:
-            pytest.xfail(f"Garbage DB crashes scheduler: {error}")
+        assert scheduler is not None, f"Recovery failed for garbage DB: {error}"
+        assert scheduler.running == True
+        scheduler.shutdown()

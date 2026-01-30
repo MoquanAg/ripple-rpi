@@ -33,7 +33,7 @@ class DosingRuntimeTracker:
             try:
                 with open(self.storage_path, 'r') as f:
                     self.history = json.load(f)
-            except (json.JSONDecodeError, IOError):
+            except (json.JSONDecodeError, IOError, UnicodeDecodeError):
                 self.history = {}
         else:
             self.history = {}

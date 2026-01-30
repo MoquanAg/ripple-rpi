@@ -63,14 +63,17 @@ DEVICE_CONFIG_FILE = configparser.ConfigParser()
 if not os.path.exists(DEVICE_CONF_PATH):
     logger.error(f"Device configuration file not found at {DEVICE_CONF_PATH}")
 else:
-    loaded_files = DEVICE_CONFIG_FILE.read(DEVICE_CONF_PATH)
-    if not loaded_files:
-        logger.error(f"Failed to load device configuration from {DEVICE_CONF_PATH}")
-    else:
-        if 'SENSORS' not in DEVICE_CONFIG_FILE:
-            logger.warning("No 'SENSORS' section found in device configuration")
+    try:
+        loaded_files = DEVICE_CONFIG_FILE.read(DEVICE_CONF_PATH)
+        if not loaded_files:
+            logger.error(f"Failed to load device configuration from {DEVICE_CONF_PATH}")
         else:
-            logger.info("Device configuration loaded successfully")
+            if 'SENSORS' not in DEVICE_CONFIG_FILE:
+                logger.warning("No 'SENSORS' section found in device configuration")
+            else:
+                logger.info("Device configuration loaded successfully")
+    except (configparser.MissingSectionHeaderError, configparser.ParsingError) as e:
+        logger.error(f"Device configuration file is corrupt: {e}. Using defaults.")
 
 
 # Get availabilities from device config
@@ -381,6 +384,7 @@ RELAY_ADDRESS = get_device_address('RELAY_CONTROL', 'RelayOne', '0x10')
 #############################################
 # APScheduler with SQLite persistence
 from apscheduler.jobstores.sqlalchemy import SQLAlchemyJobStore
+from apscheduler.jobstores.memory import MemoryJobStore as APMemoryJobStore
 
 # Configure unified scheduler database path
 SCHEDULER_DB_PATH = os.path.join(BASE_DIR, "..", "data", "scheduler_jobs.sqlite")
@@ -391,15 +395,42 @@ _scheduler_running = False  # Add this flag to track scheduler state
 def start_scheduler():
     global scheduler, _scheduler_running
     if not _scheduler_running:
-        # Configure SQLite jobstore for unified scheduling
-        jobstore = SQLAlchemyJobStore(url=f'sqlite:///{SCHEDULER_DB_PATH}')
-        scheduler = BackgroundScheduler(jobstores={'default': jobstore})
-        scheduler.start()
-        _scheduler_running = True
-        logger.info(f"Scheduler started with unified database: {SCHEDULER_DB_PATH}")
-        
+        jobstore = None
+        engine_options = {'connect_args': {'timeout': 10}}
+
+        # Attempt 1: Try to open existing SQLite database
+        try:
+            jobstore = SQLAlchemyJobStore(url=f'sqlite:///{SCHEDULER_DB_PATH}', engine_options=engine_options)
+            scheduler = BackgroundScheduler(jobstores={'default': jobstore})
+            scheduler.start()
+            _scheduler_running = True
+            logger.info(f"Scheduler started with unified database: {SCHEDULER_DB_PATH}")
+        except Exception as e:
+            logger.warning(f"Scheduler failed to start with existing database: {e}")
+            # Attempt 2: Delete corrupt DB and retry with fresh database
+            try:
+                if os.path.exists(SCHEDULER_DB_PATH):
+                    os.remove(SCHEDULER_DB_PATH)
+                    logger.info(f"Deleted corrupt scheduler database: {SCHEDULER_DB_PATH}")
+                jobstore = SQLAlchemyJobStore(url=f'sqlite:///{SCHEDULER_DB_PATH}', engine_options=engine_options)
+                scheduler = BackgroundScheduler(jobstores={'default': jobstore})
+                scheduler.start()
+                _scheduler_running = True
+                logger.info(f"Scheduler started with fresh database: {SCHEDULER_DB_PATH}")
+            except Exception as e2:
+                # Attempt 3: Fall back to in-memory job store
+                logger.warning(f"Scheduler failed with fresh database: {e2}. Falling back to MemoryJobStore.")
+                try:
+                    jobstore = APMemoryJobStore()
+                    scheduler = BackgroundScheduler(jobstores={'default': jobstore})
+                    scheduler.start()
+                    _scheduler_running = True
+                    logger.warning("Scheduler started with in-memory job store (jobs will not persist across restarts)")
+                except Exception as e3:
+                    logger.error(f"Scheduler failed to start entirely: {e3}")
+
         # Add weekly reboot job if enabled (with replace_existing to avoid conflicts)
-        if WEEKLY_REBOOT_ENABLED:
+        if _scheduler_running and WEEKLY_REBOOT_ENABLED:
             # Use string reference instead of direct function reference to avoid import issues
             scheduler.add_job(
                 'src.system_reboot:safe_system_reboot',

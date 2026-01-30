@@ -216,6 +216,9 @@ def save_data(subpath, data, path):
     except FileNotFoundError:
         globals.logger.info(f"No file found for {path}. Creating a new one.")
         config = {}
+    except UnicodeDecodeError:
+        globals.logger.info(f"Corrupt binary data in {path}. Initializing a new one.")
+        config = {}
 
     if not subpath:
         config.update(data)
