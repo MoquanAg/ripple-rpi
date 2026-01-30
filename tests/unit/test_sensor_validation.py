@@ -105,3 +105,38 @@ def test_water_level_valid_range_accepted():
     assert is_valid_water_level(0) == True
     assert is_valid_water_level(50) == True
     assert is_valid_water_level(100) == True
+
+
+def test_ec_change_within_threshold_accepted():
+    """EC change ±0.5 is normal"""
+    from src.sensor_validation import is_ec_change_valid
+    assert is_ec_change_valid(1.0, 1.5) == True  # +0.5
+    assert is_ec_change_valid(1.5, 1.0) == True  # -0.5
+
+
+def test_ec_change_exceeds_threshold_rejected():
+    """EC change > ±0.5 indicates noise or sensor error"""
+    from src.sensor_validation import is_ec_change_valid
+    assert is_ec_change_valid(1.0, 1.6) == False  # +0.6
+    assert is_ec_change_valid(1.6, 1.0) == False  # -0.6
+
+
+def test_ec_change_with_none_rejected():
+    """Cannot calculate change with None values"""
+    from src.sensor_validation import is_ec_change_valid
+    assert is_ec_change_valid(None, 1.5) == False
+    assert is_ec_change_valid(1.5, None) == False
+
+
+def test_ph_change_within_threshold_accepted():
+    """pH change ±0.5 is normal"""
+    from src.sensor_validation import is_ph_change_valid
+    assert is_ph_change_valid(6.5, 7.0) == True  # +0.5
+    assert is_ph_change_valid(7.0, 6.5) == True  # -0.5
+
+
+def test_ph_change_exceeds_threshold_rejected():
+    """pH change > ±0.5 indicates noise or sensor error"""
+    from src.sensor_validation import is_ph_change_valid
+    assert is_ph_change_valid(6.5, 7.2) == False  # +0.7
+    assert is_ph_change_valid(7.2, 6.5) == False  # -0.7

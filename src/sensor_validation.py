@@ -16,6 +16,10 @@ PH_MAX_VALID = 9.0  # Hardware sensor upper limit
 WATER_LEVEL_MIN = 0    # 0% (empty)
 WATER_LEVEL_MAX = 100  # 100% (full)
 
+# Sensor Change Thresholds
+EC_MAX_CHANGE = 0.5   # mS/cm - max change per cycle
+PH_MAX_CHANGE = 0.5   # pH units - max change per run
+
 
 def is_valid_ec(ec_value: Union[float, int, None]) -> bool:
     """
@@ -98,3 +102,53 @@ def is_valid_water_level(level: Union[float, int, None]) -> bool:
         return False
 
     return True
+
+
+def is_ec_change_valid(previous_ec: Union[float, int, None],
+                       current_ec: Union[float, int, None]) -> bool:
+    """
+    Validate EC change between readings.
+
+    Max allowed change: ±0.5 mS/cm per cycle
+    Larger changes indicate sensor noise or malfunction
+
+    Args:
+        previous_ec: Previous EC reading
+        current_ec: Current EC reading
+
+    Returns:
+        True if change is within valid range, False otherwise
+    """
+    if previous_ec is None or current_ec is None:
+        return False
+
+    if not isinstance(previous_ec, (int, float)) or not isinstance(current_ec, (int, float)):
+        return False
+
+    change = abs(current_ec - previous_ec)
+    return change <= EC_MAX_CHANGE
+
+
+def is_ph_change_valid(previous_ph: Union[float, int, None],
+                       current_ph: Union[float, int, None]) -> bool:
+    """
+    Validate pH change between readings.
+
+    Max allowed change: ±0.5 per run
+    Larger changes indicate sensor noise or malfunction
+
+    Args:
+        previous_ph: Previous pH reading
+        current_ph: Current pH reading
+
+    Returns:
+        True if change is within valid range, False otherwise
+    """
+    if previous_ph is None or current_ph is None:
+        return False
+
+    if not isinstance(previous_ph, (int, float)) or not isinstance(current_ph, (int, float)):
+        return False
+
+    change = abs(current_ph - previous_ph)
+    return change <= PH_MAX_CHANGE
