@@ -191,3 +191,10 @@ mixing_duration = 00:00:10, 00:00:10
     monkeypatch.setattr("src.globals.DEVICE_CONF_PATH", str(device_conf))
 
     return ConfigHelper(str(device_conf))
+
+@pytest.fixture
+def mock_runtime_tracker(tmp_path):
+    """Mock runtime tracker for testing"""
+    from src.runtime_tracker import DosingRuntimeTracker
+    tracker = DosingRuntimeTracker(storage_path=str(tmp_path / "runtime.json"))
+    return tracker
