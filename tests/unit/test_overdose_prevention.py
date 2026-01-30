@@ -114,3 +114,63 @@ def test_runtime_tracking_excludes_operational_pumps(tmp_path):
     tracker = DosingRuntimeTracker(storage_path=str(tmp_path / "runtime.json"))
     tracker.add_dosing_event("NutrientPumpA", duration_seconds=300)
     assert tracker.get_today_total_runtime() == 300
+
+
+def test_ec_no_increase_after_1min_stops_dosing(mock_ec_sensor, mock_relay, tmp_path):
+    """EC stuck at same value after 1 min runtime triggers alert"""
+    from src.stuck_sensor_detection import StuckSensorDetector
+
+    detector = StuckSensorDetector()
+
+    with freeze_time("2026-01-30 10:00:00") as frozen_time:
+        mock_ec_sensor.ec = 1.0
+        detector.start_dosing("ec", initial_value=1.0)
+        frozen_time.tick(delta=timedelta(seconds=20))
+        result1 = detector.check_sensor_response("ec", current_value=1.0, runtime_seconds=20)
+        assert result1.stuck == False
+
+        detector.start_dosing("ec", initial_value=1.0)
+        frozen_time.tick(delta=timedelta(seconds=20))
+        result2 = detector.check_sensor_response("ec", current_value=1.0, runtime_seconds=20)
+        assert result2.stuck == False
+
+        detector.start_dosing("ec", initial_value=1.0)
+        frozen_time.tick(delta=timedelta(seconds=21))
+        result3 = detector.check_sensor_response("ec", current_value=1.0, runtime_seconds=21)
+
+        assert result3.stuck == True
+        assert result3.action == "stop_dosing_alert"
+
+
+def test_ec_increase_resets_stuck_counter():
+    """EC increase resets stuck sensor counter"""
+    from src.stuck_sensor_detection import StuckSensorDetector
+
+    detector = StuckSensorDetector()
+
+    detector.start_dosing("ec", initial_value=1.0)
+    result1 = detector.check_sensor_response("ec", current_value=1.0, runtime_seconds=30)
+    assert result1.stuck == False
+
+    detector.start_dosing("ec", initial_value=1.0)
+    result2 = detector.check_sensor_response("ec", current_value=1.2, runtime_seconds=20)
+    assert result2.stuck == False
+    assert result2.sensor_responding == True
+
+    detector.start_dosing("ec", initial_value=1.2)
+    result3 = detector.check_sensor_response("ec", current_value=1.2, runtime_seconds=30)
+    assert result3.stuck == False
+
+
+def test_ph_no_change_after_1min_stops_dosing():
+    """pH stuck at same value after 1 min runtime triggers alert"""
+    from src.stuck_sensor_detection import StuckSensorDetector
+
+    detector = StuckSensorDetector()
+
+    with freeze_time("2026-01-30 10:00:00") as frozen_time:
+        detector.start_dosing("ph", initial_value=6.5)
+        frozen_time.tick(delta=timedelta(seconds=61))
+        result = detector.check_sensor_response("ph", current_value=6.5, runtime_seconds=61)
+
+        assert result.stuck == True
