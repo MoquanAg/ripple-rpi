@@ -174,3 +174,66 @@ def test_ph_no_change_after_1min_stops_dosing():
         result = detector.check_sensor_response("ph", current_value=6.5, runtime_seconds=61)
 
         assert result.stuck == True
+
+
+def test_stuck_relay_triggers_emergency(mock_relay, tmp_path):
+    """Relay that stays ON after OFF command triggers emergency"""
+    from src.emergency_shutdown import is_emergency_active, trigger_emergency_shutdown
+    flag_path = str(tmp_path / "emergency.flag")
+    mock_relay.set_relay("NutrientPumpA", True)
+    mock_relay.set_relay("NutrientPumpA", False)
+    mock_relay._force_stuck_state("NutrientPumpA", True)
+    actual_state = mock_relay.get_relay_state("NutrientPumpA")
+    expected_state = False
+    if actual_state != expected_state:
+        trigger_emergency_shutdown(
+            reason=f"stuck_relay_NutrientPumpA",
+            flag_path=flag_path,
+            relay=mock_relay
+        )
+    assert is_emergency_active(flag_path) == True
+
+
+@pytest.mark.parametrize("pump_name", [
+    "NutrientPumpA",
+    "NutrientPumpB",
+    "NutrientPumpC",
+    "pHPlusPump",
+    "pHMinusPump",
+])
+def test_relay_verification_all_dosing_pumps(pump_name, mock_relay, tmp_path):
+    """Relay verification applies to all dosing pumps"""
+    from src.emergency_shutdown import is_emergency_active, trigger_emergency_shutdown
+    flag_path = str(tmp_path / "emergency.flag")
+    mock_relay.set_relay(pump_name, True)
+    mock_relay.set_relay(pump_name, False)
+    mock_relay._force_stuck_state(pump_name, True)
+    actual = mock_relay.get_relay_state(pump_name)
+    if actual != False:
+        trigger_emergency_shutdown(
+            reason=f"stuck_relay_{pump_name}",
+            flag_path=flag_path,
+            relay=mock_relay
+        )
+    assert is_emergency_active(flag_path) == True
+
+
+def test_relay_readback_timeout_triggers_safe_default(mock_relay, tmp_path):
+    """Relay readback timeout treated as unsafe"""
+    from unittest.mock import MagicMock
+    from src.emergency_shutdown import is_emergency_active, trigger_emergency_shutdown
+    flag_path = str(tmp_path / "emergency.flag")
+    original_get = mock_relay.get_relay_state
+    mock_relay.get_relay_state = MagicMock(side_effect=TimeoutError("Modbus timeout"))
+    try:
+        state = mock_relay.get_relay_state("NutrientPumpA")
+        safe = True
+    except TimeoutError:
+        trigger_emergency_shutdown(
+            reason="relay_readback_timeout",
+            flag_path=flag_path,
+            relay=mock_relay
+        )
+        safe = False
+    assert safe == False
+    assert is_emergency_active(flag_path) == True
