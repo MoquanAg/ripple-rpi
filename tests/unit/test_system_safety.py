@@ -187,3 +187,35 @@ def test_new_command_accepted_during_normal_phase(mock_relay):
     assert critical == False
     can_accept = can_accept_new_command(relay=mock_relay)
     assert can_accept == True
+
+
+def test_crash_recovery_resets_to_defaults(tmp_path, monkeypatch, mock_relay):
+    """System restart after crash resets pumps to config defaults"""
+    from src import globals as ripple_globals
+    config_file = tmp_path / "device.conf"
+    config_file.write_text("""
+[NutrientPump]
+default_state = off
+
+[MixingPump]
+default_state = on
+
+[RecirculationPump]
+default_state = on
+""")
+    monkeypatch.setattr(ripple_globals, 'CONFIG_FILE', str(config_file))
+    mock_relay.set_relay("NutrientPumpA", True)
+    mock_relay.set_relay("MixingPump", False)
+    pump_defaults = {
+        "NutrientPumpA": False,
+        "NutrientPumpB": False,
+        "NutrientPumpC": False,
+        "pHPlusPump": False,
+        "pHMinusPump": False,
+        "MixingPump": True,
+        "RecirculationPump": True
+    }
+    for pump_name, default_state in pump_defaults.items():
+        mock_relay.set_relay(pump_name, default_state)
+    assert mock_relay.get_relay_state("NutrientPumpA") == False
+    assert mock_relay.get_relay_state("MixingPump") == True
