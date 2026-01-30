@@ -165,3 +165,25 @@ ec_target = {invalid_ec}
     except:
         ec_target = 1.2
     assert ec_target == expected_default
+
+
+def test_new_command_rejected_during_critical_phase(mock_relay):
+    """New command rejected when dosing is active"""
+    from src.critical_phase_lock import is_in_critical_phase, can_accept_new_command
+    mock_relay.set_relay("NutrientPumpA", True)
+    critical = is_in_critical_phase(relay=mock_relay)
+    assert critical == True
+    can_accept = can_accept_new_command(relay=mock_relay)
+    assert can_accept == False
+
+
+def test_new_command_accepted_during_normal_phase(mock_relay):
+    """New command accepted when waiting between cycles"""
+    from src.critical_phase_lock import is_in_critical_phase, can_accept_new_command
+    mock_relay.set_relay("NutrientPumpA", False)
+    mock_relay.set_relay("NutrientPumpB", False)
+    mock_relay.set_relay("NutrientPumpC", False)
+    critical = is_in_critical_phase(relay=mock_relay)
+    assert critical == False
+    can_accept = can_accept_new_command(relay=mock_relay)
+    assert can_accept == True
