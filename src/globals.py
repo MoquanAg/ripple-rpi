@@ -435,9 +435,8 @@ def get_scheduler():
     return scheduler
 
 
-# Initialize the unified scheduler on module load
-if not _scheduler_running:
-    start_scheduler()
+# Scheduler is started explicitly by main.py via start_scheduler()
+# This avoids stale jobs running when individual modules are imported for testing
 
 
 def remove_scheduler_job(job_id):

@@ -17,6 +17,7 @@ src_dir = os.path.join(current_dir, 'src')
 sys.path.append(src_dir)
 
 import globals
+globals.start_scheduler()
 import helpers
 from src.sensors.water_level import WaterLevel
 from src.sensors.Relay import Relay
