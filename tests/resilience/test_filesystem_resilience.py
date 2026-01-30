@@ -40,14 +40,10 @@ class TestSensorDataResilience:
         file_corruptor.write_truncated(sensor_file, valid_json, truncate_at=20)
 
         # save_data reads existing file, handles JSONDecodeError
-        try:
-            save_data([], {"new_key": "value"}, sensor_file)
-            # If it succeeds, it handled the corrupt file
-            with open(sensor_file, 'r') as f:
-                result = json.loads(f.read())
-            assert "new_key" in result
-        except Exception as e:
-            pytest.xfail(f"Truncated JSON crashes save_data: {e}")
+        save_data([], {"new_key": "value"}, sensor_file)
+        with open(sensor_file, 'r') as f:
+            result = json.loads(f.read())
+        assert "new_key" in result
 
     def test_sensor_data_json_garbage(self, tmp_path, file_corruptor):
         """
@@ -91,13 +87,10 @@ class TestSensorDataResilience:
         sensor_file = str(tmp_path / "saved_sensor_data.json")
         file_corruptor.write_empty(sensor_file)
 
-        try:
-            save_data([], {"ec": 1.0}, sensor_file)
-            with open(sensor_file, 'r') as f:
-                result = json.loads(f.read())
-            assert "ec" in result
-        except Exception as e:
-            pytest.xfail(f"Empty JSON file crashes save_data: {e}")
+        save_data([], {"ec": 1.0}, sensor_file)
+        with open(sensor_file, 'r') as f:
+            result = json.loads(f.read())
+        assert "ec" in result
 
     def test_saved_sensor_data_loader_corrupt(self, tmp_path, file_corruptor, monkeypatch):
         """
