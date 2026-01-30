@@ -55,6 +55,8 @@ def test_ph_above_max_rejected():
 
 @pytest.mark.parametrize("invalid_value", [
     float('nan'),
+    float('inf'),
+    float('-inf'),
     None,
     -1.0,
 ])
@@ -82,6 +84,19 @@ def test_water_level_above_max_rejected():
     """Water level cannot exceed 100%"""
     from src.sensor_validation import is_valid_water_level
     assert is_valid_water_level(150) == False
+
+
+@pytest.mark.parametrize("invalid_value", [
+    float('nan'),
+    float('inf'),
+    float('-inf'),
+    None,
+    -150,
+])
+def test_water_level_invalid_values_rejected(invalid_value):
+    """Water level must be valid number in range"""
+    from src.sensor_validation import is_valid_water_level
+    assert is_valid_water_level(invalid_value) == False
 
 
 def test_water_level_valid_range_accepted():

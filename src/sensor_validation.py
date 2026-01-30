@@ -67,7 +67,7 @@ def is_valid_ph(ph_value: Union[float, int, None]) -> bool:
     if ph_value is None or not isinstance(ph_value, (int, float)):
         return False
 
-    if math.isnan(ph_value):
+    if math.isnan(ph_value) or math.isinf(ph_value):
         return False
 
     if ph_value < PH_MIN_VALID or ph_value > PH_MAX_VALID:
@@ -91,7 +91,7 @@ def is_valid_water_level(level: Union[float, int, None]) -> bool:
     if level is None or not isinstance(level, (int, float)):
         return False
 
-    if math.isnan(level):
+    if math.isnan(level) or math.isinf(level):
         return False
 
     if level < WATER_LEVEL_MIN or level > WATER_LEVEL_MAX:
