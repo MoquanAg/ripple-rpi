@@ -392,3 +392,36 @@ class TestFormatResults:
         from src.sensor_scanner import format_results
         output = format_results([])
         assert 'No sensors found' in output
+
+
+# ---------------------------------------------------------------------------
+# ScanRequest Pydantic model tests
+# ---------------------------------------------------------------------------
+class TestScanRequest:
+    def test_scan_request_defaults(self):
+        from src.sensor_scanner import ScanRequest, DEFAULT_PORTS, DEFAULT_BAUD_RATES, \
+            DEFAULT_ADDR_START, DEFAULT_ADDR_END, DEFAULT_SENSOR_TYPES
+        req = ScanRequest()
+        assert req.ports == DEFAULT_PORTS
+        assert req.baud_rates == DEFAULT_BAUD_RATES
+        assert req.addr_start == DEFAULT_ADDR_START
+        assert req.addr_end == DEFAULT_ADDR_END
+        assert req.sensor_types == DEFAULT_SENSOR_TYPES
+        assert req.short_circuit is True
+
+    def test_scan_request_custom(self):
+        from src.sensor_scanner import ScanRequest
+        req = ScanRequest(
+            ports=['/dev/ttyAMA1'],
+            baud_rates=[9600],
+            addr_start=0x10,
+            addr_end=0x20,
+            sensor_types=['ph'],
+            short_circuit=False,
+        )
+        assert req.ports == ['/dev/ttyAMA1']
+        assert req.baud_rates == [9600]
+        assert req.addr_start == 0x10
+        assert req.addr_end == 0x20
+        assert req.sensor_types == ['ph']
+        assert req.short_circuit is False

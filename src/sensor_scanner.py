@@ -30,6 +30,20 @@ PROBE_PARAMS: Dict[str, dict] = {
 
 INTER_PROBE_DELAY = 0.05  # seconds between probes at the same address
 
+# ── Pydantic model for API ───────────────────────────────────────────────────
+try:
+    from pydantic import BaseModel
+
+    class ScanRequest(BaseModel):
+        ports: List[str] = DEFAULT_PORTS
+        baud_rates: List[int] = DEFAULT_BAUD_RATES
+        addr_start: int = DEFAULT_ADDR_START
+        addr_end: int = DEFAULT_ADDR_END
+        sensor_types: List[str] = DEFAULT_SENSOR_TYPES
+        short_circuit: bool = True
+except ImportError:
+    pass  # Pydantic not available in CLI-only mode
+
 
 class SensorScanner:
     """Scan Modbus bus for connected sensors."""

@@ -11,6 +11,7 @@ from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import secrets
+import time
 from datetime import datetime
 import uvicorn
 
@@ -29,6 +30,7 @@ from src.sensors.DO import DO
 from src.sensors.pH import pH
 from src.sensors.ec import EC
 from main import RippleController
+from src.sensor_scanner import SensorScanner, ScanRequest
 
 # Pydantic models for API requests/responses
 class RelayControl(BaseModel):
@@ -1333,6 +1335,42 @@ async def update_sprinkler_config(sprinkler_config: SprinklerConfig, username: s
     except Exception as e:
         logger.error(f"Error updating sprinkler configuration: {e}")
         raise HTTPException(status_code=500, detail=f"Error updating sprinkler configuration: {str(e)}")
+
+@app.post("/api/v1/scan", tags=["Diagnostics"])
+async def scan_sensors(request: ScanRequest = None, username: str = Depends(verify_credentials)):
+    """Scan for Modbus sensors across ports, baud rates, and addresses."""
+    if request is None:
+        request = ScanRequest()
+
+    scanner = SensorScanner(
+        modbus_client=globals.modbus_client,
+        ports=request.ports,
+        baud_rates=request.baud_rates,
+        addr_start=request.addr_start,
+        addr_end=request.addr_end,
+        sensor_types=request.sensor_types,
+        short_circuit=request.short_circuit,
+    )
+
+    start_time = time.time()
+    results = scanner.scan()
+    duration = time.time() - start_time
+
+    return {
+        "status": "completed",
+        "sensors_found": results,
+        "scan_parameters": {
+            "ports": request.ports,
+            "baud_rates": request.baud_rates,
+            "addr_start": f"0x{request.addr_start:02x}",
+            "addr_end": f"0x{request.addr_end:02x}",
+            "sensor_types": request.sensor_types,
+            "short_circuit": request.short_circuit,
+        },
+        "total_probes": len(request.ports) * len(request.baud_rates) * (request.addr_end - request.addr_start + 1),
+        "duration_seconds": round(duration, 1),
+    }
+
 
 # Run the server if script is executed directly
 if __name__ == "__main__":
