@@ -14,8 +14,8 @@ from typing import Any, Callable, Dict, List, Optional
 logger = logging.getLogger(__name__)
 
 # ── defaults ────────────────────────────────────────────────────────────────
-DEFAULT_PORTS = ['/dev/ttyAMA2']
-DEFAULT_BAUD_RATES = [9600]
+DEFAULT_PORTS = ['/dev/ttyAMA1', '/dev/ttyAMA2', '/dev/ttyAMA3']
+DEFAULT_BAUD_RATES = [4800, 9600, 38400]
 DEFAULT_ADDR_START = 0x00
 DEFAULT_ADDR_END = 0x99
 DEFAULT_SENSOR_TYPES = ['ec', 'water_level', 'ph', 'do']
@@ -65,19 +65,25 @@ class SensorScanner:
                 for addr in range(self.addr_start, self.addr_end + 1):
                     found = self._probe_address(port, baud, addr)
                     if found is not None:
+                        metadata = {
+                            'port': port,
+                            'baud_rate': baud,
+                            'address': f'0x{addr:02x}',
+                            'address_decimal': addr,
+                        }
                         if isinstance(found, list):
                             for item in found:
-                                item.update({'port': port, 'baudrate': baud, 'address': addr})
+                                item.update(metadata)
                                 results.append(item)
                         else:
-                            found.update({'port': port, 'baudrate': baud, 'address': addr})
+                            found.update(metadata)
                             results.append(found)
 
                     if self.on_progress is not None:
                         self.on_progress({
                             'port': port,
-                            'baudrate': baud,
-                            'address': addr,
+                            'baud_rate': baud,
+                            'address': f'0x{addr:02x}',
                             'found': found is not None,
                         })
 

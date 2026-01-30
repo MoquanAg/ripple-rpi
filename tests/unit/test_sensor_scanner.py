@@ -261,9 +261,10 @@ class TestScanIntegration:
         results = scanner.scan()
         assert len(results) == 1
         assert results[0]['sensor_type'] == 'ph'
-        assert results[0]['address'] == 0x02
+        assert results[0]['address'] == '0x02'
+        assert results[0]['address_decimal'] == 0x02
         assert results[0]['port'] == '/dev/ttyAMA2'
-        assert results[0]['baudrate'] == 9600
+        assert results[0]['baud_rate'] == 9600
 
     def test_scan_short_circuit_skips_remaining_probes(self):
         from src.sensor_scanner import SensorScanner
@@ -350,5 +351,5 @@ class TestScanIntegration:
         scanner.scan()
         # Should have received a progress call for each address scanned
         assert len(progress_calls) == 2
-        assert progress_calls[0]['address'] == 0x01
-        assert progress_calls[1]['address'] == 0x02
+        assert progress_calls[0]['address'] == '0x01'
+        assert progress_calls[1]['address'] == '0x02'
