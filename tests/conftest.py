@@ -51,6 +51,8 @@ target_ec = 1.0, 1.2
 [Sprinkler]
 sprinkler_scheduling_enabled = true
 sprinkler_on_at_startup = false
+sprinkler_on_duration = 00:02:00, 00:02:00
+sprinkler_wait_duration = 02:00:00, 02:00:00
 
 [WaterLevel]
 check_interval = 00:05:00, 00:05:00
@@ -180,6 +182,8 @@ ec_deadband = 0.1, 0.1
 [Sprinkler]
 sprinkler_scheduling_enabled = true
 sprinkler_on_at_startup = false
+sprinkler_on_duration = 00:02:00, 00:02:00
+sprinkler_wait_duration = 02:00:00, 02:00:00
 
 [WaterLevel]
 check_interval = 00:05:00, 00:05:00

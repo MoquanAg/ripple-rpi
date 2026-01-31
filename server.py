@@ -21,8 +21,8 @@ src_dir = os.path.join(current_dir, 'src')
 sys.path.append(src_dir)
 
 # Import controller modules
-import globals
-import helpers
+import src.globals as globals
+import src.helpers as helpers
 from src.lumina_logger import GlobalLogger
 from src.sensors.water_level import WaterLevel
 from src.sensors.Relay import Relay

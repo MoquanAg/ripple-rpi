@@ -30,8 +30,8 @@ except Exception:
 def get_scheduler():
     """Get the global scheduler instance from globals.py"""
     try:
-        from src.globals import scheduler
-        return scheduler
+        import src.globals as globals_module
+        return globals_module.get_scheduler()
     except Exception as e:
         logger.error(f"Error getting global scheduler: {e}")
         return None
