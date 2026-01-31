@@ -81,6 +81,17 @@ pip install -r requirements.txt
 # cd ~/lumina-modbus-server && ./start_server.sh
 ```
 
+### Process Management
+
+- **`start_ripple.sh` launches terminal GUI windows**, NOT systemd services. Do NOT use `systemctl` to restart or check status — it won't work.
+- Processes typically run inside a tmux session. To restart: send `Ctrl-C` to the tmux panes, then relaunch.
+
+### Logs
+
+- **Always check `log/` directory** for application logs, not tmux pane output (tmux buffers get pushed out by verbose output)
+- Log files rotate daily at 2MB max: `log/ripple_*.log`
+- Example: `grep -i sprinkler log/ripple_*.log`
+
 ## Key Patterns
 
 - **Singleton pattern** for hardware: `LuminaModbusClient`, `Relay` (prevents resource conflicts)
