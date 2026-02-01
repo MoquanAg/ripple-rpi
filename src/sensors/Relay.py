@@ -350,7 +350,7 @@ class Relay:
             command=command,
             baudrate=self.baud_rate,
             response_length=8,
-            timeout=0.5,
+            timeout=5.0,
         )
         self.pending_commands[command_id] = {
             "type": "turn_on",
@@ -412,7 +412,7 @@ class Relay:
             command=command,
             baudrate=self.baud_rate,
             response_length=8,
-            timeout=0.5,
+            timeout=5.0,
         )
         self.pending_commands[command_id] = {
             "type": "turn_off",
@@ -896,7 +896,7 @@ class Relay:
             command=command,
             baudrate=self.baud_rate,
             response_length=8,
-            timeout=0.5,
+            timeout=5.0,
         )
         logger.info(f"baudrate: {self.baud_rate}")
         self.pending_commands[command_id] = {
