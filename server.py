@@ -159,7 +159,7 @@ def verify_credentials(credentials: HTTPBasicCredentials = Depends(security)):
     return credentials.username
 
 # Initialize the controller
-controller = RippleController()
+controller = RippleController(enable_file_watcher=False)
 
 def _time_to_seconds(time_str):
     """
@@ -229,6 +229,28 @@ def _parse_config_value(section, key, config_parser, preferred_index=1):
             return config_parser.get(section, key).split(',')[0].strip()
         except Exception:
             return ""
+
+
+def _safe_get_first_value(config_parser, section, key, default=""):
+    """
+    Safely get the first comma-separated value from a config entry.
+
+    Args:
+        config_parser: ConfigParser instance
+        section (str): Config section name
+        key (str): Config key name
+        default (str): Default value if first value doesn't exist
+
+    Returns:
+        str: The first value or default
+    """
+    try:
+        raw_value = config_parser.get(section, key)
+        parts = raw_value.split(',')
+        return parts[0].strip()
+    except Exception as e:
+        logger.warning(f"Could not get first value for {section}.{key}: {e}")
+        return default
 
 
 def _safe_get_second_value(config_parser, section, key, default=""):
@@ -331,21 +353,22 @@ def get_valid_relay_fields():
 def update_device_conf(instruction_set: Dict) -> bool:
     """
     Update device.conf with values from server instruction set.
-    
+
     Processes a server instruction set and updates the device configuration file
-    with new fertigation parameters. This function handles the mapping from
-    server instruction format to device.conf format while preserving existing
-    secondary values in comma-separated entries.
-    
+    with new fertigation parameters. Updates the second (operational) value in
+    comma-separated entries so controllers pick up the change immediately.
+    The first value is preserved as a reference.
+
     Args:
         instruction_set (Dict): Server instruction set containing fertigation parameters
-        
+
     Returns:
         bool: True if update successful, False otherwise
-        
+
     Note:
         - Updates pH, EC, nutrient pump, sprinkler, water temperature, and recirculation settings
-        - Preserves second values in comma-separated configuration entries
+        - Preserves first values as reference in comma-separated configuration entries
+        - Updates second (operational) values that controllers actually read
         - Writes updated configuration back to device.conf file
         - Logs success/failure and handles exceptions
     """
@@ -356,60 +379,60 @@ def update_device_conf(instruction_set: Dict) -> bool:
         
         # Get fertigation settings from instruction set
         fertigation = instruction_set['current_phase']['details']['action_fertigation']
-        
-        # Update pH settings - keep second value unchanged
-        current_ph_target = _safe_get_second_value(config, 'pH', 'ph_target', fertigation['target_ph'])
-        config.set('pH', 'ph_target', f"{fertigation['target_ph']}, {current_ph_target}")
 
-        current_ph_deadband = _safe_get_second_value(config, 'pH', 'ph_deadband', fertigation['target_ph_deadband'])
-        config.set('pH', 'ph_deadband', f"{fertigation['target_ph_deadband']}, {current_ph_deadband}")
+        # Update pH settings - keep first value as reference, update second (operational) value
+        ref_ph_target = _safe_get_first_value(config, 'pH', 'ph_target', str(fertigation['target_ph']))
+        config.set('pH', 'ph_target', f"{ref_ph_target}, {fertigation['target_ph']}")
 
-        current_ph_min = _safe_get_second_value(config, 'pH', 'ph_min', fertigation['target_ph_min'])
-        config.set('pH', 'ph_min', f"{fertigation['target_ph_min']}, {current_ph_min}")
+        ref_ph_deadband = _safe_get_first_value(config, 'pH', 'ph_deadband', str(fertigation['target_ph_deadband']))
+        config.set('pH', 'ph_deadband', f"{ref_ph_deadband}, {fertigation['target_ph_deadband']}")
 
-        current_ph_max = _safe_get_second_value(config, 'pH', 'ph_max', fertigation['target_ph_max'])
-        config.set('pH', 'ph_max', f"{fertigation['target_ph_max']}, {current_ph_max}")
+        ref_ph_min = _safe_get_first_value(config, 'pH', 'ph_min', str(fertigation['target_ph_min']))
+        config.set('pH', 'ph_min', f"{ref_ph_min}, {fertigation['target_ph_min']}")
 
-        # Update EC settings - keep second value unchanged
-        current_ec_target = _safe_get_second_value(config, 'EC', 'ec_target', fertigation['target_ec'])
-        config.set('EC', 'ec_target', f"{fertigation['target_ec']}, {current_ec_target}")
+        ref_ph_max = _safe_get_first_value(config, 'pH', 'ph_max', str(fertigation['target_ph_max']))
+        config.set('pH', 'ph_max', f"{ref_ph_max}, {fertigation['target_ph_max']}")
 
-        current_ec_deadband = _safe_get_second_value(config, 'EC', 'ec_deadband', fertigation['target_ec_deadband'])
-        config.set('EC', 'ec_deadband', f"{fertigation['target_ec_deadband']}, {current_ec_deadband}")
+        # Update EC settings - keep first value as reference, update second (operational) value
+        ref_ec_target = _safe_get_first_value(config, 'EC', 'ec_target', str(fertigation['target_ec']))
+        config.set('EC', 'ec_target', f"{ref_ec_target}, {fertigation['target_ec']}")
 
-        current_ec_min = _safe_get_second_value(config, 'EC', 'ec_min', fertigation['target_ec_min'])
-        config.set('EC', 'ec_min', f"{fertigation['target_ec_min']}, {current_ec_min}")
+        ref_ec_deadband = _safe_get_first_value(config, 'EC', 'ec_deadband', str(fertigation['target_ec_deadband']))
+        config.set('EC', 'ec_deadband', f"{ref_ec_deadband}, {fertigation['target_ec_deadband']}")
 
-        current_ec_max = _safe_get_second_value(config, 'EC', 'ec_max', fertigation['target_ec_max'])
-        config.set('EC', 'ec_max', f"{fertigation['target_ec_max']}, {current_ec_max}")
+        ref_ec_min = _safe_get_first_value(config, 'EC', 'ec_min', str(fertigation['target_ec_min']))
+        config.set('EC', 'ec_min', f"{ref_ec_min}, {fertigation['target_ec_min']}")
 
-        # Update NutrientPump settings - keep second value unchanged
-        current_abc_ratio = _safe_get_second_value(config, 'NutrientPump', 'abc_ratio', fertigation['abc_ratio'])
-        config.set('NutrientPump', 'abc_ratio', f'"{fertigation["abc_ratio"]}", {current_abc_ratio}')
+        ref_ec_max = _safe_get_first_value(config, 'EC', 'ec_max', str(fertigation['target_ec_max']))
+        config.set('EC', 'ec_max', f"{ref_ec_max}, {fertigation['target_ec_max']}")
 
-        # Update Sprinkler settings - keep second value unchanged
-        current_sprinkler_on = _safe_get_second_value(config, 'Sprinkler', 'sprinkler_on_duration', fertigation['sprinkler_on_duration'])
-        config.set('Sprinkler', 'sprinkler_on_duration', f"{fertigation['sprinkler_on_duration']}, {current_sprinkler_on}")
+        # Update NutrientPump settings - keep first value as reference, update second (operational) value
+        ref_abc_ratio = _safe_get_first_value(config, 'NutrientPump', 'abc_ratio', f'"{fertigation["abc_ratio"]}"')
+        config.set('NutrientPump', 'abc_ratio', f'{ref_abc_ratio}, "{fertigation["abc_ratio"]}"')
 
-        current_sprinkler_wait = _safe_get_second_value(config, 'Sprinkler', 'sprinkler_wait_duration', fertigation['sprinkler_wait_duration'])
-        config.set('Sprinkler', 'sprinkler_wait_duration', f"{fertigation['sprinkler_wait_duration']}, {current_sprinkler_wait}")
+        # Update Sprinkler settings - keep first value as reference, update second (operational) value
+        ref_sprinkler_on = _safe_get_first_value(config, 'Sprinkler', 'sprinkler_on_duration', fertigation['sprinkler_on_duration'])
+        config.set('Sprinkler', 'sprinkler_on_duration', f"{ref_sprinkler_on}, {fertigation['sprinkler_on_duration']}")
 
-        # Update WaterTemperature settings - keep second value unchanged
-        current_temp = _safe_get_second_value(config, 'WaterTemperature', 'target_water_temperature', fertigation['target_water_temperature_min'])
-        config.set('WaterTemperature', 'target_water_temperature', f"{fertigation['target_water_temperature_min']}, {current_temp}")
+        ref_sprinkler_wait = _safe_get_first_value(config, 'Sprinkler', 'sprinkler_wait_duration', fertigation['sprinkler_wait_duration'])
+        config.set('Sprinkler', 'sprinkler_wait_duration', f"{ref_sprinkler_wait}, {fertigation['sprinkler_wait_duration']}")
 
-        current_temp_min = _safe_get_second_value(config, 'WaterTemperature', 'target_water_temperature_min', fertigation['target_water_temperature_min'])
-        config.set('WaterTemperature', 'target_water_temperature_min', f"{fertigation['target_water_temperature_min']}, {current_temp_min}")
+        # Update WaterTemperature settings - keep first value as reference, update second (operational) value
+        ref_temp = _safe_get_first_value(config, 'WaterTemperature', 'target_water_temperature', str(fertigation['target_water_temperature_min']))
+        config.set('WaterTemperature', 'target_water_temperature', f"{ref_temp}, {fertigation['target_water_temperature_min']}")
 
-        current_temp_max = _safe_get_second_value(config, 'WaterTemperature', 'target_water_temperature_max', fertigation['target_water_temperature_max'])
-        config.set('WaterTemperature', 'target_water_temperature_max', f"{fertigation['target_water_temperature_max']}, {current_temp_max}")
+        ref_temp_min = _safe_get_first_value(config, 'WaterTemperature', 'target_water_temperature_min', str(fertigation['target_water_temperature_min']))
+        config.set('WaterTemperature', 'target_water_temperature_min', f"{ref_temp_min}, {fertigation['target_water_temperature_min']}")
 
-        # Update Recirculation settings - keep second value unchanged
-        current_recirc_on = _safe_get_second_value(config, 'Recirculation', 'recirculation_on_duration', fertigation['recirculation_on_duration'])
-        config.set('Recirculation', 'recirculation_on_duration', f"{fertigation['recirculation_on_duration']}, {current_recirc_on}")
+        ref_temp_max = _safe_get_first_value(config, 'WaterTemperature', 'target_water_temperature_max', str(fertigation['target_water_temperature_max']))
+        config.set('WaterTemperature', 'target_water_temperature_max', f"{ref_temp_max}, {fertigation['target_water_temperature_max']}")
 
-        current_recirc_wait = _safe_get_second_value(config, 'Recirculation', 'recirculation_wait_duration', fertigation['recirculation_wait_duration'])
-        config.set('Recirculation', 'recirculation_wait_duration', f"{fertigation['recirculation_wait_duration']}, {current_recirc_wait}")
+        # Update Recirculation settings - keep first value as reference, update second (operational) value
+        ref_recirc_on = _safe_get_first_value(config, 'Recirculation', 'recirculation_on_duration', fertigation['recirculation_on_duration'])
+        config.set('Recirculation', 'recirculation_on_duration', f"{ref_recirc_on}, {fertigation['recirculation_on_duration']}")
+
+        ref_recirc_wait = _safe_get_first_value(config, 'Recirculation', 'recirculation_wait_duration', fertigation['recirculation_wait_duration'])
+        config.set('Recirculation', 'recirculation_wait_duration', f"{ref_recirc_wait}, {fertigation['recirculation_wait_duration']}")
         
         # Write updated config back to file
         with open('config/device.conf', 'w') as configfile:
@@ -452,21 +475,22 @@ async def system_info(username: str = Depends(verify_credentials)):
 def update_device_conf_from_manual(command: ManualCommand) -> bool:
     """
     Update device.conf with values from manual command.
-    
+
     Processes a manual command from the user and updates the device configuration
-    file with new fertigation parameters. This function handles the mapping from
-    manual command format to device.conf format while preserving existing
-    secondary values in comma-separated entries.
-    
+    file with new fertigation parameters. Updates the second (operational) value
+    in comma-separated entries so controllers pick up the change immediately.
+    The first value is preserved as a reference.
+
     Args:
         command (ManualCommand): Manual command object containing fertigation parameters
-        
+
     Returns:
         bool: True if update successful, False otherwise
-        
+
     Note:
         - Updates pH, EC, nutrient pump, sprinkler, water temperature, and recirculation settings
-        - Preserves second values in comma-separated configuration entries
+        - Preserves first values as reference in comma-separated configuration entries
+        - Updates second (operational) values that controllers actually read
         - Writes updated configuration back to device.conf file
         - Logs success/failure and handles exceptions
         - Used for manual override of system parameters
@@ -476,59 +500,59 @@ def update_device_conf_from_manual(command: ManualCommand) -> bool:
         config = configparser.ConfigParser()
         config.read('config/device.conf')
         
-        # Update pH settings - keep second value unchanged
-        current_ph_target = _safe_get_second_value(config, 'pH', 'ph_target', str(command.target_ph))
-        config.set('pH', 'ph_target', f"{command.target_ph}, {current_ph_target}")
+        # Update pH settings - keep first value as reference, update second (operational) value
+        ref_ph_target = _safe_get_first_value(config, 'pH', 'ph_target', str(command.target_ph))
+        config.set('pH', 'ph_target', f"{ref_ph_target}, {command.target_ph}")
 
-        current_ph_deadband = _safe_get_second_value(config, 'pH', 'ph_deadband', str(command.target_ph_deadband))
-        config.set('pH', 'ph_deadband', f"{command.target_ph_deadband}, {current_ph_deadband}")
+        ref_ph_deadband = _safe_get_first_value(config, 'pH', 'ph_deadband', str(command.target_ph_deadband))
+        config.set('pH', 'ph_deadband', f"{ref_ph_deadband}, {command.target_ph_deadband}")
 
-        current_ph_min = _safe_get_second_value(config, 'pH', 'ph_min', str(command.target_ph_min))
-        config.set('pH', 'ph_min', f"{command.target_ph_min}, {current_ph_min}")
+        ref_ph_min = _safe_get_first_value(config, 'pH', 'ph_min', str(command.target_ph_min))
+        config.set('pH', 'ph_min', f"{ref_ph_min}, {command.target_ph_min}")
 
-        current_ph_max = _safe_get_second_value(config, 'pH', 'ph_max', str(command.target_ph_max))
-        config.set('pH', 'ph_max', f"{command.target_ph_max}, {current_ph_max}")
+        ref_ph_max = _safe_get_first_value(config, 'pH', 'ph_max', str(command.target_ph_max))
+        config.set('pH', 'ph_max', f"{ref_ph_max}, {command.target_ph_max}")
 
-        # Update EC settings - keep second value unchanged
-        current_ec_target = _safe_get_second_value(config, 'EC', 'ec_target', str(command.target_ec))
-        config.set('EC', 'ec_target', f"{command.target_ec}, {current_ec_target}")
+        # Update EC settings - keep first value as reference, update second (operational) value
+        ref_ec_target = _safe_get_first_value(config, 'EC', 'ec_target', str(command.target_ec))
+        config.set('EC', 'ec_target', f"{ref_ec_target}, {command.target_ec}")
 
-        current_ec_deadband = _safe_get_second_value(config, 'EC', 'ec_deadband', str(command.target_ec_deadband))
-        config.set('EC', 'ec_deadband', f"{command.target_ec_deadband}, {current_ec_deadband}")
+        ref_ec_deadband = _safe_get_first_value(config, 'EC', 'ec_deadband', str(command.target_ec_deadband))
+        config.set('EC', 'ec_deadband', f"{ref_ec_deadband}, {command.target_ec_deadband}")
 
-        current_ec_min = _safe_get_second_value(config, 'EC', 'ec_min', str(command.target_ec_min))
-        config.set('EC', 'ec_min', f"{command.target_ec_min}, {current_ec_min}")
+        ref_ec_min = _safe_get_first_value(config, 'EC', 'ec_min', str(command.target_ec_min))
+        config.set('EC', 'ec_min', f"{ref_ec_min}, {command.target_ec_min}")
 
-        current_ec_max = _safe_get_second_value(config, 'EC', 'ec_max', str(command.target_ec_max))
-        config.set('EC', 'ec_max', f"{command.target_ec_max}, {current_ec_max}")
+        ref_ec_max = _safe_get_first_value(config, 'EC', 'ec_max', str(command.target_ec_max))
+        config.set('EC', 'ec_max', f"{ref_ec_max}, {command.target_ec_max}")
 
-        # Update NutrientPump settings - keep second value unchanged
-        current_abc_ratio = _safe_get_second_value(config, 'NutrientPump', 'abc_ratio', command.abc_ratio)
-        config.set('NutrientPump', 'abc_ratio', f'"{command.abc_ratio}", {current_abc_ratio}')
+        # Update NutrientPump settings - keep first value as reference, update second (operational) value
+        ref_abc_ratio = _safe_get_first_value(config, 'NutrientPump', 'abc_ratio', f'"{command.abc_ratio}"')
+        config.set('NutrientPump', 'abc_ratio', f'{ref_abc_ratio}, "{command.abc_ratio}"')
 
-        # Update Sprinkler settings - keep second value unchanged
-        current_sprinkler_on = _safe_get_second_value(config, 'Sprinkler', 'sprinkler_on_duration', command.sprinkler_on_duration)
-        config.set('Sprinkler', 'sprinkler_on_duration', f"{command.sprinkler_on_duration}, {current_sprinkler_on}")
+        # Update Sprinkler settings - keep first value as reference, update second (operational) value
+        ref_sprinkler_on = _safe_get_first_value(config, 'Sprinkler', 'sprinkler_on_duration', command.sprinkler_on_duration)
+        config.set('Sprinkler', 'sprinkler_on_duration', f"{ref_sprinkler_on}, {command.sprinkler_on_duration}")
 
-        current_sprinkler_wait = _safe_get_second_value(config, 'Sprinkler', 'sprinkler_wait_duration', command.sprinkler_wait_duration)
-        config.set('Sprinkler', 'sprinkler_wait_duration', f"{command.sprinkler_wait_duration}, {current_sprinkler_wait}")
+        ref_sprinkler_wait = _safe_get_first_value(config, 'Sprinkler', 'sprinkler_wait_duration', command.sprinkler_wait_duration)
+        config.set('Sprinkler', 'sprinkler_wait_duration', f"{ref_sprinkler_wait}, {command.sprinkler_wait_duration}")
 
-        # Update WaterTemperature settings - keep second value unchanged
-        current_temp = _safe_get_second_value(config, 'WaterTemperature', 'target_water_temperature', str(command.target_water_temperature_min))
-        config.set('WaterTemperature', 'target_water_temperature', f"{command.target_water_temperature_min}, {current_temp}")
+        # Update WaterTemperature settings - keep first value as reference, update second (operational) value
+        ref_temp = _safe_get_first_value(config, 'WaterTemperature', 'target_water_temperature', str(command.target_water_temperature_min))
+        config.set('WaterTemperature', 'target_water_temperature', f"{ref_temp}, {command.target_water_temperature_min}")
 
-        current_temp_min = _safe_get_second_value(config, 'WaterTemperature', 'target_water_temperature_min', str(command.target_water_temperature_min))
-        config.set('WaterTemperature', 'target_water_temperature_min', f"{command.target_water_temperature_min}, {current_temp_min}")
+        ref_temp_min = _safe_get_first_value(config, 'WaterTemperature', 'target_water_temperature_min', str(command.target_water_temperature_min))
+        config.set('WaterTemperature', 'target_water_temperature_min', f"{ref_temp_min}, {command.target_water_temperature_min}")
 
-        current_temp_max = _safe_get_second_value(config, 'WaterTemperature', 'target_water_temperature_max', str(command.target_water_temperature_max))
-        config.set('WaterTemperature', 'target_water_temperature_max', f"{command.target_water_temperature_max}, {current_temp_max}")
+        ref_temp_max = _safe_get_first_value(config, 'WaterTemperature', 'target_water_temperature_max', str(command.target_water_temperature_max))
+        config.set('WaterTemperature', 'target_water_temperature_max', f"{ref_temp_max}, {command.target_water_temperature_max}")
 
-        # Update Recirculation settings - keep second value unchanged
-        current_recirc_on = _safe_get_second_value(config, 'Recirculation', 'recirculation_on_duration', command.recirculation_on_duration)
-        config.set('Recirculation', 'recirculation_on_duration', f"{command.recirculation_on_duration}, {current_recirc_on}")
+        # Update Recirculation settings - keep first value as reference, update second (operational) value
+        ref_recirc_on = _safe_get_first_value(config, 'Recirculation', 'recirculation_on_duration', command.recirculation_on_duration)
+        config.set('Recirculation', 'recirculation_on_duration', f"{ref_recirc_on}, {command.recirculation_on_duration}")
 
-        current_recirc_wait = _safe_get_second_value(config, 'Recirculation', 'recirculation_wait_duration', command.recirculation_wait_duration)
-        config.set('Recirculation', 'recirculation_wait_duration', f"{command.recirculation_wait_duration}, {current_recirc_wait}")
+        ref_recirc_wait = _safe_get_first_value(config, 'Recirculation', 'recirculation_wait_duration', command.recirculation_wait_duration)
+        config.set('Recirculation', 'recirculation_wait_duration', f"{ref_recirc_wait}, {command.recirculation_wait_duration}")
         
         # Write updated config back to file
         with open('config/device.conf', 'w') as configfile:

@@ -3,6 +3,7 @@
 import os
 import sys
 import time
+import threading
 import logging
 import json
 from typing import Dict, List, Optional, Union, Any
@@ -10,6 +11,16 @@ import configparser
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 from datetime import datetime, timedelta
+
+# MOQ-98: Process-wide singleton debounce state for ConfigFileHandler.
+# The module may be imported from multiple paths (e.g. 'main' vs 'src.main'),
+# creating separate module-level namespaces. Using sys.modules ensures a single
+# debounce gate across all instances in the process.
+import sys
+if not hasattr(sys, '_config_debounce_lock'):
+    sys._config_debounce_lock = threading.Lock()
+    sys._config_last_event_time = {}
+    sys._CONFIG_DEBOUNCE_SECONDS = 1.0
 
 # Add the src directory to the Python path
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -32,35 +43,16 @@ logger = GlobalLogger("RippleController", log_prefix="ripple_").logger
 class ConfigFileHandler(FileSystemEventHandler):
     """
     File system event handler for monitoring configuration file changes.
-    
+
     Monitors the device configuration file (device.conf) and action file (action.json)
     for modifications and triggers appropriate reloading and processing operations.
     Implements debouncing to prevent duplicate event processing and change detection
     to identify specific configuration sections that were modified.
-    
-    Features:
-    - Real-time monitoring of device.conf and action.json files
-    - Debounced event handling to prevent duplicate processing
-    - Change detection to identify modified configuration sections
-    - Automatic configuration reloading for affected sections
-    - Action file processing for manual commands
-    
-    Args:
-        controller: Reference to the main RippleController instance
-        
-    Note:
-        - Docstring created by Claude 3.5 Sonnet on 2024-09-22
-        - Inherits from FileSystemEventHandler for file monitoring
-        - Uses watchdog library for cross-platform file system monitoring
-        - Implements 1-second debouncing to prevent rapid-fire events
-        - Tracks configuration state changes for selective reloading
     """
     def __init__(self, controller):
         self.controller = controller
         self.last_action_state = {}
         self.last_config_state = {}  # Store the last known state of the config file
-        self.last_event_time = {}    # Track last event time for each file to prevent duplicates
-        self.event_debounce_seconds = 1.0  # Minimum seconds between same-file events
         # Load initial config state
         self._load_current_config()
         
@@ -110,42 +102,47 @@ class ConfigFileHandler(FileSystemEventHandler):
             config_file_path = os.path.abspath(self.controller.config_file)
             action_file_path = os.path.abspath(os.path.join(self.controller.config_dir, 'action.json'))
             event_path = os.path.abspath(event.src_path)
-            
-            # Implement debouncing to prevent duplicate events
-            current_time = time.time()
-            if event_path in self.last_event_time:
-                # If we've seen this event recently, check if enough time has passed
-                time_since_last = current_time - self.last_event_time[event_path]
-                if time_since_last < self.event_debounce_seconds:
-                    logger.info(f"Ignoring duplicate event for {event_path} - only {time_since_last:.2f}s since last event")
-                    return
-            
-            # Update the last event time for this path
-            self.last_event_time[event_path] = current_time
-            
-            logger.info(f"File modified: {event_path}")
-            
-            # Check if device.conf was modified
-            if os.path.basename(event_path) == 'device.conf' or event_path == config_file_path:
-                logger.info("Configuration file (device.conf) modified, detecting changes")
-                
-                # Add a small delay to ensure file writing is complete
+
+            # MOQ-98: Use a single debounce key for config-dir events.
+            # sed -i fires bursts of events (temp file, directory, rename) at the same
+            # millisecond. Using one key ensures only the first event in a burst is
+            # processed, and a threading lock makes the check-and-update atomic.
+            if event_path == action_file_path:
+                debounce_key = 'action.json'
+            else:
+                debounce_key = 'device.conf'
+
+            with sys._config_debounce_lock:
+                current_time = time.time()
+                if debounce_key in sys._config_last_event_time:
+                    time_since_last = current_time - sys._config_last_event_time[debounce_key]
+                    if time_since_last < sys._CONFIG_DEBOUNCE_SECONDS:
+                        logger.debug(f"Ignoring duplicate event for {debounce_key} ({event_path}) - {time_since_last:.4f}s since last")
+                        return
+                sys._config_last_event_time[debounce_key] = current_time
+
+            logger.info(f"File modified: {event_path} (debounce key: {debounce_key})")
+
+            # Check if device.conf was modified (direct event or any config-dir event
+            # from sed -i which uses temp+rename instead of in-place write)
+            if debounce_key == 'device.conf':
+                # Wait for sed -i rename to complete before reading the file
                 time.sleep(0.2)
-                
+
                 # Identify which sections were changed
                 changed_sections = self._identify_changed_sections()
-                
+
                 if changed_sections:
                     logger.info(f"Changed sections detected: {changed_sections}")
                     # Reload specific sections and trigger relevant checks
                     self.controller.reload_specific_sections(changed_sections)
                 else:
                     logger.info("No significant changes detected in config file")
-                
+
                 # Update our stored config state for next comparison
                 self._load_current_config()
-                
-            elif event_path == action_file_path:
+
+            elif debounce_key == 'action.json':
                 logger.info("Action file modified, processing new actions")
                 # Add a small delay to ensure file writing is complete
                 time.sleep(0.1)
@@ -469,8 +466,14 @@ class RippleController:
         - Provides both automated and manual control interfaces
         - Includes extensive error handling and logging
     """
-    def __init__(self):
-        """Initialize the Ripple controller."""
+    def __init__(self, enable_file_watcher=True):
+        """Initialize the Ripple controller.
+
+        Args:
+            enable_file_watcher: If True, start watchdog observer for config/action files.
+                Set to False when only hardware access is needed (e.g. from server.py).
+        """
+        self._enable_file_watcher = enable_file_watcher
         self.water_level_sensors = {}  # Dict to store water level sensor instances
         self.relays = {}  # Dict to store relay instances
         self.sensor_targets = {}  # Dict to store sensor target values
@@ -507,7 +510,12 @@ class RippleController:
         self.apply_plumbing_operational_values()
         self.apply_plumbing_startup_configuration()
         self.apply_sprinkler_startup_configuration()
-        
+
+        # MOQ-96: Initialize recurring sprinkler schedule
+        # apply_sprinkler_startup_configuration only toggles the relay;
+        # we must also start the scheduling chain so cycles continue.
+        self.initialize_sprinkler_scheduling()
+
         # Make sure config file exists before attempting to watch it
         if not os.path.exists(self.config_file):
             logger.warning(f"Config file {self.config_file} does not exist. Creating an empty file.")
@@ -532,12 +540,21 @@ class RippleController:
                 with open(action_file, 'w') as f:
                     json.dump({}, f)
         
-        # Initialize watchdog observer
-        self.event_handler = ConfigFileHandler(self)
-        self.observer = Observer()
-        self.observer.schedule(self.event_handler, self.config_dir, recursive=False)
-        self.observer.start()
-        logger.info(f"Configuration and action file monitoring started for directory: {self.config_dir}")
+        # Initialize watchdog observer (only when enabled and only once per process)
+        if self._enable_file_watcher and not getattr(sys, '_config_observer_started', False):
+            self.event_handler = ConfigFileHandler(self)
+            self.observer = Observer()
+            self.observer.schedule(self.event_handler, self.config_dir, recursive=False)
+            self.observer.start()
+            sys._config_observer_started = True
+            logger.info(f"Configuration and action file monitoring started for directory: {self.config_dir}")
+        else:
+            self.event_handler = None
+            self.observer = None
+            if not self._enable_file_watcher:
+                logger.info("File watcher disabled for this controller instance")
+            else:
+                logger.info(f"Config file monitoring already active — skipping duplicate observer")
 
     def _time_to_seconds(self, time_str):
         """Convert HH:MM:SS format to seconds"""
@@ -743,6 +760,41 @@ class RippleController:
         except Exception as e:
             logger.error(f"Error applying sprinkler startup configuration: {e}")
             logger.exception("Full exception details:")
+
+    def initialize_sprinkler_scheduling(self):
+        """Initialize the recurring sprinkler scheduling chain on startup (MOQ-96)."""
+        try:
+            from src.sprinkler_static import is_sprinkler_scheduling_enabled, get_sprinkler_config, parse_duration
+
+            if not is_sprinkler_scheduling_enabled():
+                logger.info("[STARTUP] Sprinkler scheduling disabled - skipping schedule init")
+                return
+
+            on_duration_str, wait_duration_str = get_sprinkler_config()
+            on_seconds = parse_duration(on_duration_str)
+
+            if on_seconds <= 0:
+                logger.info("[STARTUP] Sprinkler duration is 0 - skipping schedule init")
+                return
+
+            # Check if sprinkler_on_at_startup is true — if so, start a cycle now
+            # (the relay was already toggled by apply_sprinkler_startup_configuration)
+            startup_enabled = False
+            if self.config.has_option('Sprinkler', 'sprinkler_on_at_startup'):
+                val = self._parse_config_value('Sprinkler', 'sprinkler_on_at_startup', 1)
+                startup_enabled = isinstance(val, str) and val.lower() == 'true'
+
+            if startup_enabled:
+                # Relay is already ON, start the controller cycle (schedules stop + next)
+                self.sprinkler_controller.start_sprinkler_cycle()
+                logger.info("[STARTUP] Sprinkler scheduling chain started (on_at_startup=true)")
+            else:
+                # Relay is OFF, schedule the first cycle after wait_duration
+                from src.sprinkler_static import schedule_next_sprinkler_cycle_static
+                schedule_next_sprinkler_cycle_static()
+                logger.info("[STARTUP] Next sprinkler cycle scheduled (on_at_startup=false)")
+        except Exception as e:
+            logger.error(f"Error initializing sprinkler scheduling: {e}")
 
     def apply_plumbing_startup_configuration(self):
         """Apply plumbing startup configuration to relay hardware on startup."""
@@ -1406,11 +1458,12 @@ class RippleController:
                 self.water_level_controller.shutdown()
                 
             # Old scheduler removed - simplified controllers handle their own shutdown
-            self.observer.stop()
-            self.observer.join(timeout=5)  # Add timeout to prevent indefinite blocking
-            if self.observer.is_alive():
-                logger.warning("File observer did not stop cleanly within timeout")
-            logger.info("Configuration and action file monitoring stopped")
+            if self.observer:
+                self.observer.stop()
+                self.observer.join(timeout=5)  # Add timeout to prevent indefinite blocking
+                if self.observer.is_alive():
+                    logger.warning("File observer did not stop cleanly within timeout")
+                logger.info("Configuration and action file monitoring stopped")
         except Exception as e:
             logger.error(f"Error during shutdown: {e}")
 
