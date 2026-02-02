@@ -131,6 +131,16 @@ class Relay:
                     self._process_status_response(response.data, command_info)
                 elif command_info["type"] in ["turn_on", "turn_off"]:
                     self._process_control_response(response.data, command_info)
+                elif command_info["type"] == "verify_write":
+                    self._process_verify_response(response.data, command_info)
+                elif command_info["type"].startswith("set_") and command_info["type"].endswith("_relays"):
+                    # Multi-relay write response - send verify read
+                    device_name = command_info.get('device', '')
+                    starting_relay = command_info.get('starting_relay', 0)
+                    states = command_info.get('states', [])
+                    if states:
+                        verify_pairs = [(starting_relay + i, st) for i, st in enumerate(states)]
+                        self._send_verify_read(device_name, verify_pairs)
             elif response.status in ["timeout", "error", "connection_lost"]:
                 logger.warning(
                     f"Command failed with status {response.status} for command id {response.command_id}"
@@ -235,10 +245,102 @@ class Relay:
                 return
             
             logger.info(f"Relay {command_info['type']} command successful for {device_name}[{relay_index}]")
-            
+
+            # Send verify read to confirm actual relay state
+            expected_state = True if command_info['type'] == 'turn_on' else False
+            self._send_verify_read(device_name, [(relay_index, expected_state)])
+
         except Exception as e:
             logger.warning(f"Error processing relay control response: {e}")
             logger.exception("Full exception details:")
+
+    def _send_verify_read(self, device_name, verify_pairs):
+        """Send a read coils command to verify relay state(s) after a write.
+
+        Args:
+            device_name: Relay board device name (key in relay_addresses)
+            verify_pairs: List of (relay_index, expected_state) tuples to verify
+        """
+        device_upper = device_name.upper()
+        address = None
+        relay_key = None
+
+        # Find the address for this device
+        if device_name in self.relay_addresses:
+            address = self.relay_addresses[device_name]
+            relay_key = device_name
+        else:
+            for key, value in self.relay_addresses.items():
+                if key.upper() == device_upper:
+                    address = value
+                    relay_key = key
+                    break
+
+        if address is None:
+            address = self.address
+            relay_key = device_name
+
+        channels = self.relay_channels.get(relay_key, 16)
+        data_bytes = (channels + 7) // 8
+        response_length = 5 + data_bytes
+
+        command = bytearray([address, 0x01, 0x00, 0x00, 0x00, channels])
+
+        command_id = self.modbus_client.send_command(
+            device_type="relay",
+            port=self.port,
+            command=command,
+            baudrate=self.baud_rate,
+            response_length=response_length,
+            timeout=2.0,
+        )
+
+        self.pending_commands[command_id] = {
+            "type": "verify_write",
+            "relay_name": relay_key,
+            "verify_pairs": verify_pairs,
+            "timestamp": time.time(),
+            "timeout": 2.0,
+        }
+        pairs_desc = ", ".join(f"[{idx}]={'ON' if st else 'OFF'}" for idx, st in verify_pairs)
+        logger.info(f"Sent verify read for {relay_key}: {pairs_desc}")
+
+    def _process_verify_response(self, data, command_info):
+        """Process verify read response and check if relay states match expected values."""
+        relay_name = command_info.get("relay_name")
+        verify_pairs = command_info.get("verify_pairs", [])
+
+        if not data or len(data) < 5:
+            logger.warning(f"Invalid verify response length: {len(data) if data else 0}")
+            return
+
+        try:
+            status_byte = data[3]
+            status_byte_2 = data[4] if len(data) >= 6 else 0
+
+            for relay_index, expected_state in verify_pairs:
+                if relay_index < 8:
+                    actual_state = bool((status_byte >> relay_index) & 1)
+                elif relay_index < 16:
+                    actual_state = bool((status_byte_2 >> (relay_index - 8)) & 1)
+                else:
+                    logger.warning(f"Verify: relay index {relay_index} out of range")
+                    continue
+
+                expected_bool = bool(expected_state)
+                if actual_state != expected_bool:
+                    logger.warning(
+                        f"Verify FAILED: {relay_name} relay {relay_index} "
+                        f"expected={'ON' if expected_bool else 'OFF'}, "
+                        f"got={'ON' if actual_state else 'OFF'}"
+                    )
+                else:
+                    logger.info(
+                        f"Verify OK: {relay_name} relay {relay_index} "
+                        f"confirmed {'ON' if actual_state else 'OFF'}"
+                    )
+        except Exception as e:
+            logger.warning(f"Error processing verify response for {relay_name}: {e}")
 
     def get_status(self):
         """
