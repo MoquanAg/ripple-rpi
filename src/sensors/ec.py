@@ -306,7 +306,7 @@ class EC:
             command=command,
             baudrate=self.baud_rate,
             response_length=37,  # 1(addr) + 1(func) + 1(byte count) + 32(data) + 2(CRC)
-            timeout=10
+            timeout=5
         )
         self.pending_commands[command_id] = {'type': 'get_status'}
         logger.debug(f"Sent get status command for EC_{self.sensor_id} with UUID: {command_id}")

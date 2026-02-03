@@ -108,8 +108,7 @@ class SimplifiedNutrientController:
                 logger.error("No relay available for nutrient pump start")
                 return False
                 
-            relay.set_relay("NutrientPumpA", True)
-            relay.set_relay("NutrientPumpB", True)
+            relay.set_nutrient_pumps(True)
             # NutrientPumpC based on ratio configuration
             # Note: No longer using self.is_running - hardware state is truth
             logger.info(f"[CONTROLLER] Nutrient pumps started for {on_duration_str} ({on_seconds}s)")
@@ -167,9 +166,7 @@ class SimplifiedNutrientController:
                         from src.sensors.Relay import Relay
                         relay = Relay()
                         if relay:
-                            relay.set_relay("NutrientPumpA", False)
-                            relay.set_relay("NutrientPumpB", False)
-                            relay.set_relay("NutrientPumpC", False)
+                            relay.set_nutrient_pumps(False)
                             self.is_running = False
                             logger.info("[CONTROLLER] FAILSAFE stopped nutrient pumps")
                             
@@ -199,9 +196,7 @@ class SimplifiedNutrientController:
                 from src.sensors.Relay import Relay
                 relay = Relay()
                 if relay:
-                    relay.set_relay("NutrientPumpA", False)
-                    relay.set_relay("NutrientPumpB", False)  
-                    relay.set_relay("NutrientPumpC", False)
+                    relay.set_nutrient_pumps(False)
                     self.is_running = False
                     logger.info("[CONTROLLER] Nutrient cycle stopped manually")
                     
