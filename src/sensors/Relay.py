@@ -1,5 +1,4 @@
 import time
-import threading
 import os, sys
 
 # Add the project root to Python path so we can import src modules
@@ -135,13 +134,13 @@ class Relay:
                 elif command_info["type"] == "verify_write":
                     self._process_verify_response(response.data, command_info)
                 elif command_info["type"].startswith("set_") and command_info["type"].endswith("_relays"):
-                    # Multi-relay write response - send verify read after delay
+                    # Multi-relay write response - send verify read
                     device_name = command_info.get('device', '')
                     starting_relay = command_info.get('starting_relay', 0)
                     states = command_info.get('states', [])
                     if states:
                         verify_pairs = [(starting_relay + i, st) for i, st in enumerate(states)]
-                        self._send_verify_read_delayed(device_name, verify_pairs)
+                        self._send_verify_read(device_name, verify_pairs)
             elif response.status in ["timeout", "error", "connection_lost"]:
                 logger.warning(
                     f"Command failed with status {response.status} for command id {response.command_id}"
@@ -247,25 +246,13 @@ class Relay:
             
             logger.info(f"Relay {command_info['type']} command successful for {device_name}[{relay_index}]")
 
-            # Send verify read after a delay to let the relay hardware settle
+            # Send verify read to confirm actual relay state
             expected_state = True if command_info['type'] == 'turn_on' else False
-            self._send_verify_read_delayed(device_name, [(relay_index, expected_state)])
+            self._send_verify_read(device_name, [(relay_index, expected_state)])
 
         except Exception as e:
             logger.warning(f"Error processing relay control response: {e}")
             logger.exception("Full exception details:")
-
-    def _send_verify_read_delayed(self, device_name, verify_pairs, delay=0.15):
-        """Schedule a verify read after a delay to let relay hardware settle.
-
-        Args:
-            device_name: Relay board device name
-            verify_pairs: List of (relay_index, expected_state) tuples
-            delay: Seconds to wait before sending the read (default 150ms)
-        """
-        timer = threading.Timer(delay, self._send_verify_read, args=(device_name, verify_pairs))
-        timer.daemon = True
-        timer.start()
 
     def _send_verify_read(self, device_name, verify_pairs):
         """Send a read coils command to verify relay state(s) after a write.
