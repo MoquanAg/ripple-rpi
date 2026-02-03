@@ -1011,24 +1011,71 @@ class Relay:
             logger.exception("Full exception details:")
 
     def set_pump_from_tank_to_gutters(self, status):
-        """Control pump from tank to gutters.
-        
+        """Control pump(s) from tank to gutters.
+
+        Supports both single-pump and dual-pump configurations:
+        - Single: "PumpFromTankToGutters" in relay_assignments
+        - Dual: "PumpFromTankToGuttersA" and "PumpFromTankToGuttersB"
+
         Args:
-            status (bool): True to turn on pump, False to turn off
+            status (bool): True to turn on pump(s), False to turn off
         """
-        # Case-insensitive check for relay hardware - FIXED to use proper case comparison
         if not any(key.upper() == 'RELAYONE' or key.lower() == 'relayone' for key in self.relay_addresses.keys()):
             logger.info("No tank-to-gutters pump hardware present in relay addresses")
-            logger.info(f"Available relay addresses: {self.relay_addresses}")
-            return
+            return False
 
-        logger.info(f"Setting tank-to-gutters pump to {status}")
+        logger.info(f"Setting tank-to-gutters pump(s) to {status}")
         try:
-            # Use the generic set_relay method which has case-insensitive matching
-            result = self.set_relay("PumpFromTankToGutters", status)
-            logger.info(f"set_relay result: {result}")
+            # Case 1: Single pump
+            if "PumpFromTankToGutters" in self.relay_assignments:
+                return self.set_relay("PumpFromTankToGutters", status)
+
+            # Case 2: Dual pumps (A and B)
+            has_a = "PumpFromTankToGuttersA" in self.relay_assignments
+            has_b = "PumpFromTankToGuttersB" in self.relay_assignments
+
+            if has_a and has_b:
+                # Check if adjacent for batch control
+                info_a = self.relay_assignments["PumpFromTankToGuttersA"]
+                info_b = self.relay_assignments["PumpFromTankToGuttersB"]
+
+                if info_a.get('relay_name') == info_b.get('relay_name') and abs(info_a.get('index', 0) - info_b.get('index', 0)) == 1:
+                    start_index = min(info_a['index'], info_b['index'])
+                    logger.info(f"Using batch command for gutter pumps A/B at indices {info_a['index']}, {info_b['index']}")
+                    return self.set_multiple_relays(info_a['relay_name'], start_index, [status, status])
+
+                # Not adjacent - control individually
+                logger.info("Gutter pumps A/B not adjacent, using individual control")
+                result_a = self.set_relay("PumpFromTankToGuttersA", status)
+                result_b = self.set_relay("PumpFromTankToGuttersB", status)
+                return result_a and result_b
+
+            if has_a:
+                return self.set_relay("PumpFromTankToGuttersA", status)
+            if has_b:
+                return self.set_relay("PumpFromTankToGuttersB", status)
+
+            logger.warning("No PumpFromTankToGutters variant found in relay assignments")
+            logger.info(f"Available assignments: {list(self.relay_assignments.keys())}")
+            return False
         except Exception as e:
             logger.error(f"Error controlling tank-to-gutters pump: {e}")
+            logger.exception("Exception details:")
+            return False
+
+    def set_pump_from_tank_to_gutters_a(self, status):
+        """Control first tank-to-gutters pump individually."""
+        if "PumpFromTankToGuttersA" in self.relay_assignments:
+            return self.set_relay("PumpFromTankToGuttersA", status)
+        # Fallback to single pump config
+        return self.set_relay("PumpFromTankToGutters", status)
+
+    def set_pump_from_tank_to_gutters_b(self, status):
+        """Control second tank-to-gutters pump individually."""
+        if "PumpFromTankToGuttersB" in self.relay_assignments:
+            return self.set_relay("PumpFromTankToGuttersB", status)
+        logger.warning("PumpFromTankToGuttersB not found in relay assignments")
+        return False
 
     def _parse_device_id(self, device_id):
         """
@@ -1188,12 +1235,8 @@ class Relay:
                 
             elif case == 2:
                 # Case 2: Dual safe control - both A and B must be on/off together
-                logger.info("Case 2: Dual sprinkler configuration (A/B) - using failsafe mode")
-                sprinkler_a = mapping['sprinkler_a']
-                sprinkler_b = mapping['sprinkler_b']
-                result_a = self.set_relay(sprinkler_a, status)
-                result_b = self.set_relay(sprinkler_b, status)
-                return result_a and result_b
+                logger.info("Case 2: Dual sprinkler configuration (A/B) - using batch command")
+                return self._control_multiple_sprinklers([status, status])
                 
             elif case == 3:
                 # Case 3: Dual independent control - match device suffix to Sprinkler1/2
@@ -1219,49 +1262,39 @@ class Relay:
     def set_sprinklers(self, status, sprinkler_type="both"):
         """
         Control sprinklers with support for both individual and group control.
-        
+
         Args:
             status (bool): True to turn on, False to turn off
-            sprinkler_type (str): "both", "a", "b", "1", "2", or "individual"
-                                 - "both": Control both sprinklers together (failsafe)
-                                 - "a" or "1": Control Sprinkler1 only
-                                 - "b" or "2": Control Sprinkler2 only
-                                 - "individual": Control based on config names
+            sprinkler_type (str): "both", "a", "b", "1", "2"
+                                 - "both": Control both sprinklers together (batch command)
+                                 - "a" or "1": Control first sprinkler only
+                                 - "b" or "2": Control second sprinkler only
         """
         logger.info(f"Setting sprinklers - Status: {status}, Type: {sprinkler_type}")
-        
+
         try:
-            # Map sprinkler types to actual config names
-            sprinkler_mapping = {
-                "a": "Sprinkler1",
-                "b": "Sprinkler2", 
-                "1": "Sprinkler1",
-                "2": "Sprinkler2",
-                "both": "both",
-                "individual": "individual"
-            }
-            
-            if sprinkler_type not in sprinkler_mapping:
-                logger.warning(f"Invalid sprinkler_type: {sprinkler_type}. Using 'both'")
-                sprinkler_type = "both"
-            
-            target_sprinkler = sprinkler_mapping[sprinkler_type]
-            
-            if target_sprinkler == "both":
-                # Control both sprinklers together (failsafe mode)
-                logger.info("Using failsafe mode - controlling both sprinklers together")
+            if sprinkler_type == "both":
                 return self._control_multiple_sprinklers([True, True] if status else [False, False])
-                
-            elif target_sprinkler == "individual":
-                # Use the names from RELAY_CONTROLS section for backward compatibility
-                logger.info("Using individual control based on RELAY_CONTROLS names")
-                return self._control_individual_sprinklers(status)
-                
-            else:
-                # Control specific sprinkler
-                logger.info(f"Controlling individual sprinkler: {target_sprinkler}")
-                return self.set_relay(target_sprinkler, status)
-                
+
+            if sprinkler_type in ("a", "1"):
+                mapping = self._get_sprinkler_mapping()
+                name = mapping.get('sprinkler_a') or mapping.get('sprinkler1')
+                if name:
+                    return self.set_relay(name, status)
+                logger.warning("No sprinkler A/1 found in config")
+                return False
+
+            if sprinkler_type in ("b", "2"):
+                mapping = self._get_sprinkler_mapping()
+                name = mapping.get('sprinkler_b') or mapping.get('sprinkler2')
+                if name:
+                    return self.set_relay(name, status)
+                logger.warning("No sprinkler B/2 found in config")
+                return False
+
+            logger.warning(f"Invalid sprinkler_type: {sprinkler_type}. Using 'both'")
+            return self._control_multiple_sprinklers([True, True] if status else [False, False])
+
         except Exception as e:
             logger.error(f"Error controlling sprinklers: {e}")
             logger.exception("Exception details:")
@@ -1324,87 +1357,13 @@ class Relay:
             logger.error(f"Error in _control_multiple_sprinklers: {e}")
             return False
 
-    def _control_individual_sprinklers(self, status):
-        """Control sprinklers using RELAY_CONTROLS names for backward compatibility."""
-        try:
-            # Try to use the RELAY_CONTROLS names first
-            sprinkler_a_name = None
-            sprinkler_b_name = None
-            
-            # Look for sprinkler_a and sprinkler_b in RELAY_CONTROLS
-            if hasattr(globals, 'DEVICE_CONFIG_FILE') and 'RELAY_CONTROLS' in globals.DEVICE_CONFIG_FILE:
-                config = globals.DEVICE_CONFIG_FILE
-                if 'sprinkler_a' in config['RELAY_CONTROLS']:
-                    sprinkler_a_name = config['RELAY_CONTROLS']['sprinkler_a'].strip()
-                if 'sprinkler_b' in config['RELAY_CONTROLS']:
-                    sprinkler_b_name = config['RELAY_CONTROLS']['sprinkler_b'].strip()
-            
-            # If we found the names, use them
-            if sprinkler_a_name and sprinkler_b_name:
-                logger.info(f"Using RELAY_CONTROLS names: {sprinkler_a_name}, {sprinkler_b_name}")
-                result_a = self.set_relay(sprinkler_a_name, status)
-                result_b = self.set_relay(sprinkler_b_name, status)
-                return result_a and result_b
-            else:
-                # Fallback to RELAY_ASSIGNMENTS names
-                logger.info("Falling back to RELAY_ASSIGNMENTS names: Sprinkler1, Sprinkler2")
-                result_1 = self.set_relay("Sprinkler1", status)
-                result_2 = self.set_relay("Sprinkler2", status)
-                return result_1 and result_2
-                
-        except Exception as e:
-            logger.error(f"Error in _control_individual_sprinklers: {e}")
-            return False
-
-    def set_sprinkler_1(self, status):
-        """Control Sprinkler1 individually."""
-        logger.info(f"Setting Sprinkler1 to {status}")
-        return self.set_relay("Sprinkler1", status)
-
-    def set_sprinkler_2(self, status):
-        """Control Sprinkler2 individually."""
-        logger.info(f"Setting Sprinkler2 to {status}")
-        return self.set_relay("Sprinkler2", status)
-
     def set_sprinkler_a(self, status):
-        """Control SprinklerA individually (backward compatibility)."""
-        logger.info(f"Setting SprinklerA to {status}")
-        try:
-            # Try to find the actual name from RELAY_CONTROLS
-            if hasattr(globals, 'DEVICE_CONFIG_FILE') and 'RELAY_CONTROLS' in globals.DEVICE_CONFIG_FILE:
-                config = globals.DEVICE_CONFIG_FILE
-                if 'sprinkler_a' in config['RELAY_CONTROLS']:
-                    sprinkler_name = config['RELAY_CONTROLS']['sprinkler_a'].strip()
-                    logger.info(f"Found sprinkler_a name: {sprinkler_name}")
-                    return self.set_relay(sprinkler_name, status)
-            
-            # Fallback to Sprinkler1
-            logger.info("Falling back to Sprinkler1")
-            return self.set_relay("Sprinkler1", status)
-            
-        except Exception as e:
-            logger.error(f"Error setting SprinklerA: {e}")
-            return False
+        """Control first sprinkler individually."""
+        return self.set_sprinklers(status, sprinkler_type="a")
 
     def set_sprinkler_b(self, status):
-        """Control SprinklerB individually (backward compatibility)."""
-        logger.info(f"Setting SprinklerB to {status}")
-        try:
-            # Try to find the actual name from RELAY_CONTROLS
-            if hasattr(globals, 'DEVICE_CONFIG_FILE') and 'RELAY_CONTROLS' in globals.DEVICE_CONFIG_FILE:
-                config = globals.DEVICE_CONFIG_FILE
-                if 'sprinkler_b' in config['RELAY_CONTROLS']:
-                    sprinkler_name = config['RELAY_CONTROLS']['sprinkler_b'].strip()
-                    logger.info(f"Found sprinkler_b name: {sprinkler_name}")
-                    return self.set_relay(sprinkler_name, status)
-            
-            # Fallback to Sprinkler2
-            logger.info("Falling back to Sprinkler2")
-            return self.set_relay("Sprinkler2", status)
-            
-        except Exception as e:
-            logger.error(f"Error setting SprinklerB: {e}")
-            return False
+        """Control second sprinkler individually."""
+        return self.set_sprinklers(status, sprinkler_type="b")
 
     def set_pump_from_collector_tray_to_tank(self, status):
         """Control pump from collector tray to tank.

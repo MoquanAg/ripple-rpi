@@ -101,6 +101,7 @@ pip install -r requirements.txt
 - **Port-specific locking**: Sequential Modbus access per serial port, parallel across different ports
 - **Event-driven**: `ModbusEventEmitter` pub-sub pattern for async response handling
 - **Hot-reload**: Watchdog monitors device.conf and action.json for live configuration updates
+- **Batch relay writes**: The relay board gets overwhelmed by rapid sequential Modbus commands. When controlling multiple adjacent relays, use `set_multiple_relays()` (Modbus function 0x10 Write Multiple Registers) instead of sequential `set_relay()` calls. See `set_nutrient_pumps()`, `_control_multiple_sprinklers()`, and `set_pump_from_tank_to_gutters()` for examples. For non-adjacent relays, add a small delay between individual writes.
 
 ## Configuration
 
