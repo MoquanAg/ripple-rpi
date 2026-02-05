@@ -103,17 +103,28 @@ def get_abc_ratio_from_config():
 def check_if_nutrient_dosing_needed():
     """Check EC levels to determine if nutrient dosing is needed"""
     try:
-        # Get current EC reading
-        from src.sensors.ec import EC
-        ec_sensor = EC("ec_main")  # Use the sensor ID from device.conf
-        if not ec_sensor:
-            logger.error("[SENSOR-CHECK] EC sensor not available")
+        # Get current EC reading from saved sensor data file
+        # Note: We read from file instead of EC singleton because APScheduler
+        # jobs run in separate threads where the singleton may not be properly
+        # initialized with current readings
+        import src.globals as globals
+        sensor_data = globals.saved_sensor_data()
+
+        if not sensor_data:
+            logger.error("[SENSOR-CHECK] Failed to load sensor data file")
             return False
-            
-        # Get latest EC reading
-        current_ec = ec_sensor.ec  # Use the .ec attribute for current reading
+
+        # Navigate to EC data: data -> water_metrics -> ec -> measurements -> points[0] -> fields -> value
+        ec_data = sensor_data.get('data', {}).get('water_metrics', {}).get('ec', {})
+        ec_points = ec_data.get('measurements', {}).get('points', [])
+
+        if not ec_points:
+            logger.error("[SENSOR-CHECK] No EC data points found in saved data")
+            return False
+
+        current_ec = ec_points[0].get('fields', {}).get('value')
         if current_ec is None:
-            logger.error("[SENSOR-CHECK] Failed to get EC reading")
+            logger.error("[SENSOR-CHECK] Failed to get EC reading from saved data")
             return False
             
         # Get target configuration
