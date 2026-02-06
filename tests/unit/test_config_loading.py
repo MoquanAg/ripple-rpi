@@ -59,7 +59,7 @@ class TestConfigLoading:
             config.add_section("NutrientPump")
         config.set("NutrientPump", "nutrient_pump_on_duration", "00:00:03, 00:00:05")
         config.set("NutrientPump", "nutrient_pump_wait_duration", "00:03:00, 00:05:00")
-        config.set("NutrientPump", "nutrient_abc_ratio", "1:1:1, 1:1:0")
+        config.set("NutrientPump", "abc_ratio", "1:1:1, 1:1:0")
 
         if "EC" not in config:
             config.add_section("EC")

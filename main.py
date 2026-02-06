@@ -1075,15 +1075,10 @@ class RippleController:
                 
                 elif section == 'EC':
                     if 'EC' in self.config:
-                        # Configuration is automatically reloaded by individual controllers
-                        # No need to explicitly update configuration as simplified controllers read config directly
-                        
-                        # Update sensor targets
                         need_reload_targets = True
-                        
-                        # Schedule EC check (don't start immediately to avoid flash)
                         logger.info("Scheduling EC check due to EC config change")
-                        # Let the controller handle this in its own timing
+                        from src.nutrient_static import schedule_next_nutrient_cycle_static
+                        schedule_next_nutrient_cycle_static()
                         logger.info("EC configuration updated")
                 
                 elif section == 'pH':
@@ -1616,10 +1611,29 @@ class RippleController:
         except Exception as e:
             logger.error(f"Error writing status file: {e}")
 
+    def _check_nutrient_scheduler_health(self):
+        """Check if the nutrient scheduler chain is alive, reinitialize if broken"""
+        try:
+            scheduler = globals.get_scheduler()
+            if not scheduler:
+                return
+
+            has_start = scheduler.get_job('nutrient_start') is not None
+            has_stop = scheduler.get_job('nutrient_stop') is not None
+
+            if not has_start and not has_stop:
+                logger.warning("[HEALTH] Nutrient scheduler chain broken - no nutrient_start or nutrient_stop jobs found")
+                from src.nutrient_static import initialize_nutrient_schedule
+                initialize_nutrient_schedule()
+                logger.info("[HEALTH] Nutrient scheduler recovered - chain was broken")
+        except Exception as e:
+            logger.error(f"[HEALTH] Error checking nutrient scheduler: {e}")
+
     def run_main_loop(self):
         """Main loop for the Ripple controller"""
         logger.info("Starting main control loop")
 
+        loop_count = 0
         try:
             while True:
                 # Get data from all sensors
@@ -1634,6 +1648,11 @@ class RippleController:
 
                 # Process any pending commands or events
                 self.process_events()
+
+                # Check nutrient scheduler health every ~60s (6 loops * 10s)
+                loop_count += 1
+                if loop_count % 6 == 0:
+                    self._check_nutrient_scheduler_health()
 
                 # Periodic action file check as failsafe (in case watchdog misses events)
                 # Runs every loop (10s) - safe because process_actions() has early-exit checks
@@ -1652,60 +1671,22 @@ class RippleController:
             logger.exception("Full exception details:")
             
     def update_sensor_data(self):
-        """Update data from all connected sensors with proper sequencing"""
+        """Trigger async sensor reads. Individual modules save data via helpers.save_sensor_data()."""
         try:
-            # Initialize sensor readings
-            water_levels = {}
-            ph_statuses = {}
-            ec_statuses = {}
-            
-            # Update water level sensor readings first
-            water_levels = WaterLevel.get_statuses_async()
-            if water_levels:
-                logger.debug(f"Water levels: {water_levels}")
-            else:
-                logger.warning("No water level readings received")
-            
-            # Brief delay before next sensor type to prevent bus contention
+            WaterLevel.get_statuses_async()
             time.sleep(0.5)
-            
-            # Update relay states
+
             relay_instance = Relay()
             if relay_instance:
                 relay_instance.get_status()
-                if relay_instance.relay_statuses:
-                    logger.debug(f"Relay states: {relay_instance.relay_statuses}")
-            
-            # Brief delay before pH sensors
             time.sleep(0.5)
-            
-            # Update pH sensor readings
-            ph_statuses = pH.get_statuses_async()
-            if ph_statuses:
-                logger.debug(f"pH sensor readings: {ph_statuses}")
-            else:
-                logger.warning("No pH readings received")
-            
-            # Brief delay before EC sensors
+
+            pH.get_statuses_async()
             time.sleep(0.5)
-            
-            # Update EC sensor readings
-            ec_statuses = EC.get_statuses_async()
-            if ec_statuses:
-                logger.debug(f"EC sensor readings: {ec_statuses}")
-            else:
-                logger.warning("No EC readings received")
-            
-            # Check if sensor values are within configured ranges
-            try:
-                self.check_sensor_ranges(ph_statuses, ec_statuses, water_levels)
-            except Exception as e:
-                logger.error(f"Error in check_sensor_ranges: {e}")
-                logger.exception("Full exception details:")
-                    
+
+            EC.get_statuses_async()
         except Exception as e:
             logger.error(f"Error updating sensor data: {e}")
-            logger.exception("Full exception details:")
             
     def check_sensor_ranges(self, ph_statuses: Dict[str, float], ec_statuses: Dict[str, float], water_levels: Dict[str, float]):
         """Check if sensor values are within configured ranges from device.conf."""
@@ -1768,179 +1749,12 @@ class RippleController:
         pass
 
     def save_sensor_data(self):
-        """Save current sensor data to JSON file"""
+        """Update last_updated timestamp in sensor data file.
+        Individual sensor/relay modules handle their own data saving via helpers.save_sensor_data()."""
         try:
-            # Try to load existing data first
-            try:
-                with open(self.sensor_data_file, 'r') as f:
-                    data = json.load(f)
-            except (FileNotFoundError, json.JSONDecodeError):
-                # Initialize new data structure if file doesn't exist or is invalid
-                data = {
-                    "data": {
-                        "water_metrics": {
-                            "water_level": {
-                                "measurements": {
-                                    "name": "water_metrics",
-                                    "points": []
-                                }
-                            },
-                            "ph": {
-                                "measurements": {
-                                    "name": "water_metrics",
-                                    "points": []
-                                }
-                            },
-                            "ec": {
-                                "measurements": {
-                                    "name": "water_metrics",
-                                    "points": []
-                                }
-                            }
-                        },
-                        "relay_metrics": {
-                            "measurements": {
-                                "name": "relay_metrics",
-                                "points": []
-                            },
-                            "configuration": {
-                                "relay_configuration": {
-                                    "relayone": {
-                                        "total_ports": 16,
-                                        "assigned_ports": [],
-                                        "unassigned_ports": list(range(16))
-                                    }
-                                }
-                            }
-                        }
-                    },
-                    "relays": {
-                        "last_updated": datetime.now().isoformat(),
-                        "relayone": {
-                            "RELAYONE": {
-                                "RELAYONE": [0] * 16
-                            }
-                        }
-                    },
-                    "devices": {
-                        "last_updated": datetime.now().isoformat()
-                    }
-                }
-
-            # Get water level data
-            wl_data = WaterLevel.get_statuses_async()
-            if wl_data:
-                for sensor_name, value in wl_data.items():
-                    data["data"]["water_metrics"]["water_level"]["measurements"]["points"].append({
-                        "tags": {
-                            "sensor": "water_level",
-                            "measurement": "level",
-                            "location": sensor_name
-                        },
-                        "fields": {
-                            "value": value,
-                            "temperature": None,
-                            "pressure_unit": None,
-                            "decimal_places": None,
-                            "range_min": 0,
-                            "range_max": 200,
-                            "zero_offset": None
-                        },
-                        "timestamp": helpers.datetime_to_iso8601()
-                    })
-
-            # Get pH data
-            ph_data = pH.get_statuses_async()
-            if ph_data:
-                for sensor_name, value in ph_data.items():
-                    data["data"]["water_metrics"]["ph"]["measurements"]["points"].append({
-                        "tags": {
-                            "sensor": "ph",
-                            "measurement": "ph",
-                            "location": sensor_name
-                        },
-                        "fields": {
-                            "value": value,
-                            "temperature": 25.0,
-                            "offset": None
-                        },
-                        "timestamp": helpers.datetime_to_iso8601()
-                    })
-
-            # Get EC data
-            ec_data = EC.get_statuses_async()
-            if ec_data:
-                for sensor_name, value in ec_data.items():
-                    data["data"]["water_metrics"]["ec"]["measurements"]["points"].append({
-                        "tags": {
-                            "sensor": "ec",
-                            "measurement": "ec",
-                            "location": sensor_name
-                        },
-                        "fields": {
-                            "value": value,
-                            "tds": value * 0.5,
-                            "salinity": value * 0.55,
-                            "temperature": 25.0,
-                            "resistance": 1000.0,
-                            "ec_constant": 1.0,
-                            "compensation_coef": 0.02,
-                            "manual_temp": 25.0,
-                            "temp_offset": None,
-                            "electrode_sensitivity": None,
-                            "compensation_mode": None,
-                            "sensor_type": None
-                        },
-                        "timestamp": helpers.datetime_to_iso8601()
-                    })
-
-            # Get relay data and map according to device.conf assignments
-            relay_instance = Relay()
-            if relay_instance:
-                relay_instance.get_status()
-                if relay_instance.relay_statuses:
-                    # Map relay statuses according to device.conf assignments
-                    relay_mapping = {
-                        0: "NutrientPumpA",
-                        1: "NutrientPumpB",
-                        2: "NutrientPumpC",
-                        3: "pHUpPump",
-                        4: "pHDownPump",
-                        5: "ValveOutsideToTank",
-                        6: "ValveTankToOutside",
-                        7: "MixingPump",
-                        8: "PumpFromTankToGutters",
-                        9: "SprinklerA",
-                        10: "SprinklerB",
-                        11: "PumpFromCollectorTrayToTank"
-                    }
-                    
-                    # Update relay status array
-                    data["relays"]["relayone"]["RELAYONE"]["RELAYONE"] = relay_instance.relay_statuses
-                    
-                    # Update relay metrics points
-                    for port, status in enumerate(relay_instance.relay_statuses):
-                        device_name = relay_mapping.get(port, "none")
-                        data["data"]["relay_metrics"]["measurements"]["points"].append({
-                            "tags": {
-                                "relay_board": "relayone",
-                                "port_index": port,
-                                "port_type": "assigned" if device_name != "none" else "unassigned",
-                                "device": device_name
-                            },
-                            "fields": {
-                                "status": status,
-                                "is_assigned": device_name != "none",
-                                "raw_status": status
-                            },
-                            "timestamp": helpers.datetime_to_iso8601()
-                        })
-
-            # Save to file
-            with open(self.sensor_data_file, 'w') as f:
-                json.dump(data, f, indent=2)
-                
-            logger.debug("Sensor data saved successfully")
+            helpers.save_sensor_data(["devices"], {
+                "last_updated": helpers.datetime_to_iso8601()
+            })
         except Exception as e:
             logger.error(f"Error saving sensor data: {e}")
 

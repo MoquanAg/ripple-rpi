@@ -90,7 +90,7 @@ def get_abc_ratio_from_config():
         config.read(config_path)
 
         # Get operational values (second value after comma)
-        ratio_str = config.get('NutrientPump', 'nutrient_abc_ratio')
+        ratio_str = config.get('NutrientPump', 'abc_ratio')
         ratio_values = ratio_str.split(',')[1].strip()
 
         # Parse "1:1:0" format

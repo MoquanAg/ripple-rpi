@@ -143,7 +143,7 @@ def mock_config(tmp_path, monkeypatch):
             config.read(self.config_path)
             if "NutrientPump" not in config:
                 config.add_section("NutrientPump")
-            config.set("NutrientPump", "nutrient_abc_ratio", f"1:1:1, {ratio}")
+            config.set("NutrientPump", "abc_ratio", f"1:1:1, {ratio}")
             with open(self.config_path, "w") as f:
                 config.write(f)
 
@@ -173,7 +173,7 @@ fertigation_model = v2
 nutrient_pump_on_duration = 00:00:05, 00:00:05
 nutrient_pump_wait_duration = 00:05:00, 00:05:00
 target_ec = 1.0, 1.2
-nutrient_abc_ratio = 1:1:1, 1:1:1
+abc_ratio = 1:1:1, 1:1:1
 
 [EC]
 ec_target = 1.0, 1.2
