@@ -115,6 +115,23 @@ Many config values use dual-value format: `default_value, operational_value`
 - First value: server/default setting
 - Second value: current operational setting (what's actually used)
 
+### PLUMBING Section
+
+The `[PLUMBING]` section uses `_on_at_startup` suffixed keys to control which relay devices are ON/OFF at startup. All 7 plumbing devices are configurable:
+
+```ini
+[PLUMBING]
+ValveOutsideToTank_on_at_startup = true, true
+ValveTankToOutside_on_at_startup = false, false
+PumpFromTankToGutters_on_at_startup = true, true
+MixingPump_on_at_startup = false, false
+PumpFromCollectorTrayToTank_on_at_startup = false, false
+LiquidCoolingPumpAndFan_on_at_startup = false, false
+ValveCO2_on_at_startup = false, false
+```
+
+`RippleController.PLUMBING_STARTUP_DEVICES` maps these config keys to relay device names. `apply_plumbing_startup_configuration()` iterates the map and calls `relay.set_relay(device_name, bool_value)` for each. The same method is called on config hot-reload.
+
 ## Hardware
 
 | Port | Baud | Purpose |
@@ -184,3 +201,24 @@ The system supports configurable multi-channel relay boards (4, 8, or 16 channel
 2. **Relay not responding**: Check device.conf RELAY_CONTROL section and Modbus address
 3. **API 401 errors**: Check SYSTEM username/password in device.conf
 4. **Scheduler jobs not running**: Check APScheduler logs, verify SQLite job store
+
+## Deployed Devices
+
+| Device | WireGuard IP | Description |
+|--------|-------------|-------------|
+| ripple-dagze-1 | 10.7.0.40 | Dagze farm fertigation controller |
+
+### Deployment
+
+```bash
+# SSH to device
+ssh lumina@10.7.0.40
+
+# Deploy: pull code, restart
+ssh lumina@10.7.0.40 "cd ~/ripple-rpi && git pull origin main"
+ssh lumina@10.7.0.40 "curl -s -u 'ripple-rpi:+IHa0UpROx94' http://127.0.0.1:5000/api/v1/system/restart -X POST"
+
+# Verify after restart
+ssh lumina@10.7.0.40 "cd ~/ripple-rpi && grep -iE 'error|warning' log/ripple_*.log"
+ssh lumina@10.7.0.40 "curl -s -u 'ripple-rpi:+IHa0UpROx94' http://127.0.0.1:5000/api/v1/plumbing | python3 -m json.tool"
+```
