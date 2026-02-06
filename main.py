@@ -466,6 +466,17 @@ class RippleController:
         - Provides both automated and manual control interfaces
         - Includes extensive error handling and logging
     """
+    # Maps PLUMBING config keys to relay device names for startup configuration.
+    PLUMBING_STARTUP_DEVICES = {
+        'ValveOutsideToTank_on_at_startup': 'ValveOutsideToTank',
+        'ValveTankToOutside_on_at_startup': 'ValveTankToOutside',
+        'PumpFromTankToGutters_on_at_startup': 'PumpFromTankToGutters',
+        'MixingPump_on_at_startup': 'MixingPump',
+        'PumpFromCollectorTrayToTank_on_at_startup': 'PumpFromCollectorTrayToTank',
+        'LiquidCoolingPumpAndFan_on_at_startup': 'LiquidCoolingPumpAndFan',
+        'ValveCO2_on_at_startup': 'ValveCO2',
+    }
+
     def __init__(self, enable_file_watcher=True):
         """Initialize the Ripple controller.
 
@@ -507,7 +518,6 @@ class RippleController:
         
         self.initialize_sensors()
         self.load_sensor_targets()
-        self.apply_plumbing_operational_values()
         self.apply_plumbing_startup_configuration()
         self.apply_sprinkler_startup_configuration()
 
@@ -652,62 +662,6 @@ class RippleController:
                 'WaterLevel': {'target': 80.0, 'deadband': 10.0, 'min': 50.0, 'max': 100.0}
             }
 
-    def apply_plumbing_operational_values(self):
-        """Apply operational values from PLUMBING section to relay hardware on startup."""
-        try:
-            logger.info("[STARTUP] Applying PLUMBING operational values to hardware...")
-            
-            if not os.path.exists(self.config_file):
-                logger.warning(f"Config file {self.config_file} does not exist")
-                return
-                
-            self.config.read(self.config_file)
-            
-            if not self.config.has_section('PLUMBING'):
-                logger.info("No PLUMBING section found in config - skipping plumbing initialization")
-                return
-            
-            # Get relay instance
-            relay = Relay()
-            if not relay:
-                logger.warning("No relay hardware available - cannot apply plumbing values")
-                return
-                
-            # Apply each plumbing configuration
-            for key in self.config.options('PLUMBING'):
-                try:
-                    # Get operational value (second value)
-                    operational_value = self._parse_config_value('PLUMBING', key, preferred_index=1)
-                    
-                    # Convert string boolean to actual boolean
-                    if isinstance(operational_value, str) and operational_value.lower() in ('true', 'false'):
-                        bool_value = operational_value.lower() == 'true'
-                    else:
-                        bool_value = bool(operational_value)
-                    
-                    # Apply to hardware based on device name
-                    if key.lower() == 'valveoutsidetotank':
-                        relay.set_valve_outside_to_tank(bool_value)
-                        logger.info(f"Applied ValveOutsideToTank = {bool_value}")
-                    elif key.lower() == 'valvetanktooutside':
-                        relay.set_valve_tank_to_outside(bool_value)
-                        logger.info(f"Applied ValveTankToOutside = {bool_value}")
-                    elif key.lower() == 'pumpfromtanktogutters':
-                        relay.set_pump_from_tank_to_gutters(bool_value)
-                        logger.info(f"Applied PumpFromTankToGutters = {bool_value}")
-                    else:
-                        logger.warning(f"Unknown plumbing device: {key}")
-                        
-                except Exception as e:
-                    logger.error(f"Error applying plumbing value for {key}: {e}")
-                    logger.exception("Exception details:")
-            
-            logger.info("[STARTUP] PLUMBING operational values applied successfully")
-            
-        except Exception as e:
-            logger.error(f"Error applying plumbing operational values: {e}")
-            logger.exception("Full exception details:")
-
     def apply_sprinkler_startup_configuration(self):
         """Apply sprinkler_on_at_startup operational value to relay hardware on startup."""
         try:
@@ -797,61 +751,56 @@ class RippleController:
             logger.error(f"Error initializing sprinkler scheduling: {e}")
 
     def apply_plumbing_startup_configuration(self):
-        """Apply plumbing startup configuration to relay hardware on startup."""
+        """Apply plumbing startup configuration to relay hardware.
+
+        Iterates PLUMBING_STARTUP_DEVICES and sets each relay using the
+        operational (second) value from the PLUMBING config section.
+        """
         try:
             logger.info("[STARTUP] Checking plumbing startup configuration...")
-            
+
             if not os.path.exists(self.config_file):
                 logger.warning(f"Config file {self.config_file} does not exist")
                 return
-                
+
             self.config.read(self.config_file)
-            
+
             if not self.config.has_section('PLUMBING'):
                 logger.info("No PLUMBING section found in config - skipping plumbing startup configuration")
                 return
-            
+
             # Get relay instance
             relay = Relay()
             if not relay:
                 logger.warning("No relay hardware available - cannot apply plumbing startup configuration")
                 return
-            
-            # Apply each plumbing startup configuration
-            startup_configs = [
-                ('ValveOutsideToTank_on_at_startup', 'valve_outside_to_tank', relay.set_valve_outside_to_tank),
-                ('ValveTankToOutside_on_at_startup', 'valve_tank_to_outside', relay.set_valve_tank_to_outside),
-                ('PumpFromTankToGutters_on_at_startup', 'pump_from_tank_to_gutters', relay.set_pump_from_tank_to_gutters)
-            ]
-            
-            for config_key, device_name, relay_method in startup_configs:
+
+            for config_key, device_name in self.PLUMBING_STARTUP_DEVICES.items():
                 if not self.config.has_option('PLUMBING', config_key):
                     logger.info(f"No {config_key} option found - skipping")
                     continue
-                
+
                 # Get operational value (second value)
                 operational_value = self._parse_config_value('PLUMBING', config_key, preferred_index=1)
-                
+
                 # Convert string boolean to actual boolean
                 if isinstance(operational_value, str) and operational_value.lower() in ('true', 'false'):
                     startup_enabled = operational_value.lower() == 'true'
                 else:
                     startup_enabled = bool(operational_value)
-                
+
                 logger.info(f"[STARTUP] {config_key} operational value: {startup_enabled}")
-                
+
                 # Apply startup configuration to hardware
                 try:
-                    relay_method(startup_enabled)
-                    if startup_enabled:
-                        logger.info(f"[STARTUP] {device_name} turned ON due to {config_key} = true")
-                    else:
-                        logger.info(f"[STARTUP] {device_name} turned OFF due to {config_key} = false")
+                    relay.set_relay(device_name, startup_enabled)
+                    state_str = "ON" if startup_enabled else "OFF"
+                    logger.info(f"[STARTUP] {device_name} turned {state_str} due to {config_key} = {str(startup_enabled).lower()}")
                 except Exception as e:
                     logger.error(f"Error applying {config_key} to hardware: {e}")
-            
+
             logger.info("[STARTUP] Plumbing startup configuration applied successfully")
-            
+
         except Exception as e:
             logger.error(f"Error applying plumbing startup configuration: {e}")
             logger.exception("Full exception details:")
@@ -1104,9 +1053,9 @@ class RippleController:
                     logger.info("WaterLevel configuration updated")
                 
                 elif section == 'PLUMBING':
-                    # Apply plumbing operational values immediately when config changes
-                    logger.info("PLUMBING configuration changed, applying operational values to hardware")
-                    self.apply_plumbing_operational_values()
+                    # Apply plumbing startup configuration immediately when config changes
+                    logger.info("PLUMBING configuration changed, applying startup values to hardware")
+                    self.apply_plumbing_startup_configuration()
                     logger.info("PLUMBING configuration updated")
             
             # Reload sensor targets if needed

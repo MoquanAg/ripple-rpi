@@ -50,9 +50,13 @@ class SystemStatus(BaseModel):
     last_update: str
 
 class PlumbingConfig(BaseModel):
-    valve_outside_to_tank: Optional[bool] = None
-    valve_tank_to_outside: Optional[bool] = None
-    pump_from_tank_to_gutters: Optional[bool] = None
+    valve_outside_to_tank_on_at_startup: Optional[bool] = None
+    valve_tank_to_outside_on_at_startup: Optional[bool] = None
+    pump_from_tank_to_gutters_on_at_startup: Optional[bool] = None
+    mixing_pump_on_at_startup: Optional[bool] = None
+    pump_from_collector_tray_to_tank_on_at_startup: Optional[bool] = None
+    liquid_cooling_pump_and_fan_on_at_startup: Optional[bool] = None
+    valve_co2_on_at_startup: Optional[bool] = None
 
 class SprinklerConfig(BaseModel):
     sprinkler_on_at_startup: Optional[bool] = None
@@ -1078,10 +1082,7 @@ async def get_plumbing_config(username: str = Depends(verify_credentials)):
     the current operational state of plumbing devices.
     
     Returns:
-        Dict: Plumbing configuration object containing:
-            - valve_outside_to_tank (bool): Current state of valve from outside to tank
-            - valve_tank_to_outside (bool): Current state of valve from tank to outside  
-            - pump_from_tank_to_gutters (bool): Current state of pump from tank to gutters
+        Dict: Plumbing configuration with _on_at_startup keys for all plumbing devices
             
     Note:
         - Requires HTTP Basic Authentication
@@ -1122,10 +1123,8 @@ async def update_plumbing_config(plumbing_config: PlumbingConfig, username: str 
     immediately to the relay hardware.
     
     Args:
-        plumbing_config (PlumbingConfig): Plumbing configuration object containing:
-            - valve_outside_to_tank (bool, optional): State of valve from outside to tank
-            - valve_tank_to_outside (bool, optional): State of valve from tank to outside
-            - pump_from_tank_to_gutters (bool, optional): State of pump from tank to gutters
+        plumbing_config (PlumbingConfig): Plumbing configuration with _on_at_startup
+            fields for all 7 plumbing devices (all optional booleans)
             
     Returns:
         Dict: Response object containing:
@@ -1140,28 +1139,32 @@ async def update_plumbing_config(plumbing_config: PlumbingConfig, username: str 
         - Immediately applies changes to relay hardware
         - Returns 500 error if configuration update fails
     """
+    # Maps API field names to (config_key, relay_device_name)
+    field_mapping = {
+        'valve_outside_to_tank_on_at_startup': ('ValveOutsideToTank_on_at_startup', 'ValveOutsideToTank'),
+        'valve_tank_to_outside_on_at_startup': ('ValveTankToOutside_on_at_startup', 'ValveTankToOutside'),
+        'pump_from_tank_to_gutters_on_at_startup': ('PumpFromTankToGutters_on_at_startup', 'PumpFromTankToGutters'),
+        'mixing_pump_on_at_startup': ('MixingPump_on_at_startup', 'MixingPump'),
+        'pump_from_collector_tray_to_tank_on_at_startup': ('PumpFromCollectorTrayToTank_on_at_startup', 'PumpFromCollectorTrayToTank'),
+        'liquid_cooling_pump_and_fan_on_at_startup': ('LiquidCoolingPumpAndFan_on_at_startup', 'LiquidCoolingPumpAndFan'),
+        'valve_co2_on_at_startup': ('ValveCO2_on_at_startup', 'ValveCO2'),
+    }
+
     try:
         config = configparser.ConfigParser()
         config.read('config/device.conf')
-        
+
         applied_changes = {}
-        
+
         # Ensure PLUMBING section exists
         if not config.has_section('PLUMBING'):
             config.add_section('PLUMBING')
-        
-        # Map API field names to config field names
-        field_mapping = {
-            'valve_outside_to_tank': 'ValveOutsideToTank',
-            'valve_tank_to_outside': 'ValveTankToOutside', 
-            'pump_from_tank_to_gutters': 'PumpFromTankToGutters'
-        }
-        
+
         # Update provided fields
         for api_field, value in plumbing_config.model_dump(exclude_unset=True).items():
             if value is not None and api_field in field_mapping:
-                config_field = field_mapping[api_field]
-                
+                config_field, device_name = field_mapping[api_field]
+
                 # Get current value to preserve default (first) value
                 if config.has_option('PLUMBING', config_field):
                     current_value = config.get('PLUMBING', config_field)
@@ -1172,43 +1175,39 @@ async def update_plumbing_config(plumbing_config: PlumbingConfig, username: str 
                 else:
                     # If field doesn't exist, use the new value as default too
                     default_value = str(value).lower()
-                
+
                 # Set new value with preserved default
                 new_value = f"{default_value}, {str(value).lower()}"
                 config.set('PLUMBING', config_field, new_value)
                 applied_changes[api_field] = value
-                
+
                 logger.info(f"Updated {config_field}: {new_value}")
-        
+
         # Write updated config back to file
         with open('config/device.conf', 'w') as configfile:
             config.write(configfile)
-        
+
         # Apply changes to relay hardware immediately
         if applied_changes:
             relay = controller.relays.get('relay')
             if relay:
                 for api_field, value in applied_changes.items():
+                    _, device_name = field_mapping[api_field]
                     try:
-                        if api_field == 'valve_outside_to_tank':
-                            relay.set_valve_outside_to_tank(value)
-                        elif api_field == 'valve_tank_to_outside':
-                            relay.set_valve_tank_to_outside(value)
-                        elif api_field == 'pump_from_tank_to_gutters':
-                            relay.set_pump_from_tank_to_gutters(value)
-                        logger.info(f"Applied {api_field} = {value} to relay hardware")
+                        relay.set_relay(device_name, value)
+                        logger.info(f"Applied {device_name} = {value} to relay hardware")
                     except Exception as e:
-                        logger.warning(f"Failed to apply {api_field} to hardware: {e}")
+                        logger.warning(f"Failed to apply {device_name} to hardware: {e}")
             else:
                 logger.warning("No relay hardware available to apply plumbing changes")
-        
+
         logger.info(f"Successfully updated plumbing configuration: {applied_changes}")
         return {
-            "status": "success", 
+            "status": "success",
             "message": "Plumbing configuration updated successfully",
             "applied_changes": applied_changes
         }
-        
+
     except Exception as e:
         logger.error(f"Error updating plumbing configuration: {e}")
         raise HTTPException(status_code=500, detail=f"Error updating plumbing configuration: {str(e)}")
