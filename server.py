@@ -5,6 +5,7 @@ import sys
 import json
 import configparser
 import subprocess  # Added for system commands
+import threading
 from typing import Dict, List, Optional, Union, Any
 from fastapi import FastAPI, HTTPException, Depends, status
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
@@ -63,22 +64,23 @@ class SprinklerConfig(BaseModel):
     sprinkler_on_duration: Optional[str] = None
     sprinkler_wait_duration: Optional[str] = None
 
-class ManualCommand(BaseModel):
-    abc_ratio: str
-    target_ec_max: float
-    target_ec_min: float
-    target_ec_deadband: float
-    target_ph_max: float
-    target_ph_min: float
-    target_ph_deadband: float
-    sprinkler_on_duration: str
-    sprinkler_wait_duration: str
-    recirculation_wait_duration: str
-    recirculation_on_duration: str
-    target_water_temperature_max: float
-    target_water_temperature_min: float
-    target_ec: float
-    target_ph: float
+class FertigationConfig(BaseModel):
+    """Unified fertigation configuration. All fields optional — omitted fields keep current device.conf values."""
+    abc_ratio: Optional[str] = None
+    target_ec_max: Optional[float] = None
+    target_ec_min: Optional[float] = None
+    target_ec_deadband: Optional[float] = None
+    target_ec: Optional[float] = None
+    target_ph_max: Optional[float] = None
+    target_ph_min: Optional[float] = None
+    target_ph_deadband: Optional[float] = None
+    target_ph: Optional[float] = None
+    sprinkler_on_duration: Optional[str] = None
+    sprinkler_wait_duration: Optional[str] = None
+    recirculation_wait_duration: Optional[str] = None
+    recirculation_on_duration: Optional[str] = None
+    target_water_temperature_max: Optional[float] = None
+    target_water_temperature_min: Optional[float] = None
 
 class ActionCommand(BaseModel):
     nutrient_pump_a: Optional[bool] = None
@@ -94,9 +96,40 @@ class ActionCommand(BaseModel):
     sprinkler_b: Optional[bool] = None
     pump_from_collector_tray_to_tank: Optional[bool] = None
 
+class HeartbeatRequest(BaseModel):
+    timestamp: Optional[float] = None
+    edge_id: Optional[str] = None
+
 # Set up logging using GlobalLogger
 logger = GlobalLogger("RippleAPI", log_prefix="ripple_server_").logger
 logger.info("Starting Ripple API Server")
+
+# Operating mode: "passive" (Edge controls) or "autonomous" (Ripple controls)
+_mode_lock = threading.Lock()
+_current_mode = "autonomous"  # Start autonomous until Edge checks in
+_last_heartbeat_time = 0.0    # time.time() of last heartbeat
+HEARTBEAT_TIMEOUT_S = 60      # Switch to autonomous after 60s without heartbeat
+
+def get_mode():
+    with _mode_lock:
+        return _current_mode
+
+def set_mode(mode):
+    global _current_mode
+    with _mode_lock:
+        old = _current_mode
+        _current_mode = mode
+        if old != mode:
+            logger.info(f"Mode changed: {old} -> {mode}")
+
+def get_last_heartbeat_time():
+    with _mode_lock:
+        return _last_heartbeat_time
+
+def update_heartbeat():
+    global _last_heartbeat_time
+    with _mode_lock:
+        _last_heartbeat_time = time.time()
 
 # Create FastAPI app
 app = FastAPI(title="Ripple Fertigation API", 
@@ -354,99 +387,87 @@ def get_valid_relay_fields():
             'sprinkler_b', 'pump_from_collector_tray_to_tank', 'nanobubbler'
         ]
 
-def update_device_conf(instruction_set: Dict) -> bool:
-    """
-    Update device.conf with values from server instruction set.
+_config_write_lock = threading.Lock()
 
-    Processes a server instruction set and updates the device configuration file
-    with new fertigation parameters. Updates the second (operational) value in
-    comma-separated entries so controllers pick up the change immediately.
-    The first value is preserved as a reference.
-
-    Args:
-        instruction_set (Dict): Server instruction set containing fertigation parameters
-
-    Returns:
-        bool: True if update successful, False otherwise
-
-    Note:
-        - Updates pH, EC, nutrient pump, sprinkler, water temperature, and recirculation settings
-        - Preserves first values as reference in comma-separated configuration entries
-        - Updates second (operational) values that controllers actually read
-        - Writes updated configuration back to device.conf file
-        - Logs success/failure and handles exceptions
-    """
+def update_device_conf_from_config(cfg: FertigationConfig) -> bool:
+    """Update device.conf with provided fertigation config values.
+    Only updates fields that are not None — omitted fields keep current values."""
     try:
-        # Read current device.conf
-        config = configparser.ConfigParser()
-        config.read('config/device.conf')
-        
-        # Get fertigation settings from instruction set
-        fertigation = instruction_set['current_phase']['details']['action_fertigation']
-
-        # Update pH settings - keep first value as reference, update second (operational) value
-        ref_ph_target = _safe_get_first_value(config, 'pH', 'ph_target', str(fertigation['target_ph']))
-        config.set('pH', 'ph_target', f"{ref_ph_target}, {fertigation['target_ph']}")
-
-        ref_ph_deadband = _safe_get_first_value(config, 'pH', 'ph_deadband', str(fertigation['target_ph_deadband']))
-        config.set('pH', 'ph_deadband', f"{ref_ph_deadband}, {fertigation['target_ph_deadband']}")
-
-        ref_ph_min = _safe_get_first_value(config, 'pH', 'ph_min', str(fertigation['target_ph_min']))
-        config.set('pH', 'ph_min', f"{ref_ph_min}, {fertigation['target_ph_min']}")
-
-        ref_ph_max = _safe_get_first_value(config, 'pH', 'ph_max', str(fertigation['target_ph_max']))
-        config.set('pH', 'ph_max', f"{ref_ph_max}, {fertigation['target_ph_max']}")
-
-        # Update EC settings - keep first value as reference, update second (operational) value
-        ref_ec_target = _safe_get_first_value(config, 'EC', 'ec_target', str(fertigation['target_ec']))
-        config.set('EC', 'ec_target', f"{ref_ec_target}, {fertigation['target_ec']}")
-
-        ref_ec_deadband = _safe_get_first_value(config, 'EC', 'ec_deadband', str(fertigation['target_ec_deadband']))
-        config.set('EC', 'ec_deadband', f"{ref_ec_deadband}, {fertigation['target_ec_deadband']}")
-
-        ref_ec_min = _safe_get_first_value(config, 'EC', 'ec_min', str(fertigation['target_ec_min']))
-        config.set('EC', 'ec_min', f"{ref_ec_min}, {fertigation['target_ec_min']}")
-
-        ref_ec_max = _safe_get_first_value(config, 'EC', 'ec_max', str(fertigation['target_ec_max']))
-        config.set('EC', 'ec_max', f"{ref_ec_max}, {fertigation['target_ec_max']}")
-
-        # Update NutrientPump settings - keep first value as reference, update second (operational) value
-        ref_abc_ratio = _safe_get_first_value(config, 'NutrientPump', 'abc_ratio', f'"{fertigation["abc_ratio"]}"')
-        config.set('NutrientPump', 'abc_ratio', f'{ref_abc_ratio}, "{fertigation["abc_ratio"]}"')
-
-        # Update Sprinkler settings - keep first value as reference, update second (operational) value
-        ref_sprinkler_on = _safe_get_first_value(config, 'Sprinkler', 'sprinkler_on_duration', fertigation['sprinkler_on_duration'])
-        config.set('Sprinkler', 'sprinkler_on_duration', f"{ref_sprinkler_on}, {fertigation['sprinkler_on_duration']}")
-
-        ref_sprinkler_wait = _safe_get_first_value(config, 'Sprinkler', 'sprinkler_wait_duration', fertigation['sprinkler_wait_duration'])
-        config.set('Sprinkler', 'sprinkler_wait_duration', f"{ref_sprinkler_wait}, {fertigation['sprinkler_wait_duration']}")
-
-        # Update WaterTemperature settings - keep first value as reference, update second (operational) value
-        ref_temp = _safe_get_first_value(config, 'WaterTemperature', 'target_water_temperature', str(fertigation['target_water_temperature_min']))
-        config.set('WaterTemperature', 'target_water_temperature', f"{ref_temp}, {fertigation['target_water_temperature_min']}")
-
-        ref_temp_min = _safe_get_first_value(config, 'WaterTemperature', 'target_water_temperature_min', str(fertigation['target_water_temperature_min']))
-        config.set('WaterTemperature', 'target_water_temperature_min', f"{ref_temp_min}, {fertigation['target_water_temperature_min']}")
-
-        ref_temp_max = _safe_get_first_value(config, 'WaterTemperature', 'target_water_temperature_max', str(fertigation['target_water_temperature_max']))
-        config.set('WaterTemperature', 'target_water_temperature_max', f"{ref_temp_max}, {fertigation['target_water_temperature_max']}")
-
-        # Update Recirculation settings - keep first value as reference, update second (operational) value
-        ref_recirc_on = _safe_get_first_value(config, 'Recirculation', 'recirculation_on_duration', fertigation['recirculation_on_duration'])
-        config.set('Recirculation', 'recirculation_on_duration', f"{ref_recirc_on}, {fertigation['recirculation_on_duration']}")
-
-        ref_recirc_wait = _safe_get_first_value(config, 'Recirculation', 'recirculation_wait_duration', fertigation['recirculation_wait_duration'])
-        config.set('Recirculation', 'recirculation_wait_duration', f"{ref_recirc_wait}, {fertigation['recirculation_wait_duration']}")
-        
-        # Write updated config back to file
-        with open('config/device.conf', 'w') as configfile:
-            config.write(configfile)
-            
-        logger.info("Successfully updated device.conf with new instruction set")
-        return True
+        with _config_write_lock:
+            return _update_device_conf_locked(cfg)
     except Exception as e:
         logger.error(f"Error updating device.conf: {e}")
         return False
+
+def _update_device_conf_locked(cfg: FertigationConfig) -> bool:
+    """Internal: update device.conf while holding _config_write_lock."""
+    config = configparser.ConfigParser()
+    config.read('config/device.conf')
+
+    # pH settings
+    if cfg.target_ph is not None:
+        ref = _safe_get_first_value(config, 'pH', 'ph_target', str(cfg.target_ph))
+        config.set('pH', 'ph_target', f"{ref}, {cfg.target_ph}")
+    if cfg.target_ph_deadband is not None:
+        ref = _safe_get_first_value(config, 'pH', 'ph_deadband', str(cfg.target_ph_deadband))
+        config.set('pH', 'ph_deadband', f"{ref}, {cfg.target_ph_deadband}")
+    if cfg.target_ph_min is not None:
+        ref = _safe_get_first_value(config, 'pH', 'ph_min', str(cfg.target_ph_min))
+        config.set('pH', 'ph_min', f"{ref}, {cfg.target_ph_min}")
+    if cfg.target_ph_max is not None:
+        ref = _safe_get_first_value(config, 'pH', 'ph_max', str(cfg.target_ph_max))
+        config.set('pH', 'ph_max', f"{ref}, {cfg.target_ph_max}")
+
+    # EC settings
+    if cfg.target_ec is not None:
+        ref = _safe_get_first_value(config, 'EC', 'ec_target', str(cfg.target_ec))
+        config.set('EC', 'ec_target', f"{ref}, {cfg.target_ec}")
+    if cfg.target_ec_deadband is not None:
+        ref = _safe_get_first_value(config, 'EC', 'ec_deadband', str(cfg.target_ec_deadband))
+        config.set('EC', 'ec_deadband', f"{ref}, {cfg.target_ec_deadband}")
+    if cfg.target_ec_min is not None:
+        ref = _safe_get_first_value(config, 'EC', 'ec_min', str(cfg.target_ec_min))
+        config.set('EC', 'ec_min', f"{ref}, {cfg.target_ec_min}")
+    if cfg.target_ec_max is not None:
+        ref = _safe_get_first_value(config, 'EC', 'ec_max', str(cfg.target_ec_max))
+        config.set('EC', 'ec_max', f"{ref}, {cfg.target_ec_max}")
+
+    # NutrientPump
+    if cfg.abc_ratio is not None:
+        ref = _safe_get_first_value(config, 'NutrientPump', 'abc_ratio', f'"{cfg.abc_ratio}"')
+        config.set('NutrientPump', 'abc_ratio', f'{ref}, "{cfg.abc_ratio}"')
+
+    # Sprinkler
+    if cfg.sprinkler_on_duration is not None:
+        ref = _safe_get_first_value(config, 'Sprinkler', 'sprinkler_on_duration', cfg.sprinkler_on_duration)
+        config.set('Sprinkler', 'sprinkler_on_duration', f"{ref}, {cfg.sprinkler_on_duration}")
+    if cfg.sprinkler_wait_duration is not None:
+        ref = _safe_get_first_value(config, 'Sprinkler', 'sprinkler_wait_duration', cfg.sprinkler_wait_duration)
+        config.set('Sprinkler', 'sprinkler_wait_duration', f"{ref}, {cfg.sprinkler_wait_duration}")
+
+    # WaterTemperature
+    if cfg.target_water_temperature_min is not None:
+        ref = _safe_get_first_value(config, 'WaterTemperature', 'target_water_temperature', str(cfg.target_water_temperature_min))
+        config.set('WaterTemperature', 'target_water_temperature', f"{ref}, {cfg.target_water_temperature_min}")
+        ref_min = _safe_get_first_value(config, 'WaterTemperature', 'target_water_temperature_min', str(cfg.target_water_temperature_min))
+        config.set('WaterTemperature', 'target_water_temperature_min', f"{ref_min}, {cfg.target_water_temperature_min}")
+    if cfg.target_water_temperature_max is not None:
+        ref = _safe_get_first_value(config, 'WaterTemperature', 'target_water_temperature_max', str(cfg.target_water_temperature_max))
+        config.set('WaterTemperature', 'target_water_temperature_max', f"{ref}, {cfg.target_water_temperature_max}")
+
+    # Recirculation
+    if cfg.recirculation_on_duration is not None:
+        ref = _safe_get_first_value(config, 'Recirculation', 'recirculation_on_duration', cfg.recirculation_on_duration)
+        config.set('Recirculation', 'recirculation_on_duration', f"{ref}, {cfg.recirculation_on_duration}")
+    if cfg.recirculation_wait_duration is not None:
+        ref = _safe_get_first_value(config, 'Recirculation', 'recirculation_wait_duration', cfg.recirculation_wait_duration)
+        config.set('Recirculation', 'recirculation_wait_duration', f"{ref}, {cfg.recirculation_wait_duration}")
+
+    with open('config/device.conf', 'w') as configfile:
+        config.write(configfile)
+
+    logger.info(f"Updated device.conf: {cfg.model_dump(exclude_none=True)}")
+    return True
 
 @app.get("/api/v1/system", response_model=SystemStatus, tags=["General"])
 async def system_info(username: str = Depends(verify_credentials)):
@@ -476,188 +497,71 @@ async def system_info(username: str = Depends(verify_credentials)):
         "last_update": datetime.now().isoformat()
     }
 
-def update_device_conf_from_manual(command: ManualCommand) -> bool:
-    """
-    Update device.conf with values from manual command.
+@app.post("/api/v1/heartbeat", tags=["Control"])
+async def receive_heartbeat(hb: HeartbeatRequest = HeartbeatRequest(), username: str = Depends(verify_credentials)):
+    """Receive heartbeat from Lumina-Edge. Keeps Ripple in passive mode."""
+    update_heartbeat()
+    if get_mode() != "passive":
+        set_mode("passive")
+    return {
+        "status": "success",
+        "mode": get_mode(),
+        "timestamp": time.time()
+    }
 
-    Processes a manual command from the user and updates the device configuration
-    file with new fertigation parameters. Updates the second (operational) value
-    in comma-separated entries so controllers pick up the change immediately.
-    The first value is preserved as a reference.
+@app.get("/api/v1/mode", tags=["Status"])
+async def get_current_mode(username: str = Depends(verify_credentials)):
+    """Get current operating mode."""
+    return {
+        "mode": get_mode(),
+        "last_heartbeat": get_last_heartbeat_time(),
+        "timeout_s": HEARTBEAT_TIMEOUT_S
+    }
 
-    Args:
-        command (ManualCommand): Manual command object containing fertigation parameters
-
-    Returns:
-        bool: True if update successful, False otherwise
-
-    Note:
-        - Updates pH, EC, nutrient pump, sprinkler, water temperature, and recirculation settings
-        - Preserves first values as reference in comma-separated configuration entries
-        - Updates second (operational) values that controllers actually read
-        - Writes updated configuration back to device.conf file
-        - Logs success/failure and handles exceptions
-        - Used for manual override of system parameters
-    """
+@app.post("/api/v1/instruction_set", tags=["Control"])
+async def update_fertigation_config(cfg: FertigationConfig, username: str = Depends(verify_credentials)):
+    """Unified endpoint for updating fertigation configuration.
+    All fields are optional — only provided fields are updated in device.conf."""
     try:
-        # Read current device.conf
-        config = configparser.ConfigParser()
-        config.read('config/device.conf')
-        
-        # Update pH settings - keep first value as reference, update second (operational) value
-        ref_ph_target = _safe_get_first_value(config, 'pH', 'ph_target', str(command.target_ph))
-        config.set('pH', 'ph_target', f"{ref_ph_target}, {command.target_ph}")
-
-        ref_ph_deadband = _safe_get_first_value(config, 'pH', 'ph_deadband', str(command.target_ph_deadband))
-        config.set('pH', 'ph_deadband', f"{ref_ph_deadband}, {command.target_ph_deadband}")
-
-        ref_ph_min = _safe_get_first_value(config, 'pH', 'ph_min', str(command.target_ph_min))
-        config.set('pH', 'ph_min', f"{ref_ph_min}, {command.target_ph_min}")
-
-        ref_ph_max = _safe_get_first_value(config, 'pH', 'ph_max', str(command.target_ph_max))
-        config.set('pH', 'ph_max', f"{ref_ph_max}, {command.target_ph_max}")
-
-        # Update EC settings - keep first value as reference, update second (operational) value
-        ref_ec_target = _safe_get_first_value(config, 'EC', 'ec_target', str(command.target_ec))
-        config.set('EC', 'ec_target', f"{ref_ec_target}, {command.target_ec}")
-
-        ref_ec_deadband = _safe_get_first_value(config, 'EC', 'ec_deadband', str(command.target_ec_deadband))
-        config.set('EC', 'ec_deadband', f"{ref_ec_deadband}, {command.target_ec_deadband}")
-
-        ref_ec_min = _safe_get_first_value(config, 'EC', 'ec_min', str(command.target_ec_min))
-        config.set('EC', 'ec_min', f"{ref_ec_min}, {command.target_ec_min}")
-
-        ref_ec_max = _safe_get_first_value(config, 'EC', 'ec_max', str(command.target_ec_max))
-        config.set('EC', 'ec_max', f"{ref_ec_max}, {command.target_ec_max}")
-
-        # Update NutrientPump settings - keep first value as reference, update second (operational) value
-        ref_abc_ratio = _safe_get_first_value(config, 'NutrientPump', 'abc_ratio', f'"{command.abc_ratio}"')
-        config.set('NutrientPump', 'abc_ratio', f'{ref_abc_ratio}, "{command.abc_ratio}"')
-
-        # Update Sprinkler settings - keep first value as reference, update second (operational) value
-        ref_sprinkler_on = _safe_get_first_value(config, 'Sprinkler', 'sprinkler_on_duration', command.sprinkler_on_duration)
-        config.set('Sprinkler', 'sprinkler_on_duration', f"{ref_sprinkler_on}, {command.sprinkler_on_duration}")
-
-        ref_sprinkler_wait = _safe_get_first_value(config, 'Sprinkler', 'sprinkler_wait_duration', command.sprinkler_wait_duration)
-        config.set('Sprinkler', 'sprinkler_wait_duration', f"{ref_sprinkler_wait}, {command.sprinkler_wait_duration}")
-
-        # Update WaterTemperature settings - keep first value as reference, update second (operational) value
-        ref_temp = _safe_get_first_value(config, 'WaterTemperature', 'target_water_temperature', str(command.target_water_temperature_min))
-        config.set('WaterTemperature', 'target_water_temperature', f"{ref_temp}, {command.target_water_temperature_min}")
-
-        ref_temp_min = _safe_get_first_value(config, 'WaterTemperature', 'target_water_temperature_min', str(command.target_water_temperature_min))
-        config.set('WaterTemperature', 'target_water_temperature_min', f"{ref_temp_min}, {command.target_water_temperature_min}")
-
-        ref_temp_max = _safe_get_first_value(config, 'WaterTemperature', 'target_water_temperature_max', str(command.target_water_temperature_max))
-        config.set('WaterTemperature', 'target_water_temperature_max', f"{ref_temp_max}, {command.target_water_temperature_max}")
-
-        # Update Recirculation settings - keep first value as reference, update second (operational) value
-        ref_recirc_on = _safe_get_first_value(config, 'Recirculation', 'recirculation_on_duration', command.recirculation_on_duration)
-        config.set('Recirculation', 'recirculation_on_duration', f"{ref_recirc_on}, {command.recirculation_on_duration}")
-
-        ref_recirc_wait = _safe_get_first_value(config, 'Recirculation', 'recirculation_wait_duration', command.recirculation_wait_duration)
-        config.set('Recirculation', 'recirculation_wait_duration', f"{ref_recirc_wait}, {command.recirculation_wait_duration}")
-        
-        # Write updated config back to file
-        with open('config/device.conf', 'w') as configfile:
-            config.write(configfile)
-            
-        logger.info("Successfully updated device.conf with manual command")
-        return True
+        if update_device_conf_from_config(cfg):
+            return {"status": "success", "message": "Configuration applied successfully"}
+        else:
+            raise HTTPException(status_code=500, detail="Failed to apply configuration")
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"Error updating device.conf: {e}")
-        return False
+        logger.error(f"Error applying configuration: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/v1/server_instruction_set", tags=["Control"])
 async def update_instruction_set(instruction_set: Dict, username: str = Depends(verify_credentials)):
-    """
-    Update system configuration from server instruction set.
-    
-    Applies configuration changes received from the central server. This endpoint
-    processes instruction sets that contain fertigation parameters including pH,
-    EC, nutrient ratios, sprinkler settings, water temperature targets, and
-    recirculation parameters.
-    
-    Args:
-        instruction_set (Dict): Server instruction set containing:
-            - current_phase.details.action_fertigation: Fertigation parameters
-            - target_ph: pH target value
-            - target_ph_deadband: pH deadband for control
-            - target_ph_min/max: pH minimum and maximum limits
-            - target_ec: EC target value
-            - target_ec_deadband: EC deadband for control
-            - target_ec_min/max: EC minimum and maximum limits
-            - abc_ratio: Nutrient A:B:C ratio
-            - sprinkler_on_duration: Sprinkler activation time
-            - sprinkler_wait_duration: Sprinkler wait time
-            - target_water_temperature_min/max: Water temperature limits
-            - recirculation_on_duration: Recirculation activation time
-            - recirculation_wait_duration: Recirculation wait time
-            
-    Returns:
-        Dict: Response object containing:
-            - status (str): "success" or "error"
-            - message (str): Success or error message
-            
-    Note:
-        - Requires HTTP Basic Authentication
-        - Updates device.conf file with new parameters
-        - Preserves second values in comma-separated configuration entries
-        - Returns 500 error if configuration update fails
-    """
+    """Legacy endpoint. Extracts action_fertigation and delegates to unified config update."""
     try:
-        if update_device_conf(instruction_set):
+        fertigation = instruction_set['current_phase']['details']['action_fertigation']
+        cfg = FertigationConfig(**fertigation)
+        if update_device_conf_from_config(cfg):
             return {"status": "success", "message": "Instruction set applied successfully"}
         else:
             raise HTTPException(status_code=500, detail="Failed to apply instruction set")
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error applying instruction set: {e}")
-        raise HTTPException(status_code=500, detail=f"Error applying instruction set: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/api/v1/user_instruction_set", tags=["Control"])
-async def update_manual_command(command: ManualCommand, username: str = Depends(verify_credentials)):
-    """
-    Update system configuration from user manual command.
-    
-    Applies configuration changes from user-provided manual commands. This endpoint
-    allows direct user control of fertigation parameters through the API, bypassing
-    the server instruction set system.
-    
-    Args:
-        command (ManualCommand): Manual command object containing:
-            - abc_ratio (str): Nutrient A:B:C ratio
-            - target_ec_max/min (float): EC maximum and minimum targets
-            - target_ec_deadband (float): EC deadband for control
-            - target_ph_max/min (float): pH maximum and minimum targets
-            - target_ph_deadband (float): pH deadband for control
-            - sprinkler_on_duration (str): Sprinkler activation duration
-            - sprinkler_wait_duration (str): Sprinkler wait duration
-            - recirculation_wait_duration (str): Recirculation wait duration
-            - recirculation_on_duration (str): Recirculation activation duration
-            - target_water_temperature_max/min (float): Water temperature limits
-            - target_ec (float): Primary EC target value
-            - target_ph (float): Primary pH target value
-            
-    Returns:
-        Dict: Response object containing:
-            - status (str): "success" or "error"
-            - message (str): Success or error message
-            
-    Note:
-        - Requires HTTP Basic Authentication
-        - Updates device.conf file with new parameters
-        - Preserves second values in comma-separated configuration entries
-        - Returns 500 error if configuration update fails
-        - Used for manual override and direct user control
-    """
+async def update_manual_command(command: FertigationConfig, username: str = Depends(verify_credentials)):
+    """Legacy endpoint. Delegates to unified config update."""
     try:
-        if update_device_conf_from_manual(command):
+        if update_device_conf_from_config(command):
             return {"status": "success", "message": "User instruction set applied successfully"}
         else:
             raise HTTPException(status_code=500, detail="Failed to apply user instruction set")
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error applying user instruction set: {e}")
-        raise HTTPException(status_code=500, detail=f"Error applying user instruction set: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/v1/status", tags=["Status"])
 async def get_system_status(username: str = Depends(verify_credentials)):

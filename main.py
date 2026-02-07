@@ -1586,6 +1586,33 @@ class RippleController:
         except Exception as e:
             logger.error(f"[HEALTH] Error checking nutrient scheduler: {e}")
 
+    def _check_heartbeat_timeout(self):
+        """Check if Edge heartbeat has timed out. Switch to autonomous if so."""
+        try:
+            from server import get_mode, set_mode, get_last_heartbeat_time, HEARTBEAT_TIMEOUT_S
+
+            last_hb = get_last_heartbeat_time()
+            if last_hb == 0.0:
+                return  # No heartbeat ever received, already autonomous
+
+            elapsed = time.time() - last_hb
+            if elapsed > HEARTBEAT_TIMEOUT_S and get_mode() == "passive":
+                logger.warning(f"Edge heartbeat timeout ({elapsed:.0f}s > {HEARTBEAT_TIMEOUT_S}s). Switching to autonomous mode.")
+                set_mode("autonomous")
+
+                # Safety: turn off dosing pumps and sprinklers that Edge may have left on
+                relay = Relay()
+                if relay:
+                    for device in ["NutrientPumpA", "NutrientPumpB", "NutrientPumpC",
+                                   "pHUpPump", "pHDownPump", "SprinklerA", "SprinklerB"]:
+                        try:
+                            relay.set_relay(device, False)
+                        except Exception as e:
+                            logger.error(f"Safety shutdown: failed to turn off {device}: {e}")
+                    logger.info("Safety shutdown: turned off dosing pumps and sprinklers")
+        except Exception as e:
+            logger.error(f"Error checking heartbeat timeout: {e}")
+
     def run_main_loop(self):
         """Main loop for the Ripple controller"""
         logger.info("Starting main control loop")
@@ -1605,6 +1632,9 @@ class RippleController:
 
                 # Process any pending commands or events
                 self.process_events()
+
+                # Check Edge heartbeat timeout
+                self._check_heartbeat_timeout()
 
                 # Check nutrient scheduler health every ~60s (6 loops * 10s)
                 loop_count += 1
