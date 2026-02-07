@@ -649,45 +649,45 @@ async def get_system_status(username: str = Depends(verify_credentials)):
             config = configparser.ConfigParser()
             config.read('config/device.conf')
             
-            # pH targets
+            # pH targets (read operational value = second comma-separated value)
             if config.has_section('pH'):
-                simplified_status['target_ph'] = float(config.get('pH', 'ph_target').split(',')[0])
-                simplified_status['ph_deadband'] = float(config.get('pH', 'ph_deadband').split(',')[0])
-                simplified_status['ph_min'] = float(config.get('pH', 'ph_min').split(',')[0])
-                simplified_status['ph_max'] = float(config.get('pH', 'ph_max').split(',')[0])
-            
-            # EC targets
+                simplified_status['target_ph'] = float(config.get('pH', 'ph_target').split(',')[1].strip())
+                simplified_status['ph_deadband'] = float(config.get('pH', 'ph_deadband').split(',')[1].strip())
+                simplified_status['ph_min'] = float(config.get('pH', 'ph_min').split(',')[1].strip())
+                simplified_status['ph_max'] = float(config.get('pH', 'ph_max').split(',')[1].strip())
+
+            # EC targets (read operational value = second comma-separated value)
             if config.has_section('EC'):
-                simplified_status['target_ec'] = float(config.get('EC', 'ec_target').split(',')[0])
-                simplified_status['ec_deadband'] = float(config.get('EC', 'ec_deadband').split(',')[0])
-                simplified_status['ec_min'] = float(config.get('EC', 'ec_min').split(',')[0])
-                simplified_status['ec_max'] = float(config.get('EC', 'ec_max').split(',')[0])
-            
-            # Water level targets
+                simplified_status['target_ec'] = float(config.get('EC', 'ec_target').split(',')[1].strip())
+                simplified_status['ec_deadband'] = float(config.get('EC', 'ec_deadband').split(',')[1].strip())
+                simplified_status['ec_min'] = float(config.get('EC', 'ec_min').split(',')[1].strip())
+                simplified_status['ec_max'] = float(config.get('EC', 'ec_max').split(',')[1].strip())
+
+            # Water level targets (read operational value = second comma-separated value)
             if config.has_section('WaterLevel'):
-                simplified_status['target_water_level'] = float(config.get('WaterLevel', 'water_level_target').split(',')[0])
-                simplified_status['water_level_deadband'] = float(config.get('WaterLevel', 'water_level_deadband').split(',')[0])
-                simplified_status['water_level_min'] = float(config.get('WaterLevel', 'water_level_min').split(',')[0])
-                simplified_status['water_level_max'] = float(config.get('WaterLevel', 'water_level_max').split(',')[0])
-            
-            # Nutrient pump settings
+                simplified_status['target_water_level'] = float(config.get('WaterLevel', 'water_level_target').split(',')[1].strip())
+                simplified_status['water_level_deadband'] = float(config.get('WaterLevel', 'water_level_deadband').split(',')[1].strip())
+                simplified_status['water_level_min'] = float(config.get('WaterLevel', 'water_level_min').split(',')[1].strip())
+                simplified_status['water_level_max'] = float(config.get('WaterLevel', 'water_level_max').split(',')[1].strip())
+
+            # Nutrient pump settings (read operational value = second comma-separated value)
             if config.has_section('NutrientPump'):
-                simplified_status['abc_ratio'] = config.get('NutrientPump', 'abc_ratio').split(',')[0].strip('"')
-            
-            # Sprinkler settings
+                simplified_status['abc_ratio'] = config.get('NutrientPump', 'abc_ratio').split(',')[1].strip().strip('"')
+
+            # Sprinkler settings (read operational value = second comma-separated value)
             if config.has_section('Sprinkler'):
-                simplified_status['sprinkler_on_duration'] = config.get('Sprinkler', 'sprinkler_on_duration').split(',')[0].strip('"')
-                simplified_status['sprinkler_wait_duration'] = config.get('Sprinkler', 'sprinkler_wait_duration').split(',')[0].strip('"')
+                simplified_status['sprinkler_on_duration'] = config.get('Sprinkler', 'sprinkler_on_duration').split(',')[1].strip().strip('"')
+                simplified_status['sprinkler_wait_duration'] = config.get('Sprinkler', 'sprinkler_wait_duration').split(',')[1].strip().strip('"')
                 # Add sprinkler_on_at_startup operational value
                 if config.has_option('Sprinkler', 'sprinkler_on_at_startup'):
                     startup_value = _parse_config_value('Sprinkler', 'sprinkler_on_at_startup', config, preferred_index=1)
                     simplified_status['sprinkler_on_at_startup'] = startup_value
             
-            # Water temperature targets
+            # Water temperature targets (read operational value = second comma-separated value)
             if config.has_section('WaterTemperature'):
-                simplified_status['target_water_temperature'] = float(config.get('WaterTemperature', 'target_water_temperature').split(',')[0])
-                simplified_status['target_water_temperature_min'] = float(config.get('WaterTemperature', 'target_water_temperature_min').split(',')[0])
-                simplified_status['target_water_temperature_max'] = float(config.get('WaterTemperature', 'target_water_temperature_max').split(',')[0])
+                simplified_status['target_water_temperature'] = float(config.get('WaterTemperature', 'target_water_temperature').split(',')[1].strip())
+                simplified_status['target_water_temperature_min'] = float(config.get('WaterTemperature', 'target_water_temperature_min').split(',')[1].strip())
+                simplified_status['target_water_temperature_max'] = float(config.get('WaterTemperature', 'target_water_temperature_max').split(',')[1].strip())
             
             # Plumbing operational values
             if config.has_section('PLUMBING'):
