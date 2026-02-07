@@ -455,13 +455,14 @@ def _update_device_conf_locked(cfg: FertigationConfig) -> bool:
         ref = _safe_get_first_value(config, 'WaterTemperature', 'target_water_temperature_max', str(cfg.target_water_temperature_max))
         config.set('WaterTemperature', 'target_water_temperature_max', f"{ref}, {cfg.target_water_temperature_max}")
 
-    # Recirculation
-    if cfg.recirculation_on_duration is not None:
-        ref = _safe_get_first_value(config, 'Recirculation', 'recirculation_on_duration', cfg.recirculation_on_duration)
-        config.set('Recirculation', 'recirculation_on_duration', f"{ref}, {cfg.recirculation_on_duration}")
-    if cfg.recirculation_wait_duration is not None:
-        ref = _safe_get_first_value(config, 'Recirculation', 'recirculation_wait_duration', cfg.recirculation_wait_duration)
-        config.set('Recirculation', 'recirculation_wait_duration', f"{ref}, {cfg.recirculation_wait_duration}")
+    # Recirculation (section may not exist on all devices)
+    if config.has_section('Recirculation'):
+        if cfg.recirculation_on_duration is not None:
+            ref = _safe_get_first_value(config, 'Recirculation', 'recirculation_on_duration', cfg.recirculation_on_duration)
+            config.set('Recirculation', 'recirculation_on_duration', f"{ref}, {cfg.recirculation_on_duration}")
+        if cfg.recirculation_wait_duration is not None:
+            ref = _safe_get_first_value(config, 'Recirculation', 'recirculation_wait_duration', cfg.recirculation_wait_duration)
+            config.set('Recirculation', 'recirculation_wait_duration', f"{ref}, {cfg.recirculation_wait_duration}")
 
     with open('config/device.conf', 'w') as configfile:
         config.write(configfile)
