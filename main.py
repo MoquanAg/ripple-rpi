@@ -932,7 +932,6 @@ class RippleController:
                 
                 elif section == 'Sprinkler':
                     # First, ensure sprinklers are turned off before doing anything else
-                    # This guarantees that changing any sprinkler setting will always reset the sprinkler state
                     try:
                         from src.sensors.Relay import Relay
                         relay = Relay()
@@ -941,7 +940,7 @@ class RippleController:
                             logger.info("Sprinklers turned off as part of configuration change procedure")
                     except Exception as e:
                         logger.error(f"Error turning off sprinklers: {e}")
-                    
+
                     # Check master toggle: sprinkler_scheduling_enabled
                     scheduling_enabled = True  # Default to enabled for backward compatibility
                     if self.config.has_option('Sprinkler', 'sprinkler_scheduling_enabled'):
@@ -951,75 +950,84 @@ class RippleController:
                         else:
                             scheduling_enabled = bool(scheduling_value)
                     logger.info(f"[CONFIG CHANGE] sprinkler_scheduling_enabled: {scheduling_enabled}")
-                    
+
                     if not scheduling_enabled:
                         logger.info("[CONFIG CHANGE] Sprinkler scheduling is DISABLED - stopping all cycles and clearing schedule")
                         try:
                             self.sprinkler_controller.stop_current_cycle()
-                            # Clear any pending scheduled jobs
                             from src.sprinkler_static import stop_sprinkler_schedule
                             stop_sprinkler_schedule()
                         except Exception as e:
                             logger.warning(f"[CONFIG CHANGE] Error stopping sprinkler schedule: {e}")
-                        # Skip the rest of sprinkler config handling
                         logger.info("Sprinkler configuration updated (scheduling disabled)")
                         continue
-                        
-                    # Now update the configuration values using operational values (second value)
+
+                    # Parse new values
                     sprinkler_on_duration = self._parse_config_value('Sprinkler', 'sprinkler_on_duration', 1)
                     sprinkler_wait_duration = self._parse_config_value('Sprinkler', 'sprinkler_wait_duration', 1)
-                    
-                    # Check if sprinkler_on_at_startup was changed
-                    startup_enabled = False
-                    if self.config.has_option('Sprinkler', 'sprinkler_on_at_startup'):
-                        startup_value = self._parse_config_value('Sprinkler', 'sprinkler_on_at_startup', 1)
-                        if isinstance(startup_value, str) and startup_value.lower() in ('true', 'false'):
-                            startup_enabled = startup_value.lower() == 'true'
-                        else:
-                            startup_enabled = bool(startup_value)
-                        logger.info(f"[CONFIG CHANGE] sprinkler_on_at_startup operational value: {startup_enabled}")
-                    
-                    # Configuration is automatically reloaded by individual controllers
-                    # No need to explicitly update configuration as simplified controllers read config directly
-                    
-                    # Only proceed to potentially turning them back on if not in an error state
+                    sprinkler_on_seconds = self._time_to_seconds(sprinkler_on_duration)
+
+                    # Get old values for comparison (last_config_state still holds pre-change values)
+                    old_on_duration = "00:00:00"
+                    old_wait_duration = "00:00:00"
+                    if self.event_handler and hasattr(self.event_handler, 'last_config_state'):
+                        old_sprinkler = self.event_handler.last_config_state.get('Sprinkler', {})
+                        old_on_raw = old_sprinkler.get('sprinkler_on_duration', '')
+                        old_wait_raw = old_sprinkler.get('sprinkler_wait_duration', '')
+                        if ',' in old_on_raw:
+                            old_on_duration = old_on_raw.split(',')[1].strip()
+                        if ',' in old_wait_raw:
+                            old_wait_duration = old_wait_raw.split(',')[1].strip()
+
+                    old_on_seconds = self._time_to_seconds(old_on_duration)
+                    old_wait_seconds = self._time_to_seconds(old_wait_duration)
+                    new_wait_seconds = self._time_to_seconds(sprinkler_wait_duration)
+
+                    logger.info(f"[CONFIG CHANGE] Sprinkler on_duration: {old_on_duration} -> {sprinkler_on_duration}")
+                    logger.info(f"[CONFIG CHANGE] Sprinkler wait_duration: {old_wait_duration} -> {sprinkler_wait_duration}")
+
+                    # Stop any current cycle
                     try:
-                        # Stop any current sprinkler cycle first
-                        try:
-                            self.sprinkler_controller.stop_current_cycle()
-                            logger.info("[Startup] Stopped current sprinkler cycle")
-                        except Exception as e:
-                            logger.warning(f"[Startup] Error stopping sprinkler cycle: {e}")
-                            
-                        # Get sprinkler on_duration - USING THE PARSED VALUE
-                        logger.info(f"Using parsed sprinkler_on_duration: '{sprinkler_on_duration}'")
-                        
-                        sprinkler_on_seconds = self._time_to_seconds(sprinkler_on_duration)
-                        logger.info(f"[Startup] Parsed sprinkler duration: {sprinkler_on_duration} = {sprinkler_on_seconds} seconds")
-                        
-                        # When config changes, trigger sprinkler immediately if duration is positive
-                        # sprinkler_on_at_startup only controls system startup, not config change behavior
-                        if sprinkler_on_seconds > 0:
-                            logger.info(f"[CONFIG CHANGE] Sprinkler duration > 0 ({sprinkler_on_duration}), starting sprinkler cycle immediately")
-                            # Use simplified sprinkler controller
-                            try:
-                                self.sprinkler_controller.start_sprinkler_cycle()
-                                logger.info("[CONFIG CHANGE] Sprinkler cycle started via simplified controller")
-                            except Exception as e:
-                                logger.error(f"[CONFIG CHANGE] Error starting sprinkler cycle: {e}")
-                        elif sprinkler_on_seconds <= 0:
-                            logger.info("[CONFIG CHANGE] Sprinkler duration set to zero, keeping sprinklers off")
-                        else:
-                            logger.info("[CONFIG CHANGE] Keeping sprinklers off based on configuration")
+                        self.sprinkler_controller.stop_current_cycle()
+                        logger.info("[CONFIG CHANGE] Stopped current sprinkler cycle")
                     except Exception as e:
-                        logger.error(f"Error in sprinkler control: {e}")
-                        logger.exception("Full exception details:")
-                    
-                    # NOTE: No need to reschedule future cycles here
-                    # The simplified sprinkler controller will automatically schedule the next cycle
-                    # when the current cycle stops via stop_sprinklers_with_controller_callback
-                    logger.info("[CONFIG CHANGE] Next sprinkler cycle will be scheduled automatically when current cycle stops")
-                        
+                        logger.warning(f"[CONFIG CHANGE] Error stopping sprinkler cycle: {e}")
+
+                    # Sentinel: wait_duration of 99:99:99 or 00:00:00 means "disable scheduling"
+                    DISABLE_SENTINEL_SECONDS = self._time_to_seconds("99:99:99")
+                    scheduling_disabled_by_wait = (new_wait_seconds == 0 or new_wait_seconds >= DISABLE_SENTINEL_SECONDS)
+
+                    if sprinkler_on_seconds <= 0 or scheduling_disabled_by_wait:
+                        reason = "on_duration=0" if sprinkler_on_seconds <= 0 else f"wait_duration={sprinkler_wait_duration} (disabled)"
+                        logger.info(f"[CONFIG CHANGE] Sprinkler scheduling OFF: {reason}")
+                        try:
+                            from src.sprinkler_static import stop_sprinkler_schedule
+                            stop_sprinkler_schedule()
+                        except Exception as e:
+                            logger.warning(f"[CONFIG CHANGE] Error stopping sprinkler schedule: {e}")
+                    elif sprinkler_on_seconds > old_on_seconds:
+                        # on_duration increased → farmer wants more watering → immediate run
+                        logger.info(f"[CONFIG CHANGE] on_duration INCREASED ({old_on_duration} -> {sprinkler_on_duration}), starting immediate sprinkler cycle")
+                        try:
+                            self.sprinkler_controller.start_sprinkler_cycle()
+                        except Exception as e:
+                            logger.error(f"[CONFIG CHANGE] Error starting sprinkler cycle: {e}")
+                    elif new_wait_seconds < old_wait_seconds:
+                        # wait_duration decreased → farmer wants more frequent watering → immediate run
+                        logger.info(f"[CONFIG CHANGE] wait_duration DECREASED ({old_wait_duration} -> {sprinkler_wait_duration}), starting immediate sprinkler cycle")
+                        try:
+                            self.sprinkler_controller.start_sprinkler_cycle()
+                        except Exception as e:
+                            logger.error(f"[CONFIG CHANGE] Error starting sprinkler cycle: {e}")
+                    else:
+                        # on_duration unchanged/decreased, wait_duration unchanged/increased → just reschedule
+                        logger.info(f"[CONFIG CHANGE] No urgency increase, scheduling next cycle with wait_duration={sprinkler_wait_duration}")
+                        try:
+                            from src.sprinkler_static import schedule_next_sprinkler_cycle_static
+                            schedule_next_sprinkler_cycle_static()
+                        except Exception as e:
+                            logger.error(f"[CONFIG CHANGE] Error scheduling next sprinkler cycle: {e}")
+
                     logger.info("Sprinkler configuration updated")
                 
                 elif section == 'EC':
