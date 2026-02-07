@@ -82,6 +82,24 @@ def get_ec_targets():
         logger.error(f"Error reading EC config: {e}")
         return 1.0, 0.1  # Default values
 
+def get_ec_min_max():
+    """Get EC min and max from config"""
+    try:
+        config_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'config', 'device.conf')
+        config = configparser.ConfigParser()
+        config.read(config_path)
+        ec_min = float(config.get('EC', 'ec_min').split(',')[1].strip())
+        ec_max = float(config.get('EC', 'ec_max').split(',')[1].strip())
+        return ec_min, ec_max
+    except Exception as e:
+        logger.error(f"Error reading EC min/max config: {e}")
+        return 0.0, 99.0  # Safe defaults (never alert)
+
+# Hysteresis flag: tracks whether a dosing sequence is active.
+# Initialized True so that after a restart, if EC is between
+# lower_threshold and target, we dose up to target.
+_dosing_active = True
+
 def get_abc_ratio_from_config():
     """Get ABC ratio from config"""
     try:
@@ -101,7 +119,13 @@ def get_abc_ratio_from_config():
         return [1, 1, 0]  # Default ratio
 
 def check_if_nutrient_dosing_needed():
-    """Check EC levels to determine if nutrient dosing is needed"""
+    """Check EC levels to determine if nutrient dosing is needed.
+
+    Uses hysteresis: dosing triggers when EC drops below (target - deadband),
+    then continues until EC reaches the actual target. This prevents EC from
+    settling at the bottom of the deadband.
+    """
+    global _dosing_active
     try:
         # Get current EC reading from saved sensor data file
         # Note: We read from file instead of EC singleton because APScheduler
@@ -126,22 +150,38 @@ def check_if_nutrient_dosing_needed():
         if current_ec is None:
             logger.error("[SENSOR-CHECK] Failed to get EC reading from saved data")
             return False
-            
+
         # Get target configuration
         target_ec, deadband = get_ec_targets()
+        ec_min, ec_max = get_ec_min_max()
         lower_threshold = target_ec - deadband
-        
+
         logger.info(f"[SENSOR-CHECK] Current EC: {current_ec:.3f} mS/cm")
         logger.info(f"[SENSOR-CHECK] Target EC: {target_ec:.3f} mS/cm (deadband: ±{deadband:.3f})")
         logger.info(f"[SENSOR-CHECK] Lower threshold: {lower_threshold:.3f} mS/cm")
-        
+
+        # Alert on min/max breaches
+        if current_ec < ec_min:
+            logger.warning(f"⚠️ [SENSOR-CHECK] EC {current_ec:.3f} BELOW MINIMUM {ec_min:.3f}")
+        if current_ec > ec_max:
+            logger.warning(f"⚠️ [SENSOR-CHECK] EC {current_ec:.3f} ABOVE MAXIMUM {ec_max:.3f}")
+
+        # Hysteresis dosing logic:
+        # - Trigger dosing when EC drops below lower threshold (target - deadband)
+        # - Continue dosing until EC reaches the actual target
+        # - Once at target, don't re-dose until EC drops below lower threshold again
         if current_ec < lower_threshold:
-            logger.info("🔴 [SENSOR-CHECK] EC TOO LOW - Nutrient dosing needed")
+            _dosing_active = True
+            logger.info("🔴 [SENSOR-CHECK] EC BELOW DEADBAND - Nutrient dosing needed")
+            return True
+        elif _dosing_active and current_ec < target_ec:
+            logger.info("🟡 [SENSOR-CHECK] EC BELOW TARGET (in deadband recovery) - Dosing to reach target")
             return True
         else:
+            _dosing_active = False
             logger.info("🟢 [SENSOR-CHECK] EC ADEQUATE - No dosing needed")
             return False
-            
+
     except Exception as e:
         logger.error(f"[SENSOR-CHECK] Error checking EC levels: {e}")
         return False  # Don't dose if we can't read sensors
