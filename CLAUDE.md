@@ -100,7 +100,7 @@ pip install -r requirements.txt
 - **Static functions**: Controllers delegate to `*_static.py` modules to avoid APScheduler serialization issues
 - **Port-specific locking**: Sequential Modbus access per serial port, parallel across different ports
 - **Event-driven**: `ModbusEventEmitter` pub-sub pattern for async response handling
-- **Hot-reload**: Watchdog monitors device.conf and action.json for live configuration updates
+- **Hot-reload**: Watchdog monitors device.conf and action.json for live configuration updates. Old config values are available via `event_handler.last_config_state` during reload (updated *after* `reload_specific_sections()` returns)
 - **Batch relay writes**: The relay board gets overwhelmed by rapid sequential Modbus commands. When controlling multiple adjacent relays, use `set_multiple_relays()` (Modbus function 0x10 Write Multiple Registers) instead of sequential `set_relay()` calls. See `set_nutrient_pumps()`, `_control_multiple_sprinklers()`, and `set_pump_from_tank_to_gutters()` for examples. For non-adjacent relays, add a small delay between individual writes.
 
 ## Configuration
@@ -131,6 +131,20 @@ ValveCO2_on_at_startup = false, false
 ```
 
 `RippleController.PLUMBING_STARTUP_DEVICES` maps these config keys to relay device names. `apply_plumbing_startup_configuration()` iterates the map and calls `relay.set_relay(device_name, bool_value)` for each. The same method is called on config hot-reload.
+
+### Sprinkler Hot-Reload Behavior
+
+When the `[Sprinkler]` section changes via hot-reload, the system compares old vs new values to decide whether to run sprinklers immediately or just reschedule:
+
+| on_duration | wait_duration | Action |
+|-------------|---------------|--------|
+| any | `99:99:99` or `00:00:00` | **disable** scheduling |
+| set to 0 | any | **disable** scheduling |
+| increased | any | **immediate run** |
+| any | decreased | **immediate run** |
+| unchanged/decreased | unchanged/increased | reschedule only (no immediate run) |
+
+Principle: "farmer wants more watering" (on increased, wait decreased) triggers immediate run. "Farmer wants less watering" (wait increased) just reschedules. Sentinel values disable entirely.
 
 ## Hardware
 
