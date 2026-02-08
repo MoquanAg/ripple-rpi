@@ -15,6 +15,7 @@ logger = GlobalLogger("RipplepH", log_prefix="ripple_").logger
 
 import math
 import helpers
+from src.ph_static import get_ph_targets
 
 class pH:
     """
@@ -453,6 +454,17 @@ class pH:
         self.last_updated = helpers.datetime_to_iso8601()
         self.save_data()
 
+    def _get_target_ph_fields(self):
+        """Get target_ph_lower and target_ph_upper from device config."""
+        try:
+            target, deadband, _, _ = get_ph_targets()
+            return {
+                "target_ph_lower": round(target, 2),
+                "target_ph_upper": round(target + deadband, 2)
+            }
+        except Exception:
+            return {"target_ph_lower": None, "target_ph_upper": None}
+
     def save_data(self):
         # Update the sensor-specific configuration in the file
         data = {
@@ -468,7 +480,8 @@ class pH:
                         "fields": {
                             "value": round(self.ph, 2) if self.ph is not None else None,
                             "temperature": round(self.temperature, 2) if self.temperature is not None else None,
-                            "offset": round(self.sensor_data.get('offset', None), 2) if self.sensor_data.get('offset') is not None else None
+                            "offset": round(self.sensor_data.get('offset', None), 2) if self.sensor_data.get('offset') is not None else None,
+                            **self._get_target_ph_fields()
                         },
                         "timestamp": self.last_updated
                     }
