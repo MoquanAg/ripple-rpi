@@ -95,7 +95,13 @@ def get_ph_targets():
         return 6.0, 0.2, 4.0, 8.0  # Default: target=6.0, deadband=0.2, min=4.0, max=8.0
 
 def check_if_ph_adjustment_needed():
-    """Check pH levels to determine if adjustment is needed and which pump to use"""
+    """Check pH levels to determine if adjustment is needed and which pump to use.
+
+    Returns:
+        (needs_adjustment, use_ph_up, dose_factor):
+            dose_factor (0.5–1.0) scales the configured pump duration proportionally.
+            Full dose far from target, half dose near target.
+    """
     try:
         # Get current pH reading from log file (same approach as scheduler)
         ph_value = None
@@ -128,12 +134,12 @@ def check_if_ph_adjustment_needed():
             
         if ph_value is None:
             logger.warning("[SENSOR] Could not read pH sensor, skipping adjustment decision")
-            return False, None
-            
+            return False, None, 1.0
+
         # Check data freshness
         if data_timestamp and datetime.now(data_timestamp.tzinfo) - data_timestamp > max_data_age:
             logger.warning(f"[SENSOR] pH data too old ({data_timestamp}), skipping adjustment")
-            return False, None
+            return False, None, 1.0
             
         # Get targets and limits
         target_ph, ph_deadband, ph_min, ph_max = get_ph_targets()
@@ -142,13 +148,13 @@ def check_if_ph_adjustment_needed():
         
         global _ph_dosing_active
 
-        # Safety limits first (unchanged)
+        # Safety limits first — always full dose
         if ph_value > ph_max:
             logger.info(f"[SENSOR] pH ({ph_value}) above maximum ({ph_max}) - pH DOWN needed")
-            return True, False  # Emergency pH DOWN
+            return True, False, 1.0  # Emergency pH DOWN, full dose
         elif ph_value < ph_min:
             logger.info(f"[SENSOR] pH ({ph_value}) below minimum ({ph_min}) - pH UP needed")
-            return True, True   # Emergency pH UP
+            return True, True, 1.0   # Emergency pH UP, full dose
 
         # Hysteresis dosing logic (mirrors EC but inverted):
         # - Trigger when pH rises above upper threshold (target + deadband)
@@ -156,22 +162,30 @@ def check_if_ph_adjustment_needed():
         # - Once at target, don't re-dose until pH rises above upper threshold again
         upper_threshold = target_ph + ph_deadband
 
+        # Proportional dose factor: scale linearly from 0.5 (at target) to 1.0 (at upper threshold)
+        # This prevents overshoot as pH approaches target (acid effect accelerates at lower pH)
+        if ph_deadband > 0:
+            distance = min(ph_value - target_ph, ph_deadband)
+            dose_factor = 0.5 + 0.5 * (distance / ph_deadband)
+        else:
+            dose_factor = 1.0
+
         if ph_value > upper_threshold:
             _ph_dosing_active = True
-            logger.info(f"[SENSOR] pH ({ph_value}) above upper threshold ({upper_threshold}) - pH DOWN needed")
-            return True, False
+            logger.info(f"[SENSOR] pH ({ph_value}) above upper threshold ({upper_threshold}) - pH DOWN needed (dose factor: {dose_factor:.0%})")
+            return True, False, dose_factor
         elif _ph_dosing_active and ph_value > target_ph:
-            logger.info(f"[SENSOR] pH ({ph_value}) above target ({target_ph}) (in hysteresis recovery) - continuing pH DOWN")
-            return True, False
+            logger.info(f"[SENSOR] pH ({ph_value}) above target ({target_ph}) (in hysteresis recovery) - continuing pH DOWN (dose factor: {dose_factor:.0%})")
+            return True, False, dose_factor
         else:
             _ph_dosing_active = False
             logger.info(f"[SENSOR] pH ({ph_value}) at or below target - no adjustment needed")
-            return False, None
+            return False, None, 1.0
             
     except Exception as e:
         logger.error(f"[SENSOR] Error checking pH levels: {e}")
         logger.exception("[SENSOR] Full exception details:")
-        return False, None
+        return False, None, 1.0
 
 def start_ph_pump_static():
     """Static function to start pH pump - SENSOR DRIVEN - safe for APScheduler"""
@@ -179,39 +193,39 @@ def start_ph_pump_static():
         logger.info("==== SENSOR-DRIVEN pH CHECK TRIGGERED ====")
         
         # Check if adjustment needed
-        adjustment_needed, use_ph_up = check_if_ph_adjustment_needed()
-        
+        adjustment_needed, use_ph_up, dose_factor = check_if_ph_adjustment_needed()
+
         if not adjustment_needed:
             logger.info("[SENSOR-DRIVEN] pH levels adequate - skipping adjustment")
             schedule_next_ph_cycle_static()  # Schedule next check
             return
-            
-        # Get configuration
+
+        # Get configuration and apply proportional scaling
         on_duration_str, wait_duration_str = get_ph_config()
         on_seconds = parse_duration(on_duration_str)
-        
+        scaled_seconds = max(1, int(on_seconds * dose_factor))
+
         if on_seconds == 0:
             logger.warning("[SENSOR-DRIVEN] pH pump duration is 0, skipping")
             return
-            
+
         # Turn on appropriate pH pump
         from src.sensors.Relay import Relay
         relay = Relay()
         if not relay:
             logger.error("[SENSOR-DRIVEN] No relay available for pH pump start")
             return
-            
+
         if use_ph_up:
             result = relay.set_ph_plus_pump(True)
             pump_type = "pH UP"
-            logger.info(f"[SENSOR-DRIVEN] {pump_type} pump started for {on_duration_str} ({on_seconds}s)")
         else:
-            result = relay.set_ph_minus_pump(True)  
+            result = relay.set_ph_minus_pump(True)
             pump_type = "pH DOWN"
-            logger.info(f"[SENSOR-DRIVEN] {pump_type} pump started for {on_duration_str} ({on_seconds}s)")
+        logger.info(f"[SENSOR-DRIVEN] {pump_type} pump started for {scaled_seconds}s (base {on_seconds}s x {dose_factor:.0%})")
             
         # Schedule stop
-        schedule_ph_stop_static(on_seconds, use_ph_up)
+        schedule_ph_stop_static(scaled_seconds, use_ph_up)
         
     except Exception as e:
         logger.error(f"[SENSOR-DRIVEN] Error in pH pump logic: {e}")

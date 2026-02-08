@@ -7,6 +7,7 @@ Critical tests:
 - pH at or below target stops dosing
 - Sensor failures prevent dosing (safety)
 - Hysteresis: dosing continues between target and upper threshold when active
+- Proportional dosing: dose factor scales with distance from target
 """
 import pytest
 from unittest.mock import MagicMock, patch
@@ -136,11 +137,12 @@ class TestpHLogic:
 
         # Act
         from src.ph_static import check_if_ph_adjustment_needed
-        needs_adjustment, use_ph_up = check_if_ph_adjustment_needed()
+        needs_adjustment, use_ph_up, dose_factor = check_if_ph_adjustment_needed()
 
         # Assert
         assert needs_adjustment == True
         assert use_ph_up == False  # pH DOWN
+        assert dose_factor == 1.0  # At/above upper threshold = full dose
 
     def test_ph_up_only_at_safety_limit(self, mock_relay, mock_config_ph, monkeypatch):
         """pH UP only triggers at ph_min safety limit, not at target - deadband"""
@@ -157,11 +159,12 @@ class TestpHLogic:
 
         # Act
         from src.ph_static import check_if_ph_adjustment_needed
-        needs_adjustment, use_ph_up = check_if_ph_adjustment_needed()
+        needs_adjustment, use_ph_up, dose_factor = check_if_ph_adjustment_needed()
 
         # Assert
         assert needs_adjustment == True
         assert use_ph_up == True  # pH UP (safety)
+        assert dose_factor == 1.0  # Safety = always full dose
 
     def test_no_ph_dosing_when_at_target(self, mock_relay, mock_config_ph, monkeypatch):
         """pH at or below target should not dose (hysteresis inactive after reaching target)"""
@@ -182,7 +185,7 @@ class TestpHLogic:
 
         # Act
         from src.ph_static import check_if_ph_adjustment_needed
-        needs_adjustment, use_ph_up = check_if_ph_adjustment_needed()
+        needs_adjustment, use_ph_up, _ = check_if_ph_adjustment_needed()
 
         # Assert - no adjustment needed
         assert needs_adjustment == False
@@ -200,9 +203,9 @@ class TestpHLogic:
 
         # Act
         from src.ph_static import check_if_ph_adjustment_needed
-        needs_adjustment, use_ph_up = check_if_ph_adjustment_needed()
+        needs_adjustment, use_ph_up, _ = check_if_ph_adjustment_needed()
 
-        # Assert - should return (False, None) or similar safe default
+        # Assert - should return safe default
         assert needs_adjustment == False
         assert use_ph_up == None
 
@@ -223,28 +226,30 @@ class TestpHLogic:
         # Phase 1: pH above upper threshold → triggers dosing, sets _ph_dosing_active=True
         ph_mod._ph_dosing_active = False
         mock_config_ph.write_ph_log(6.8)
-        needs, up = check_if_ph_adjustment_needed()
+        needs, up, factor = check_if_ph_adjustment_needed()
         assert needs == True
         assert up == False
+        assert factor == 1.0  # Capped at 1.0 (above threshold)
         assert ph_mod._ph_dosing_active == True
 
         # Phase 2: pH dropping, still above target → continues dosing (hysteresis recovery)
         mock_config_ph.write_ph_log(6.0)  # between target (5.5) and upper (6.5)
-        needs, up = check_if_ph_adjustment_needed()
+        needs, up, factor = check_if_ph_adjustment_needed()
         assert needs == True
         assert up == False
+        assert 0.5 < factor < 1.0  # Proportional: 0.5 + 0.5*(0.5/1.0) = 0.75
         assert ph_mod._ph_dosing_active == True
 
         # Phase 3: pH reaches target → stops dosing
         mock_config_ph.write_ph_log(5.5)
-        needs, up = check_if_ph_adjustment_needed()
+        needs, up, _ = check_if_ph_adjustment_needed()
         assert needs == False
         assert up == None
         assert ph_mod._ph_dosing_active == False
 
         # Phase 4: pH between target and upper threshold, but inactive → no dose
         mock_config_ph.write_ph_log(6.0)
-        needs, up = check_if_ph_adjustment_needed()
+        needs, up, _ = check_if_ph_adjustment_needed()
         assert needs == False
         assert up == None
         assert ph_mod._ph_dosing_active == False
@@ -266,19 +271,19 @@ class TestpHLogic:
 
         # Act
         from src.ph_static import check_if_ph_adjustment_needed
-        needs_adjustment, use_ph_up = check_if_ph_adjustment_needed()
+        needs_adjustment, use_ph_up, dose_factor = check_if_ph_adjustment_needed()
 
-        # Assert - should continue dosing DOWN
+        # Assert - should continue dosing DOWN with proportional factor
         assert needs_adjustment == True
         assert use_ph_up == False
         assert ph_mod._ph_dosing_active == True
+        # pH=6.0, target=5.5, deadband=1.0 → distance=0.5, factor=0.5+0.5*(0.5/1.0)=0.75
+        assert dose_factor == pytest.approx(0.75, abs=0.01)
 
     def test_ph_no_up_dosing_between_target_and_threshold(self, mock_relay, mock_config_ph, monkeypatch):
         """pH between target and upper threshold with inactive hysteresis should NOT trigger pH UP"""
         import src.ph_static as ph_mod
 
-        # This is the key behavioral change: old code would trigger pH UP at target - deadband,
-        # new code never triggers pH UP in normal range (only at ph_min safety limit)
         ph_mod._ph_dosing_active = False
         mock_config_ph.set_ph_target(5.5, 1.0)  # upper=6.5
         mock_config_ph.set_ph_pump_config()
@@ -291,7 +296,7 @@ class TestpHLogic:
 
         # Act
         from src.ph_static import check_if_ph_adjustment_needed
-        needs_adjustment, use_ph_up = check_if_ph_adjustment_needed()
+        needs_adjustment, use_ph_up, _ = check_if_ph_adjustment_needed()
 
         # Assert - no dosing at all, definitely NOT pH UP
         assert needs_adjustment == False
@@ -312,7 +317,43 @@ class TestpHLogic:
         monkeypatch.setattr("src.ph_static.get_scheduler", lambda: mock_scheduler)
 
         from src.ph_static import check_if_ph_adjustment_needed
-        needs_adjustment, use_ph_up = check_if_ph_adjustment_needed()
+        needs_adjustment, use_ph_up, dose_factor = check_if_ph_adjustment_needed()
 
         assert needs_adjustment == True
         assert use_ph_up == False  # pH DOWN (emergency)
+        assert dose_factor == 1.0  # Emergency = full dose
+
+    def test_ph_proportional_dose_factor(self, mock_relay, mock_config_ph, monkeypatch):
+        """Dose factor scales linearly: 1.0 at upper threshold, 0.5 at target"""
+        import src.ph_static as ph_mod
+        ph_mod._ph_dosing_active = True
+
+        mock_config_ph.set_ph_target(5.5, 1.0)  # upper threshold = 6.5
+        mock_config_ph.set_ph_pump_config()
+
+        mock_logger = MagicMock()
+        monkeypatch.setattr("src.ph_static.logger", mock_logger)
+        mock_scheduler = MagicMock()
+        monkeypatch.setattr("src.ph_static.get_scheduler", lambda: mock_scheduler)
+
+        from src.ph_static import check_if_ph_adjustment_needed
+
+        # At upper threshold (6.5): factor = 1.0
+        mock_config_ph.write_ph_log(6.5)
+        _, _, factor = check_if_ph_adjustment_needed()
+        assert factor == pytest.approx(1.0, abs=0.01)
+
+        # Midpoint (6.0): factor = 0.75
+        mock_config_ph.write_ph_log(6.0)
+        _, _, factor = check_if_ph_adjustment_needed()
+        assert factor == pytest.approx(0.75, abs=0.01)
+
+        # Near target (5.6): factor ≈ 0.55
+        mock_config_ph.write_ph_log(5.6)
+        _, _, factor = check_if_ph_adjustment_needed()
+        assert factor == pytest.approx(0.55, abs=0.01)
+
+        # Just above target (5.51): factor ≈ 0.505
+        mock_config_ph.write_ph_log(5.51)
+        _, _, factor = check_if_ph_adjustment_needed()
+        assert factor == pytest.approx(0.505, abs=0.01)
