@@ -32,6 +32,11 @@ def get_scheduler():
         logger.error(f"Error getting global scheduler: {e}")
         return None
 
+# Hysteresis flag: tracks whether a pH-down dosing sequence is active.
+# Initialized True so that after restart, if pH is between target and
+# upper trigger, we dose down to target.
+_ph_dosing_active = True
+
 def get_ph_config():
     """Get pH pump configuration from device.conf"""
     try:
@@ -135,21 +140,32 @@ def check_if_ph_adjustment_needed():
         
         logger.info(f"[SENSOR] Current pH: {ph_value}, Target: {target_ph}, Deadband: {ph_deadband}, Min: {ph_min}, Max: {ph_max}")
         
-        # Determine action needed (using fixed deadband logic)
+        global _ph_dosing_active
+
+        # Safety limits first (unchanged)
         if ph_value > ph_max:
             logger.info(f"[SENSOR] pH ({ph_value}) above maximum ({ph_max}) - pH DOWN needed")
-            return True, False  # Need pH Down
+            return True, False  # Emergency pH DOWN
         elif ph_value < ph_min:
             logger.info(f"[SENSOR] pH ({ph_value}) below minimum ({ph_min}) - pH UP needed")
-            return True, True   # Need pH Up
-        elif ph_value > (target_ph + ph_deadband):
-            logger.info(f"[SENSOR] pH ({ph_value}) above high threshold ({target_ph + ph_deadband}) - pH DOWN needed")
-            return True, False  # Need pH Down
-        elif ph_value < (target_ph - ph_deadband):
-            logger.info(f"[SENSOR] pH ({ph_value}) below low threshold ({target_ph - ph_deadband}) - pH UP needed")
-            return True, True   # Need pH Up
+            return True, True   # Emergency pH UP
+
+        # Hysteresis dosing logic (mirrors EC but inverted):
+        # - Trigger when pH rises above upper threshold (target + deadband)
+        # - Continue dosing DOWN until pH reaches actual target
+        # - Once at target, don't re-dose until pH rises above upper threshold again
+        upper_threshold = target_ph + ph_deadband
+
+        if ph_value > upper_threshold:
+            _ph_dosing_active = True
+            logger.info(f"[SENSOR] pH ({ph_value}) above upper threshold ({upper_threshold}) - pH DOWN needed")
+            return True, False
+        elif _ph_dosing_active and ph_value > target_ph:
+            logger.info(f"[SENSOR] pH ({ph_value}) above target ({target_ph}) (in hysteresis recovery) - continuing pH DOWN")
+            return True, False
         else:
-            logger.info(f"[SENSOR] pH ({ph_value}) within deadband - no adjustment needed")
+            _ph_dosing_active = False
+            logger.info(f"[SENSOR] pH ({ph_value}) at or below target - no adjustment needed")
             return False, None
             
     except Exception as e:

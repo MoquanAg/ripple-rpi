@@ -2,10 +2,11 @@
 Test pH dosing decision logic based on pH sensor readings.
 
 Critical tests:
-- pH too high triggers pH down pump
-- pH too low triggers pH up pump
-- pH in range skips dosing
+- pH above upper threshold triggers pH down pump
+- pH below safety minimum triggers pH up pump
+- pH at or below target stops dosing
 - Sensor failures prevent dosing (safety)
+- Hysteresis: dosing continues between target and upper threshold when active
 """
 import pytest
 from unittest.mock import MagicMock, patch
@@ -28,7 +29,7 @@ def mock_config_ph(tmp_path, monkeypatch):
             self.config_path = config_path
             self.data_dir = data_dir
 
-        def set_ph_target(self, target, deadband):
+        def set_ph_target(self, target, deadband, ph_min=4.0, ph_max=8.0):
             """Update pH target and deadband in config"""
             config = configparser.ConfigParser()
             config.read(self.config_path)
@@ -36,8 +37,8 @@ def mock_config_ph(tmp_path, monkeypatch):
                 config.add_section("pH")
             config.set("pH", "ph_target", f"6.0, {target}")
             config.set("pH", "ph_deadband", f"0.2, {deadband}")
-            config.set("pH", "ph_min", f"4.0, 4.0")
-            config.set("pH", "ph_max", f"8.0, 8.0")
+            config.set("pH", "ph_min", f"4.0, {ph_min}")
+            config.set("pH", "ph_max", f"8.0, {ph_max}")
             with open(self.config_path, "w") as f:
                 config.write(f)
 
@@ -108,15 +109,24 @@ ph_max = 8.0, 8.0
     return ConfigHelper(str(device_conf), data_dir)
 
 
+@pytest.fixture(autouse=True)
+def reset_ph_hysteresis():
+    """Reset hysteresis flag before each test to ensure isolation"""
+    import src.ph_static as ph_mod
+    ph_mod._ph_dosing_active = True
+    yield
+    ph_mod._ph_dosing_active = True
+
+
 class TestpHLogic:
     """Test pH-driven dosing decisions"""
 
-    def test_ph_down_when_ph_too_high(self, mock_relay, mock_config_ph, monkeypatch):
-        """pH above upper threshold should activate pH down pump"""
-        # Arrange
-        mock_config_ph.set_ph_target(6.5, 0.3)  # Range: [6.2, 6.8]
+    def test_ph_down_when_ph_above_upper_threshold(self, mock_relay, mock_config_ph, monkeypatch):
+        """pH above upper threshold (target + deadband) should activate pH down pump"""
+        # Arrange: target=5.5, deadband=1.0 → upper threshold=6.5
+        mock_config_ph.set_ph_target(5.5, 1.0)
         mock_config_ph.set_ph_pump_config()
-        mock_config_ph.write_ph_log(7.5)  # pH too high
+        mock_config_ph.write_ph_log(7.0)  # pH above 6.5 upper threshold
 
         mock_logger = MagicMock()
         monkeypatch.setattr("src.ph_static.logger", mock_logger)
@@ -129,16 +139,15 @@ class TestpHLogic:
         needs_adjustment, use_ph_up = check_if_ph_adjustment_needed()
 
         # Assert
-        # Should need adjustment and should NOT use pH up (meaning use pH down)
         assert needs_adjustment == True
-        assert use_ph_up == False
+        assert use_ph_up == False  # pH DOWN
 
-    def test_ph_up_when_ph_too_low(self, mock_relay, mock_config_ph, monkeypatch):
-        """pH below lower threshold should activate pH up pump"""
-        # Arrange
-        mock_config_ph.set_ph_target(6.5, 0.3)  # Range: [6.2, 6.8]
+    def test_ph_up_only_at_safety_limit(self, mock_relay, mock_config_ph, monkeypatch):
+        """pH UP only triggers at ph_min safety limit, not at target - deadband"""
+        # Arrange: target=5.5, deadband=1.0, ph_min=4.0
+        mock_config_ph.set_ph_target(5.5, 1.0)
         mock_config_ph.set_ph_pump_config()
-        mock_config_ph.write_ph_log(5.8)  # pH too low
+        mock_config_ph.write_ph_log(3.5)  # Below ph_min=4.0
 
         mock_logger = MagicMock()
         monkeypatch.setattr("src.ph_static.logger", mock_logger)
@@ -151,16 +160,19 @@ class TestpHLogic:
         needs_adjustment, use_ph_up = check_if_ph_adjustment_needed()
 
         # Assert
-        # Should need adjustment and should use pH up
         assert needs_adjustment == True
-        assert use_ph_up == True
+        assert use_ph_up == True  # pH UP (safety)
 
-    def test_no_ph_dosing_when_in_range(self, mock_relay, mock_config_ph, monkeypatch):
-        """pH within range should skip dosing"""
-        # Arrange
-        mock_config_ph.set_ph_target(6.5, 0.3)  # Range: [6.2, 6.8]
+    def test_no_ph_dosing_when_at_target(self, mock_relay, mock_config_ph, monkeypatch):
+        """pH at or below target should not dose (hysteresis inactive after reaching target)"""
+        import src.ph_static as ph_mod
+
+        # Arrange: target=5.5, deadband=1.0, pH=5.5 (at target)
+        # Set hysteresis inactive (simulates having just completed a dosing cycle)
+        ph_mod._ph_dosing_active = False
+        mock_config_ph.set_ph_target(5.5, 1.0)
         mock_config_ph.set_ph_pump_config()
-        mock_config_ph.write_ph_log(6.5)  # pH perfect
+        mock_config_ph.write_ph_log(5.5)
 
         mock_logger = MagicMock()
         monkeypatch.setattr("src.ph_static.logger", mock_logger)
@@ -179,7 +191,7 @@ class TestpHLogic:
     def test_no_ph_dosing_when_sensor_fails(self, monkeypatch, mock_config_ph):
         """pH sensor failure should prevent any dosing"""
         # Arrange - no log file = sensor failure
-        mock_config_ph.set_ph_target(6.5, 0.3)
+        mock_config_ph.set_ph_target(5.5, 1.0)
         mock_config_ph.set_ph_pump_config()
         # Don't write pH log - simulates sensor failure
 
@@ -193,3 +205,114 @@ class TestpHLogic:
         # Assert - should return (False, None) or similar safe default
         assert needs_adjustment == False
         assert use_ph_up == None
+
+    def test_ph_hysteresis_full_cycle(self, mock_relay, mock_config_ph, monkeypatch):
+        """Full hysteresis cycle: trigger → continue in recovery → stop at target → no dose when inactive"""
+        import src.ph_static as ph_mod
+
+        mock_config_ph.set_ph_target(5.5, 1.0)  # upper threshold = 6.5
+        mock_config_ph.set_ph_pump_config()
+
+        mock_logger = MagicMock()
+        monkeypatch.setattr("src.ph_static.logger", mock_logger)
+        mock_scheduler = MagicMock()
+        monkeypatch.setattr("src.ph_static.get_scheduler", lambda: mock_scheduler)
+
+        from src.ph_static import check_if_ph_adjustment_needed
+
+        # Phase 1: pH above upper threshold → triggers dosing, sets _ph_dosing_active=True
+        ph_mod._ph_dosing_active = False
+        mock_config_ph.write_ph_log(6.8)
+        needs, up = check_if_ph_adjustment_needed()
+        assert needs == True
+        assert up == False
+        assert ph_mod._ph_dosing_active == True
+
+        # Phase 2: pH dropping, still above target → continues dosing (hysteresis recovery)
+        mock_config_ph.write_ph_log(6.0)  # between target (5.5) and upper (6.5)
+        needs, up = check_if_ph_adjustment_needed()
+        assert needs == True
+        assert up == False
+        assert ph_mod._ph_dosing_active == True
+
+        # Phase 3: pH reaches target → stops dosing
+        mock_config_ph.write_ph_log(5.5)
+        needs, up = check_if_ph_adjustment_needed()
+        assert needs == False
+        assert up == None
+        assert ph_mod._ph_dosing_active == False
+
+        # Phase 4: pH between target and upper threshold, but inactive → no dose
+        mock_config_ph.write_ph_log(6.0)
+        needs, up = check_if_ph_adjustment_needed()
+        assert needs == False
+        assert up == None
+        assert ph_mod._ph_dosing_active == False
+
+    def test_ph_hysteresis_continues_above_target(self, mock_relay, mock_config_ph, monkeypatch):
+        """When _ph_dosing_active=True and pH is between target and upper threshold, should continue dosing"""
+        import src.ph_static as ph_mod
+
+        # Arrange: active dosing sequence, pH between target and upper threshold
+        ph_mod._ph_dosing_active = True
+        mock_config_ph.set_ph_target(5.5, 1.0)  # upper threshold = 6.5
+        mock_config_ph.set_ph_pump_config()
+        mock_config_ph.write_ph_log(6.0)  # between 5.5 and 6.5
+
+        mock_logger = MagicMock()
+        monkeypatch.setattr("src.ph_static.logger", mock_logger)
+        mock_scheduler = MagicMock()
+        monkeypatch.setattr("src.ph_static.get_scheduler", lambda: mock_scheduler)
+
+        # Act
+        from src.ph_static import check_if_ph_adjustment_needed
+        needs_adjustment, use_ph_up = check_if_ph_adjustment_needed()
+
+        # Assert - should continue dosing DOWN
+        assert needs_adjustment == True
+        assert use_ph_up == False
+        assert ph_mod._ph_dosing_active == True
+
+    def test_ph_no_up_dosing_between_target_and_threshold(self, mock_relay, mock_config_ph, monkeypatch):
+        """pH between target and upper threshold with inactive hysteresis should NOT trigger pH UP"""
+        import src.ph_static as ph_mod
+
+        # This is the key behavioral change: old code would trigger pH UP at target - deadband,
+        # new code never triggers pH UP in normal range (only at ph_min safety limit)
+        ph_mod._ph_dosing_active = False
+        mock_config_ph.set_ph_target(5.5, 1.0)  # upper=6.5
+        mock_config_ph.set_ph_pump_config()
+        mock_config_ph.write_ph_log(6.0)  # between target and upper, inactive
+
+        mock_logger = MagicMock()
+        monkeypatch.setattr("src.ph_static.logger", mock_logger)
+        mock_scheduler = MagicMock()
+        monkeypatch.setattr("src.ph_static.get_scheduler", lambda: mock_scheduler)
+
+        # Act
+        from src.ph_static import check_if_ph_adjustment_needed
+        needs_adjustment, use_ph_up = check_if_ph_adjustment_needed()
+
+        # Assert - no dosing at all, definitely NOT pH UP
+        assert needs_adjustment == False
+        assert use_ph_up == None
+
+    def test_ph_emergency_down_at_max(self, mock_relay, mock_config_ph, monkeypatch):
+        """pH above ph_max safety limit should trigger emergency pH DOWN"""
+        import src.ph_static as ph_mod
+        ph_mod._ph_dosing_active = False
+
+        mock_config_ph.set_ph_target(5.5, 1.0, ph_max=8.0)
+        mock_config_ph.set_ph_pump_config()
+        mock_config_ph.write_ph_log(8.5)  # above ph_max
+
+        mock_logger = MagicMock()
+        monkeypatch.setattr("src.ph_static.logger", mock_logger)
+        mock_scheduler = MagicMock()
+        monkeypatch.setattr("src.ph_static.get_scheduler", lambda: mock_scheduler)
+
+        from src.ph_static import check_if_ph_adjustment_needed
+        needs_adjustment, use_ph_up = check_if_ph_adjustment_needed()
+
+        assert needs_adjustment == True
+        assert use_ph_up == False  # pH DOWN (emergency)
