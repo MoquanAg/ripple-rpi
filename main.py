@@ -1368,8 +1368,14 @@ class RippleController:
             else:
                 logger.warning("[Startup] No relay available to ensure pH pumps are off")
                 
-            # Do NOT call start_ph_cycle() - keep them off  
-            logger.info("[Startup] pH system initialized in OFF state (no auto-start)")
+            # Initialize automatic pH-based dosing schedule
+            from src.ph_static import initialize_ph_schedule
+            success = initialize_ph_schedule()
+
+            if success:
+                logger.info("[Startup] Automatic pH dosing schedule initialized successfully")
+            else:
+                logger.info("[Startup] pH dosing schedule not started (duration may be 0)")
                 
         except Exception as e:
             logger.error(f"Error initializing simplified pH system: {e}")
@@ -1586,6 +1592,24 @@ class RippleController:
         except Exception as e:
             logger.error(f"[HEALTH] Error checking nutrient scheduler: {e}")
 
+    def _check_ph_scheduler_health(self):
+        """Check if the pH scheduler chain is alive, reinitialize if broken"""
+        try:
+            scheduler = globals.get_scheduler()
+            if not scheduler:
+                return
+
+            has_start = scheduler.get_job('ph_start') is not None
+            has_stop = scheduler.get_job('ph_stop') is not None
+
+            if not has_start and not has_stop:
+                logger.warning("[HEALTH] pH scheduler chain broken - no ph_start or ph_stop jobs found")
+                from src.ph_static import initialize_ph_schedule
+                initialize_ph_schedule()
+                logger.info("[HEALTH] pH scheduler recovered - chain was broken")
+        except Exception as e:
+            logger.error(f"[HEALTH] Error checking pH scheduler: {e}")
+
     def _check_heartbeat_timeout(self):
         """Check if Edge heartbeat has timed out. Switch to autonomous if so."""
         try:
@@ -1640,6 +1664,7 @@ class RippleController:
                 loop_count += 1
                 if loop_count % 6 == 0:
                     self._check_nutrient_scheduler_health()
+                    self._check_ph_scheduler_health()
 
                 # Periodic action file check as failsafe (in case watchdog misses events)
                 # Runs every loop (10s) - safe because process_actions() has early-exit checks
