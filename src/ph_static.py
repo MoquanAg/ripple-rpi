@@ -44,17 +44,18 @@ def get_ph_config():
         config = configparser.ConfigParser()
         config.read(config_path)
         
-        # Get operational values (second value after comma)
+        # Get both default (first) and operational (second) values
         on_str = config.get('NutrientPump', 'ph_pump_on_duration')
         wait_str = config.get('NutrientPump', 'ph_pump_wait_duration')
-        
+
         on_duration = on_str.split(',')[1].strip()
+        max_on_duration = on_str.split(',')[0].strip()
         wait_duration = wait_str.split(',')[1].strip()
-        
-        return on_duration, wait_duration
+
+        return on_duration, wait_duration, max_on_duration
     except Exception as e:
         logger.error(f"Error reading pH config: {e}")
-        return "00:00:02", "00:02:00"  # Default: 2s ON, 2min wait
+        return "00:00:03", "00:02:00", "00:00:05"
 
 def parse_duration(duration_str):
     """Parse HH:MM:SS to seconds"""
@@ -162,10 +163,12 @@ def check_if_ph_adjustment_needed():
         # - Once at target, don't re-dose until pH rises above upper threshold again
         upper_threshold = target_ph + ph_deadband
 
-        # Proportional dose factor: scale linearly from 0.5 (at target) to 1.0 (at upper threshold)
-        # This prevents overshoot as pH approaches target (acid effect accelerates at lower pH)
+        # Proportional dose factor: scale linearly from 0.5 (at target) to 1.0 (at threshold)
+        # Continues above 1.0 when pH exceeds threshold — capped by max config duration in caller.
+        # This prevents overshoot near target (acid effect accelerates at lower pH)
+        # while dosing more aggressively when pH is far above threshold.
         if ph_deadband > 0:
-            distance = min(ph_value - target_ph, ph_deadband)
+            distance = ph_value - target_ph
             dose_factor = 0.5 + 0.5 * (distance / ph_deadband)
         else:
             dose_factor = 1.0
@@ -201,9 +204,10 @@ def start_ph_pump_static():
             return
 
         # Get configuration and apply proportional scaling
-        on_duration_str, wait_duration_str = get_ph_config()
+        on_duration_str, wait_duration_str, max_on_duration_str = get_ph_config()
         on_seconds = parse_duration(on_duration_str)
-        scaled_seconds = max(1, int(on_seconds * dose_factor))
+        max_seconds = parse_duration(max_on_duration_str)
+        scaled_seconds = max(1, min(int(on_seconds * dose_factor), max_seconds))
 
         if on_seconds == 0:
             logger.warning("[SENSOR-DRIVEN] pH pump duration is 0, skipping")
@@ -280,7 +284,7 @@ def schedule_next_ph_cycle_static():
     """Schedule the next pH cycle using APScheduler"""
     try:
         # Get configuration
-        on_duration_str, wait_duration_str = get_ph_config()
+        on_duration_str, wait_duration_str, _ = get_ph_config()
         wait_seconds = parse_duration(wait_duration_str)
         
         if wait_seconds == 0:
@@ -311,7 +315,7 @@ def initialize_ph_schedule():
         logger.info("==== INITIALIZING pH SCHEDULE ====")
         
         # Get configuration
-        on_duration_str, wait_duration_str = get_ph_config()
+        on_duration_str, wait_duration_str, _ = get_ph_config()
         on_seconds = parse_duration(on_duration_str)
         
         if on_seconds == 0:

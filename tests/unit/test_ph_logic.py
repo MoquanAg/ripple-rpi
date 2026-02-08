@@ -142,7 +142,8 @@ class TestpHLogic:
         # Assert
         assert needs_adjustment == True
         assert use_ph_up == False  # pH DOWN
-        assert dose_factor == 1.0  # At/above upper threshold = full dose
+        # pH=7.0, target=5.5, deadband=1.0 → distance=1.5, factor=0.5+0.5*(1.5/1.0)=1.25
+        assert dose_factor == pytest.approx(1.25, abs=0.01)  # Above threshold = more than base
 
     def test_ph_up_only_at_safety_limit(self, mock_relay, mock_config_ph, monkeypatch):
         """pH UP only triggers at ph_min safety limit, not at target - deadband"""
@@ -229,7 +230,7 @@ class TestpHLogic:
         needs, up, factor = check_if_ph_adjustment_needed()
         assert needs == True
         assert up == False
-        assert factor == 1.0  # Capped at 1.0 (above threshold)
+        assert factor > 1.0  # Above threshold = factor exceeds 1.0
         assert ph_mod._ph_dosing_active == True
 
         # Phase 2: pH dropping, still above target → continues dosing (hysteresis recovery)
@@ -357,3 +358,8 @@ class TestpHLogic:
         mock_config_ph.write_ph_log(5.51)
         _, _, factor = check_if_ph_adjustment_needed()
         assert factor == pytest.approx(0.505, abs=0.01)
+
+        # Above threshold (7.0): factor = 0.5 + 0.5*(1.5/1.0) = 1.25
+        mock_config_ph.write_ph_log(7.0)
+        _, _, factor = check_if_ph_adjustment_needed()
+        assert factor == pytest.approx(1.25, abs=0.01)
