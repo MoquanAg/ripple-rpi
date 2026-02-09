@@ -28,7 +28,6 @@ src_dir = os.path.join(current_dir, 'src')
 sys.path.append(src_dir)
 
 import src.globals as globals
-globals.start_scheduler()
 import src.helpers as helpers
 from src.sensors.water_level import WaterLevel
 from src.sensors.Relay import Relay
@@ -1898,6 +1897,7 @@ class RippleController:
 
 if __name__ == "__main__":
     try:
+        globals.start_scheduler()
         controller = RippleController()
         # Start the main control loop
         controller.start()
