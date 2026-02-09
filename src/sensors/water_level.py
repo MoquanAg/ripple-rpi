@@ -187,7 +187,10 @@ class WaterLevel:
         self.temperature = None
         self.unit = None
         self.last_updated = None
+        self.valid_level_min = -10   # cm — override via config for different sensor models
+        self.valid_level_max = 500   # cm — override via config for different sensor models
         self.load_address()
+        self._load_valid_range()
 
         # Update modbus client initialization
         self.modbus_client = globals.modbus_client
@@ -223,6 +226,22 @@ class WaterLevel:
         except Exception as e:
             logger.error(f"Error loading Water Level sensor address: {e}")
             logger.exception("Full exception details:")
+
+    def _load_valid_range(self):
+        """Load valid level range from config. Allows sensor-specific range limits."""
+        try:
+            config = globals.DEVICE_CONFIG_FILE
+            if 'WaterLevel' in config:
+                wl = config['WaterLevel']
+                if 'valid_level_min' in wl:
+                    val = wl['valid_level_min']
+                    self.valid_level_min = float(val.split(',')[1].strip() if ',' in val else val.strip())
+                if 'valid_level_max' in wl:
+                    val = wl['valid_level_max']
+                    self.valid_level_max = float(val.split(',')[1].strip() if ',' in val else val.strip())
+            logger.info(f"Valid level range: {self.valid_level_min}–{self.valid_level_max} cm")
+        except Exception as e:
+            logger.warning(f"Error reading valid level range from config, using defaults: {e}")
 
     def _read_address_from_sensor(self):
         """
@@ -263,11 +282,11 @@ class WaterLevel:
     def get_status_async(self):
         """
         Queue a status request command with the modbus client.
-        
+
         Reads multiple holding registers to get comprehensive sensor data including
         configuration parameters and current measurement values. Results are processed
         asynchronously through the modbus event emitter system.
-        
+
         Reads registers from 0x0000 to 0x0007 to get all essential sensor data:
         - 0x0000: Slave address
         - 0x0001: Baudrate
@@ -277,7 +296,7 @@ class WaterLevel:
         - 0x0005: Range min point
         - 0x0006: Range max point
         - 0x0007: Additional settings
-        
+
         Note:
             - Docstring created by Claude 3.5 Sonnet on 2024-09-22
             - Uses Modbus function code 0x03 (Read Holding Registers)
@@ -285,6 +304,10 @@ class WaterLevel:
             - Expects 21-byte response including address, function, byte count, data, and CRC
             - Tracks pending commands for response correlation
         """
+        if any(info.get('type') == 'get_status' for info in self.pending_commands.values()):
+            logger.debug("Skip get_status: previous request still pending")
+            return
+
         command = bytearray([
             self.address,     # Slave address
             0x03,            # Function code (Read Holding Registers)
@@ -825,7 +848,14 @@ class WaterLevel:
                         
                         # The raw value is already in cm, just use decimal places for display
                         level = level_raw
-                        
+
+                        # Range validation — reject garbled Modbus responses
+                        if level < self.valid_level_min or level > self.valid_level_max:
+                            logger.warning(f"Water level {level} cm outside valid range "
+                                           f"({self.valid_level_min}–{self.valid_level_max} cm), discarding")
+                            self.save_null_data()
+                            return
+
                         # Format string based on decimal places setting
                         if decimal_value == 0:  # ####
                             level_str = f"{level:d}"
