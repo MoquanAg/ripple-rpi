@@ -1054,10 +1054,21 @@ class RippleController:
                 elif section == 'WaterLevel':
                     # Water level targets affect valve control
                     need_reload_targets = True
-                    
-                    # Trigger immediate water level check
-                    logger.info("Triggering immediate water level check due to WaterLevel config change")
-                    self.water_level_controller.force_check_now()
+
+                    from src.water_level_static import is_water_level_control_enabled
+                    enabled = is_water_level_control_enabled()
+
+                    if not enabled and self.water_level_controller.is_monitoring:
+                        logger.info("water_level_control_enabled DISABLED - stopping monitoring")
+                        self.water_level_controller.stop_monitoring()
+                    elif enabled and not self.water_level_controller.is_monitoring:
+                        logger.info("water_level_control_enabled ENABLED - starting monitoring")
+                        self.water_level_controller.start_water_level_monitoring()
+                    elif enabled:
+                        # Thresholds changed while enabled — next reading will use new values
+                        logger.info("WaterLevel thresholds updated, triggering immediate check")
+                        self.water_level_controller.force_check_now()
+
                     logger.info("WaterLevel configuration updated")
                 
                 elif section == 'PLUMBING':
@@ -1382,20 +1393,29 @@ class RippleController:
             logger.exception("Full exception details:")
 
     def _activate_water_level_monitoring_on_startup(self):
-        """Initialize simplified water level monitoring on startup"""
+        """Initialize event-driven water level monitoring on startup"""
         try:
-            logger.info("==== INITIALIZING SIMPLIFIED WATER LEVEL MONITORING ====")
-            
-            # Use the simplified water level controller
+            logger.info("==== INITIALIZING WATER LEVEL MONITORING ====")
+
+            if not self.config.has_section('WaterLevel'):
+                logger.info("[Startup] No WaterLevel section found - water level monitoring not started")
+                return
+
+            # Check master toggle
+            from src.water_level_static import is_water_level_control_enabled
+            if not is_water_level_control_enabled():
+                logger.info("[Startup] water_level_control_enabled is DISABLED - monitoring not started")
+                return
+
             success = self.water_level_controller.start_water_level_monitoring()
-            
+
             if success:
-                logger.info("[Startup] Simplified water level monitoring started successfully")
+                logger.info("[Startup] Water level monitoring started successfully (event-driven)")
             else:
-                logger.info("[Startup] Water level monitoring not started (interval may be 0 or already running)")
-                
+                logger.info("[Startup] Water level monitoring not started (already running)")
+
         except Exception as e:
-            logger.error(f"Error initializing simplified water level monitoring: {e}")
+            logger.error(f"Error initializing water level monitoring: {e}")
             logger.exception("Full exception details:")
 
     def shutdown(self):

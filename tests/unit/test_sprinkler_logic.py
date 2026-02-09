@@ -230,14 +230,12 @@ class TestGetSchedulerDualImport:
         from src.nutrient_static import get_scheduler as nutrient_get
         from src.ph_static import get_scheduler as ph_get
         from src.mixing_static import get_scheduler as mixing_get
-        from src.water_level_static import get_scheduler as wl_get
 
         for name, getter in [
             ("sprinkler_static", sprinkler_get),
             ("nutrient_static", nutrient_get),
             ("ph_static", ph_get),
             ("mixing_static", mixing_get),
-            ("water_level_static", wl_get),
         ]:
             result = getter()
             assert result is mock_scheduler, (

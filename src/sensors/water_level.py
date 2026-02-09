@@ -101,6 +101,17 @@ class WaterLevel:
     }
 
     _instances = {}  # Dictionary to hold multiple instances
+    _on_reading_callbacks = []  # Observers notified on each new reading
+
+    @classmethod
+    def on_reading(cls, callback):
+        """Register a callback: callback(sensor_id, level)"""
+        cls._on_reading_callbacks.append(callback)
+
+    @classmethod
+    def remove_on_reading(cls, callback):
+        """Unregister a callback"""
+        cls._on_reading_callbacks = [cb for cb in cls._on_reading_callbacks if cb != callback]
 
     @classmethod
     def load_all_sensors(cls, port='/dev/ttyAMA2'):
@@ -871,7 +882,14 @@ class WaterLevel:
                 
                 self.last_updated = helpers.datetime_to_iso8601()
                 self.save_data()
-                
+
+                # Notify observers of new reading
+                for cb in self._on_reading_callbacks:
+                    try:
+                        cb(self.sensor_id, self.level)
+                    except Exception as cb_err:
+                        logger.error(f"Error in water level callback: {cb_err}")
+
             except Exception as e:
                 logger.warning(f"Error processing response for {self.sensor_id}: {e}")
                 logger.exception("Full exception details:")
