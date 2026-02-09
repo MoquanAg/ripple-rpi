@@ -46,6 +46,9 @@ class MockRelay:
     def set_valve_outside_to_tank(self, state):
         return self.set_relay("ValveOutsideToTank", state)
 
+    def set_valve_tank_to_outside(self, state):
+        return self.set_relay("ValveTankToOutside", state)
+
     def reset(self):
         """Reset all relay states (for test cleanup)"""
         self.relay_states = {}
@@ -63,6 +66,9 @@ def mock_relay(monkeypatch):
 
     original_set_valve = mock.set_valve_outside_to_tank
     mock.set_valve_outside_to_tank = MagicMock(side_effect=original_set_valve)
+
+    original_set_valve_out = mock.set_valve_tank_to_outside
+    mock.set_valve_tank_to_outside = MagicMock(side_effect=original_set_valve_out)
 
     # Patch the Relay import wherever it's used
     monkeypatch.setattr("src.sensors.Relay.Relay", lambda: mock)

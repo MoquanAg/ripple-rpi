@@ -96,6 +96,14 @@ class ActionCommand(BaseModel):
     sprinkler_b: Optional[bool] = None
     pump_from_collector_tray_to_tank: Optional[bool] = None
 
+class DrainRequest(BaseModel):
+    action: str  # 'start' or 'stop'
+    target_level: Optional[float] = None
+    drain_amount: Optional[float] = None
+    duration_seconds: Optional[int] = None
+    mode: Optional[str] = 'drain'  # 'drain', 'flush', 'full_drain'
+    reason: Optional[str] = 'manual'
+
 class HeartbeatRequest(BaseModel):
     timestamp: Optional[float] = None
     edge_id: Optional[str] = None
@@ -1263,6 +1271,34 @@ async def update_sprinkler_config(sprinkler_config: SprinklerConfig, username: s
     except Exception as e:
         logger.error(f"Error updating sprinkler configuration: {e}")
         raise HTTPException(status_code=500, detail=f"Error updating sprinkler configuration: {str(e)}")
+
+@app.post("/api/v1/drain", tags=["WaterLevel"])
+async def drain_control(request: DrainRequest, username: str = Depends(verify_credentials)):
+    """Start or stop a tank drain/flush."""
+    from src.water_level_static import start_drain, stop_drain
+
+    if request.action == 'stop':
+        stop_drain("API stop")
+        return {"status": "ok", "message": "Drain stopped"}
+    elif request.action == 'start':
+        result = start_drain(
+            target_level=request.target_level,
+            drain_amount=request.drain_amount,
+            duration_seconds=request.duration_seconds,
+            reason=request.reason or 'manual',
+            mode=request.mode or 'drain',
+        )
+        if result['status'] == 'error':
+            raise HTTPException(status_code=400, detail=result['message'])
+        return result
+    else:
+        raise HTTPException(status_code=400, detail=f"Unknown action: {request.action}. Use 'start' or 'stop'.")
+
+@app.get("/api/v1/drain", tags=["WaterLevel"])
+async def drain_status(username: str = Depends(verify_credentials)):
+    """Get current drain status."""
+    from src.water_level_static import get_drain_status
+    return get_drain_status()
 
 @app.post("/api/v1/scan", tags=["Diagnostics"])
 async def scan_sensors(request: ScanRequest = None, username: str = Depends(verify_credentials)):

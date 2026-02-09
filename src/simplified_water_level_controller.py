@@ -8,7 +8,7 @@ Created: 2025-09-23
 Simplified to event-driven: 2026-02-09
 """
 
-from src.water_level_static import evaluate_water_level
+from src.water_level_static import evaluate_water_level, start_drain, stop_drain, get_drain_status
 
 try:
     from src.lumina_logger import GlobalLogger
@@ -76,6 +76,18 @@ class SimplifiedWaterLevelController:
         except Exception as e:
             logger.error(f"Error forcing check: {e}")
             return False
+
+    def start_drain(self, **kwargs):
+        """Start a tank drain/flush. Pass-through to water_level_static."""
+        return start_drain(**kwargs)
+
+    def stop_drain(self):
+        """Stop an active drain. Pass-through to water_level_static."""
+        stop_drain("manual stop")
+
+    def get_drain_status(self):
+        """Get current drain state. Pass-through to water_level_static."""
+        return get_drain_status()
 
     def get_status(self):
         """Get current controller status."""

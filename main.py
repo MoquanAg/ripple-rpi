@@ -1055,8 +1055,15 @@ class RippleController:
                     # Water level targets affect valve control
                     need_reload_targets = True
 
-                    from src.water_level_static import is_water_level_control_enabled
+                    from src.water_level_static import is_water_level_control_enabled, get_drain_status
                     enabled = is_water_level_control_enabled()
+
+                    # Log if drain config changed during active drain
+                    drain_status = get_drain_status()
+                    if drain_status.get('active'):
+                        logger.info(f"[CONFIG CHANGE] WaterLevel config changed while drain active "
+                                    f"(mode={drain_status.get('mode')}, target={drain_status.get('target_level')}). "
+                                    f"New values take effect on next evaluate_water_level() call.")
 
                     if not enabled and self.water_level_controller.is_monitoring:
                         logger.info("water_level_control_enabled DISABLED - stopping monitoring")
