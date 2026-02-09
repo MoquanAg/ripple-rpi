@@ -81,11 +81,11 @@ def evaluate_water_level(level):
 
     if level < water_min:
         relay.set_valve_outside_to_tank(True)
-        logger.warning(f"Water level ({level}%) BELOW minimum ({water_min}%) - EMERGENCY REFILL")
+        logger.warning(f"Water level ({level} cm) BELOW minimum ({water_min} cm) - EMERGENCY REFILL")
     elif level < low_threshold:
         relay.set_valve_outside_to_tank(True)
-        logger.info(f"Water level ({level}%) below threshold ({low_threshold}%) - REFILL")
-    elif level > water_max:
+        logger.info(f"Water level ({level} cm) below threshold ({low_threshold} cm) - REFILL")
+    elif level >= target:
         relay.set_valve_outside_to_tank(False)
-        logger.info(f"Water level ({level}%) above maximum ({water_max}%) - valve CLOSED")
-    # Between low_threshold and water_max: no action (hysteresis)
+        logger.info(f"Water level ({level} cm) reached target ({target} cm) - valve CLOSED")
+    # Between low_threshold and target: no action (hysteresis)

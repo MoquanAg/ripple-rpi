@@ -88,9 +88,9 @@ class TestWaterLevelLogic:
         # Assert - valve should have been opened (emergency refill)
         mock_relay.set_valve_outside_to_tank.assert_called_with(True)
 
-    def test_no_refill_when_water_level_adequate(self, mock_relay, mock_config_water_level, monkeypatch):
-        """Adequate water level should not trigger valve action"""
-        # Arrange
+    def test_no_action_in_hysteresis_zone(self, mock_relay, mock_config_water_level, monkeypatch):
+        """Level between low_threshold and target should not trigger valve action"""
+        # Arrange: target=80, deadband=10 → low_threshold=70, hysteresis zone is 70-80
         mock_config_water_level.set_water_level_target(80.0, 10.0)
 
         mock_logger = MagicMock()
@@ -98,9 +98,9 @@ class TestWaterLevelLogic:
 
         # Act
         from src.water_level_static import evaluate_water_level
-        evaluate_water_level(85.0)  # 85% - between low_threshold (70) and max (100)
+        evaluate_water_level(75.0)  # 75 cm - in hysteresis zone (70-80)
 
-        # Assert - no valve action (hysteresis zone)
+        # Assert - no valve action
         mock_relay.set_valve_outside_to_tank.assert_not_called()
 
     def test_no_refill_when_sensor_unavailable(self, monkeypatch, mock_relay, mock_config_water_level):
@@ -118,9 +118,9 @@ class TestWaterLevelLogic:
         # Assert - no valve action
         mock_relay.set_valve_outside_to_tank.assert_not_called()
 
-    def test_valve_closes_when_above_max(self, mock_relay, mock_config_water_level, monkeypatch):
-        """Water above maximum should close the valve"""
-        # Arrange
+    def test_valve_closes_at_target(self, mock_relay, mock_config_water_level, monkeypatch):
+        """Water at or above target should close the valve"""
+        # Arrange: target=80, deadband=10
         mock_config_water_level.set_water_level_target(80.0, 10.0)
 
         mock_logger = MagicMock()
@@ -128,7 +128,7 @@ class TestWaterLevelLogic:
 
         # Act
         from src.water_level_static import evaluate_water_level
-        evaluate_water_level(105.0)  # 105% - above max (100)
+        evaluate_water_level(80.0)  # Exactly at target
 
         # Assert - valve closed
         mock_relay.set_valve_outside_to_tank.assert_called_with(False)
