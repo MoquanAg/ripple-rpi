@@ -30,7 +30,6 @@ from src.sensors.Relay import Relay
 from src.sensors.DO import DO
 from src.sensors.pH import pH
 from src.sensors.ec import EC
-from main import RippleController
 from src.sensor_scanner import SensorScanner, ScanRequest
 
 # Pydantic models for API requests/responses
@@ -202,9 +201,6 @@ def verify_credentials(credentials: HTTPBasicCredentials = Depends(security)):
         )
     logger.info(f"Successful authentication for user: {credentials.username}")
     return credentials.username
-
-# Initialize the controller
-controller = RippleController(enable_file_watcher=False)
 
 def _time_to_seconds(time_str):
     """
@@ -1102,7 +1098,7 @@ async def update_plumbing_config(plumbing_config: PlumbingConfig, username: str 
 
         # Apply changes to relay hardware immediately
         if applied_changes:
-            relay = controller.relays.get('relay')
+            relay = Relay()
             if relay:
                 for api_field, value in applied_changes.items():
                     _, device_name = field_mapping[api_field]
@@ -1239,7 +1235,7 @@ async def update_sprinkler_config(sprinkler_config: SprinklerConfig, username: s
         # Apply sprinkler_on_at_startup changes immediately if present
         if 'sprinkler_on_at_startup' in applied_changes:
             startup_value = applied_changes['sprinkler_on_at_startup']
-            relay = controller.relays.get('relay')
+            relay = Relay()
             if relay:
                 try:
                     if startup_value:
