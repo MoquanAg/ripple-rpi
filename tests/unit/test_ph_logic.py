@@ -114,9 +114,9 @@ ph_max = 8.0, 8.0
 def reset_ph_hysteresis():
     """Reset hysteresis flag before each test to ensure isolation"""
     import src.ph_static as ph_mod
-    ph_mod._ph_dosing_active = True
+    ph_mod._ph_dosing_active = False
     yield
-    ph_mod._ph_dosing_active = True
+    ph_mod._ph_dosing_active = False
 
 
 class TestpHLogic:

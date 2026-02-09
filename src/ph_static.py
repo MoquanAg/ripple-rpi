@@ -33,9 +33,10 @@ def get_scheduler():
         return None
 
 # Hysteresis flag: tracks whether a pH-down dosing sequence is active.
-# Initialized True so that after restart, if pH is between target and
-# upper trigger, we dose down to target.
-_ph_dosing_active = True
+# Initialized False: safe default after restart. If pH > upper threshold,
+# line 176 will set it True. If pH is in the deadband, we wait rather
+# than assume dosing is needed — avoids saw-tooth oscillation on restart.
+_ph_dosing_active = False
 
 def get_ph_config():
     """Get pH pump configuration from device.conf"""
