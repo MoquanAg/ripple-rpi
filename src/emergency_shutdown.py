@@ -6,6 +6,11 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
+try:
+    from audit_event import audit
+except Exception:
+    audit = None
+
 
 def trigger_emergency_shutdown(reason: str, flag_path: str, relay=None):
     """
@@ -46,6 +51,12 @@ def trigger_emergency_shutdown(reason: str, flag_path: str, relay=None):
     flag_file.write_text(f"Emergency shutdown: {reason}\n")
 
     logger.critical(f"Emergency flag created at {flag_path}. Manual intervention required.")
+
+    if audit:
+        audit.emit("alarm", "emergency_shutdown",
+                   source="autonomous", status="success",
+                   value={"reason": reason, "flag_path": flag_path},
+                   details=f"EMERGENCY SHUTDOWN: {reason}")
 
 
 def is_emergency_active(flag_path: str) -> bool:

@@ -1650,6 +1650,17 @@ class RippleController:
                 logger.warning(f"Edge heartbeat timeout ({elapsed:.0f}s > {HEARTBEAT_TIMEOUT_S}s). Switching to autonomous mode.")
                 set_mode("autonomous")
 
+                try:
+                    from audit_event import audit as _audit
+                    if _audit:
+                        _audit.emit("mode_change", "autonomous_mode",
+                                    source="system",
+                                    value={"previous_mode": "passive", "trigger": "heartbeat_timeout",
+                                           "elapsed_s": round(elapsed, 0), "timeout_s": HEARTBEAT_TIMEOUT_S},
+                                    details=f"Heartbeat timeout ({elapsed:.0f}s > {HEARTBEAT_TIMEOUT_S}s)")
+                except Exception:
+                    pass
+
                 # Safety: turn off dosing pumps and sprinklers that Edge may have left on
                 relay = Relay()
                 if relay:

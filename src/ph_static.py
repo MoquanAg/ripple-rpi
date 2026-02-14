@@ -23,6 +23,11 @@ except Exception:
     import logging
     logger = logging.getLogger(__name__)
 
+try:
+    from audit_event import audit
+except Exception:
+    audit = None
+
 def get_scheduler():
     """Get the global scheduler instance from globals.py"""
     try:
@@ -153,9 +158,19 @@ def check_if_ph_adjustment_needed():
         # Safety limits first — always full dose
         if ph_value > ph_max:
             logger.info(f"[SENSOR] pH ({ph_value}) above maximum ({ph_max}) - pH DOWN needed")
+            if audit:
+                audit.emit("alarm", "ph_above_maximum",
+                           resource="pH", source="autonomous",
+                           value={"current_ph": round(ph_value, 2), "ph_max": ph_max},
+                           details=f"pH {ph_value:.2f} above maximum {ph_max:.2f}")
             return True, False, 1.0  # Emergency pH DOWN, full dose
         elif ph_value < ph_min:
             logger.info(f"[SENSOR] pH ({ph_value}) below minimum ({ph_min}) - pH UP needed")
+            if audit:
+                audit.emit("alarm", "ph_below_minimum",
+                           resource="pH", source="autonomous",
+                           value={"current_ph": round(ph_value, 2), "ph_min": ph_min},
+                           details=f"pH {ph_value:.2f} below minimum {ph_min:.2f}")
             return True, True, 1.0   # Emergency pH UP, full dose
 
         # Hysteresis dosing logic (mirrors EC but inverted):
@@ -228,7 +243,16 @@ def start_ph_pump_static():
             result = relay.set_ph_minus_pump(True)
             pump_type = "pH DOWN"
         logger.info(f"[SENSOR-DRIVEN] {pump_type} pump started for {scaled_seconds}s (base {on_seconds}s x {dose_factor:.0%})")
-            
+
+        if audit:
+            action = "ph_up_start" if use_ph_up else "ph_down_start"
+            audit.emit("dosing", action,
+                       resource="pHPlusPump" if use_ph_up else "pHMinusPump",
+                       source="autonomous",
+                       value={"duration_s": scaled_seconds, "dose_factor": round(dose_factor, 2),
+                              "base_duration_s": on_seconds},
+                       details=f"{pump_type} pump for {scaled_seconds}s (factor {dose_factor:.0%})")
+
         # Schedule stop
         schedule_ph_stop_static(scaled_seconds, use_ph_up)
         
@@ -251,7 +275,12 @@ def stop_ph_pump_static():
         relay.set_ph_plus_pump(False)
         relay.set_ph_minus_pump(False)
         logger.info("[STATIC] pH pumps stopped")
-        
+
+        if audit:
+            audit.emit("dosing", "ph_stop",
+                       resource="pHPlusPump,pHMinusPump",
+                       source="autonomous")
+
         # Schedule next cycle
         schedule_next_ph_cycle_static()
         

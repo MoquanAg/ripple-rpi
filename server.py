@@ -32,6 +32,11 @@ from src.sensors.pH import pH
 from src.sensors.ec import EC
 from src.sensor_scanner import SensorScanner, ScanRequest
 
+try:
+    from audit_event import audit
+except Exception:
+    audit = None
+
 # Pydantic models for API requests/responses
 class RelayControl(BaseModel):
     relay_id: str
@@ -507,7 +512,13 @@ async def receive_heartbeat(hb: HeartbeatRequest = HeartbeatRequest(), username:
     """Receive heartbeat from Lumina-Edge. Keeps Ripple in passive mode."""
     update_heartbeat()
     if get_mode() != "passive":
+        old_mode = get_mode()
         set_mode("passive")
+        if audit:
+            audit.emit("mode_change", "passive_mode",
+                       source="system",
+                       value={"previous_mode": old_mode, "trigger": "heartbeat_received"},
+                       details=f"Edge heartbeat received, switching from {old_mode} to passive")
     return {
         "status": "success",
         "mode": get_mode(),
@@ -528,7 +539,13 @@ async def update_fertigation_config(cfg: FertigationConfig, username: str = Depe
     """Unified endpoint for updating fertigation configuration.
     All fields are optional — only provided fields are updated in device.conf."""
     try:
+        changed_fields = cfg.model_dump(exclude_unset=True)
         if update_device_conf_from_config(cfg):
+            if audit and changed_fields:
+                audit.emit("config_change", "fertigation_config_update",
+                           resource="fertigation", source="user_cloud",
+                           value=changed_fields, user_name=username,
+                           details=f"Updated {len(changed_fields)} fertigation fields")
             return {"status": "success", "message": "Configuration applied successfully"}
         else:
             raise HTTPException(status_code=500, detail="Failed to apply configuration")
@@ -887,6 +904,14 @@ async def update_action(request: dict, username: str = Depends(verify_credential
         with open('config/action.json', 'w') as f:
             json.dump(processed_request, f, indent=2)
 
+        if audit:
+            audit.emit("user_command", "relay_action",
+                       resource=",".join(processed_request.keys()) if processed_request else None,
+                       source="user_cloud", user_name=username,
+                       value=processed_request,
+                       status="success" if not failed_actions else "partial",
+                       details=f"Failed: {failed_actions}" if failed_actions else None)
+
         # Return detailed status
         if failed_actions:
             logger.warning(f"Some actions failed: {failed_actions}")
@@ -1111,6 +1136,13 @@ async def update_plumbing_config(plumbing_config: PlumbingConfig, username: str 
                 logger.warning("No relay hardware available to apply plumbing changes")
 
         logger.info(f"Successfully updated plumbing configuration: {applied_changes}")
+
+        if audit and applied_changes:
+            audit.emit("config_change", "plumbing_config_update",
+                       resource="plumbing", source="user_cloud",
+                       value=applied_changes, user_name=username,
+                       details=f"Updated {len(applied_changes)} plumbing fields")
+
         return {
             "status": "success",
             "message": "Plumbing configuration updated successfully",
@@ -1258,8 +1290,15 @@ async def update_sprinkler_config(sprinkler_config: SprinklerConfig, username: s
             logger.info("[API] Wait duration changed - next cycle will use new duration when current cycle stops")
         
         logger.info(f"Successfully updated sprinkler configuration: {applied_changes}")
+
+        if audit and applied_changes:
+            audit.emit("config_change", "sprinkler_config_update",
+                       resource="sprinkler", source="user_cloud",
+                       value=applied_changes, user_name=username,
+                       details=f"Updated {len(applied_changes)} sprinkler fields")
+
         return {
-            "status": "success", 
+            "status": "success",
             "message": "Sprinkler configuration updated successfully",
             "applied_changes": applied_changes
         }

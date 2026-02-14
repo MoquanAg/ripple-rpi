@@ -27,6 +27,11 @@ except Exception:
     import logging
     logger = logging.getLogger(__name__)
 
+try:
+    from audit_event import audit
+except Exception:
+    audit = None
+
 def get_scheduler():
     """Get the global scheduler instance from globals.py"""
     try:
@@ -163,8 +168,18 @@ def check_if_nutrient_dosing_needed():
         # Alert on min/max breaches
         if current_ec < ec_min:
             logger.warning(f"⚠️ [SENSOR-CHECK] EC {current_ec:.3f} BELOW MINIMUM {ec_min:.3f}")
+            if audit:
+                audit.emit("alarm", "ec_below_minimum",
+                           resource="EC", source="autonomous",
+                           value={"current_ec": round(current_ec, 3), "ec_min": ec_min},
+                           details=f"EC {current_ec:.3f} below minimum {ec_min:.3f}")
         if current_ec > ec_max:
             logger.warning(f"⚠️ [SENSOR-CHECK] EC {current_ec:.3f} ABOVE MAXIMUM {ec_max:.3f}")
+            if audit:
+                audit.emit("alarm", "ec_above_maximum",
+                           resource="EC", source="autonomous",
+                           value={"current_ec": round(current_ec, 3), "ec_max": ec_max},
+                           details=f"EC {current_ec:.3f} above maximum {ec_max:.3f}")
 
         # Hysteresis dosing logic:
         # - Trigger dosing when EC drops below lower threshold (target - deadband)
@@ -233,7 +248,14 @@ def start_nutrient_pumps_static():
             pumps_started.append("C")
             
         logger.info(f"[SENSOR-DRIVEN] Nutrient pumps {pumps_started} started for {on_duration_str} ({on_seconds}s)")
-        
+
+        if audit:
+            audit.emit("dosing", "nutrient_start",
+                       resource=",".join(f"NutrientPump{p}" for p in pumps_started),
+                       source="autonomous",
+                       value={"abc_ratio": abc_ratio, "duration_s": on_seconds, "pumps": pumps_started},
+                       details=f"EC-driven dosing, pumps {pumps_started} for {on_duration_str}")
+
         # Schedule stop
         schedule_nutrient_stop_static(on_seconds)
         
@@ -257,7 +279,12 @@ def stop_nutrient_pumps_static():
         relay.set_relay("NutrientPumpB", False)
         relay.set_relay("NutrientPumpC", False)
         logger.info("[STATIC] Nutrient pumps stopped")
-        
+
+        if audit:
+            audit.emit("dosing", "nutrient_stop",
+                       resource="NutrientPumpA,NutrientPumpB,NutrientPumpC",
+                       source="autonomous")
+
         # Schedule next cycle
         schedule_next_nutrient_cycle_static()
         
