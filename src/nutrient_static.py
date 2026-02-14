@@ -172,14 +172,16 @@ def check_if_nutrient_dosing_needed():
                 audit.emit("alarm", "ec_below_minimum",
                            resource="EC", source="autonomous",
                            value={"current_ec": round(current_ec, 3), "ec_min": ec_min},
-                           details=f"EC {current_ec:.3f} below minimum {ec_min:.3f}")
+                           details=f"EC {current_ec:.3f} below minimum {ec_min:.3f}",
+                           debounce_key="ec_below_minimum", debounce_seconds=600)
         if current_ec > ec_max:
             logger.warning(f"⚠️ [SENSOR-CHECK] EC {current_ec:.3f} ABOVE MAXIMUM {ec_max:.3f}")
             if audit:
                 audit.emit("alarm", "ec_above_maximum",
                            resource="EC", source="autonomous",
                            value={"current_ec": round(current_ec, 3), "ec_max": ec_max},
-                           details=f"EC {current_ec:.3f} above maximum {ec_max:.3f}")
+                           details=f"EC {current_ec:.3f} above maximum {ec_max:.3f}",
+                           debounce_key="ec_above_maximum", debounce_seconds=600)
 
         # Hysteresis dosing logic:
         # - Trigger dosing when EC drops below lower threshold (target - deadband)

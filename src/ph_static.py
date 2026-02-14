@@ -162,7 +162,8 @@ def check_if_ph_adjustment_needed():
                 audit.emit("alarm", "ph_above_maximum",
                            resource="pH", source="autonomous",
                            value={"current_ph": round(ph_value, 2), "ph_max": ph_max},
-                           details=f"pH {ph_value:.2f} above maximum {ph_max:.2f}")
+                           details=f"pH {ph_value:.2f} above maximum {ph_max:.2f}",
+                           debounce_key="ph_above_maximum", debounce_seconds=600)
             return True, False, 1.0  # Emergency pH DOWN, full dose
         elif ph_value < ph_min:
             logger.info(f"[SENSOR] pH ({ph_value}) below minimum ({ph_min}) - pH UP needed")
@@ -170,7 +171,8 @@ def check_if_ph_adjustment_needed():
                 audit.emit("alarm", "ph_below_minimum",
                            resource="pH", source="autonomous",
                            value={"current_ph": round(ph_value, 2), "ph_min": ph_min},
-                           details=f"pH {ph_value:.2f} below minimum {ph_min:.2f}")
+                           details=f"pH {ph_value:.2f} below minimum {ph_min:.2f}",
+                           debounce_key="ph_below_minimum", debounce_seconds=600)
             return True, True, 1.0   # Emergency pH UP, full dose
 
         # Hysteresis dosing logic (mirrors EC but inverted):

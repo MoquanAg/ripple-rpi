@@ -21,6 +21,7 @@ import logging
 import os
 import sqlite3
 import threading
+import time
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
@@ -98,6 +99,7 @@ class AuditStore:
         self._device_id = _read_device_id()
         self._db_path = os.path.join(DATA_DIR, "audit_events.db")
         self._db_lock = threading.Lock()
+        self._debounce_times: Dict[str, float] = {}
         self._init_db()
         self._initialized = True
         logger.info("AuditStore initialized at %s (device=%s)", self._db_path, self._device_id)
@@ -173,8 +175,24 @@ class AuditStore:
         user_name: Optional[str] = None,
         grow_cycle_id: Optional[str] = None,
         device_id: Optional[str] = None,
+        debounce_key: Optional[str] = None,
+        debounce_seconds: float = 0,
     ) -> Optional[str]:
-        """Emit an audit event — persists to SQLite and logs to text logger."""
+        """Emit an audit event — persists to SQLite and logs to text logger.
+
+        Args:
+            debounce_key: If set, suppress duplicate events with the same key
+                within debounce_seconds. Useful for repetitive autonomous actions.
+            debounce_seconds: Minimum interval between events with the same
+                debounce_key (default 0 = no debouncing).
+        """
+        if debounce_key and debounce_seconds > 0:
+            now = time.monotonic()
+            last = self._debounce_times.get(debounce_key, 0)
+            if now - last < debounce_seconds:
+                return None
+            self._debounce_times[debounce_key] = now
+
         if event_type not in VALID_EVENT_TYPES:
             logger.warning("Unknown audit event_type: %s", event_type)
 
