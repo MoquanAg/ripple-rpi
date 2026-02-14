@@ -1678,6 +1678,13 @@ class RippleController:
         """Main loop for the Ripple controller"""
         logger.info("Starting main control loop")
 
+        # Start audit event sync to Edge (background daemon thread)
+        try:
+            from audit_sync import start_audit_sync
+            start_audit_sync()
+        except Exception as e:
+            logger.warning(f"Failed to start audit sync: {e}")
+
         loop_count = 0
         try:
             while True:

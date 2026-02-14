@@ -7,7 +7,7 @@ import configparser
 import subprocess  # Added for system commands
 import threading
 from typing import Dict, List, Optional, Union, Any
-from fastapi import FastAPI, HTTPException, Depends, status
+from fastapi import FastAPI, HTTPException, Depends, Request, status
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -120,6 +120,7 @@ logger.info("Starting Ripple API Server")
 _mode_lock = threading.Lock()
 _current_mode = "autonomous"  # Start autonomous until Edge checks in
 _last_heartbeat_time = 0.0    # time.time() of last heartbeat
+_edge_ip = None               # IP of Edge device (captured from heartbeat sender)
 HEARTBEAT_TIMEOUT_S = 60      # Switch to autonomous after 60s without heartbeat
 
 def get_mode():
@@ -138,10 +139,16 @@ def get_last_heartbeat_time():
     with _mode_lock:
         return _last_heartbeat_time
 
-def update_heartbeat():
-    global _last_heartbeat_time
+def update_heartbeat(edge_ip=None):
+    global _last_heartbeat_time, _edge_ip
     with _mode_lock:
         _last_heartbeat_time = time.time()
+        if edge_ip:
+            _edge_ip = edge_ip
+
+def get_edge_ip():
+    with _mode_lock:
+        return _edge_ip
 
 # Create FastAPI app
 app = FastAPI(title="Ripple Fertigation API", 
@@ -508,9 +515,10 @@ async def system_info(username: str = Depends(verify_credentials)):
     }
 
 @app.post("/api/v1/heartbeat", tags=["Control"])
-async def receive_heartbeat(hb: HeartbeatRequest = HeartbeatRequest(), username: str = Depends(verify_credentials)):
+async def receive_heartbeat(request: Request, hb: HeartbeatRequest = HeartbeatRequest(), username: str = Depends(verify_credentials)):
     """Receive heartbeat from Lumina-Edge. Keeps Ripple in passive mode."""
-    update_heartbeat()
+    edge_ip = request.client.host if request.client else None
+    update_heartbeat(edge_ip=edge_ip)
     if get_mode() != "passive":
         old_mode = get_mode()
         set_mode("passive")
