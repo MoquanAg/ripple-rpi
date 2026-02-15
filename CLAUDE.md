@@ -181,6 +181,7 @@ The system supports configurable multi-channel relay boards (4, 8, or 16 channel
 - `POST /api/v1/user_instruction_set` - User manual adjustments
 - `GET/POST /api/v1/plumbing` - Plumbing valve/pump configuration
 - `GET/POST /api/v1/sprinkler` - Sprinkler configuration
+- `GET /api/v1/config` - Device.conf as raw INI text + SHA256 hash (for cloud sync)
 - `POST /api/v1/system/reboot` - Reboot system
 - `POST /api/v1/system/restart` - Restart Ripple application
 
@@ -216,6 +217,15 @@ The system supports configurable multi-channel relay boards (4, 8, or 16 channel
 3. **API 401 errors**: Check SYSTEM username/password in device.conf
 4. **Scheduler jobs not running**: Check APScheduler logs, verify SQLite job store
 
+## GACP/GAP Audit Events
+
+Ripple instruments all subsystem operations with audit events for regulatory compliance:
+- **Module**: `audit_event.py` — SQLite-backed `AuditStore` singleton with Pydantic v2 model
+- **Sync**: `audit_sync.py` — daemon thread syncs unsynced events to Edge local server every 5 min via `POST http://{edge_ip}:9090/api/audit/events`
+- **Debounce**: Alarm events are debounced to prevent log flooding
+- **Instrumented**: nutrient dosing, pH control, sprinkler, water level, plumbing, config changes
+- **Event types**: user_command, override, config_change, dosing, irrigation, climate, alarm, system
+
 ## Deployed Devices
 
 | Device | WireGuard IP | Description |
@@ -225,14 +235,11 @@ The system supports configurable multi-channel relay boards (4, 8, or 16 channel
 ### Deployment
 
 ```bash
-# SSH to device
-ssh lumina@10.7.0.40
+# SSH to device (use lumina-device-connect skill for address resolution)
+ssh lumina@<device-ip>
 
 # Deploy: pull code, restart
-ssh lumina@10.7.0.40 "cd ~/ripple-rpi && git pull origin main"
-ssh lumina@10.7.0.40 "curl -s -u 'ripple-rpi:+IHa0UpROx94' http://127.0.0.1:5000/api/v1/system/restart -X POST"
-
-# Verify after restart
-ssh lumina@10.7.0.40 "cd ~/ripple-rpi && grep -iE 'error|warning' log/ripple_*.log"
-ssh lumina@10.7.0.40 "curl -s -u 'ripple-rpi:+IHa0UpROx94' http://127.0.0.1:5000/api/v1/plumbing | python3 -m json.tool"
+ssh lumina@<device-ip> "cd ~/ripple-rpi && git pull origin main"
+# Restart via API (credentials in device.conf SYSTEM section)
+ssh lumina@<device-ip> "curl -s -u '<user>:<pass>' http://127.0.0.1:5000/api/v1/system/restart -X POST"
 ```
