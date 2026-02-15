@@ -486,6 +486,19 @@ def _update_device_conf_locked(cfg: FertigationConfig) -> bool:
     logger.info(f"Updated device.conf: {cfg.dict(exclude_none=True)}")
     return True
 
+@app.get("/api/v1/config", tags=["General"])
+async def get_device_config(username: str = Depends(verify_credentials)):
+    """Return current device.conf as raw INI text with SHA256 hash."""
+    import hashlib
+    config_path = os.path.join(current_dir, 'config', 'device.conf')
+    with open(config_path, 'r') as f:
+        config_text = f.read()
+    config_hash = hashlib.sha256(config_text.encode()).hexdigest()
+    return {
+        "config_text": config_text,
+        "config_hash": config_hash,
+    }
+
 @app.get("/api/v1/system", response_model=SystemStatus, tags=["General"])
 async def system_info(username: str = Depends(verify_credentials)):
     """

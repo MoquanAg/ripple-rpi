@@ -514,7 +514,10 @@ class RippleController:
         # Create config parser with case sensitivity
         self.config = configparser.ConfigParser(empty_lines_in_values=False, interpolation=None)
         self.sensor_data_file = os.path.join(self.data_dir, 'saved_sensor_data.json')
-        
+
+        # Track raw config text + hash for cloud sync via edge relay
+        self.current_config_text, self.current_config_hash = self._read_config_with_hash()
+
         self.initialize_sensors()
         self.load_sensor_targets()
         self.apply_plumbing_startup_configuration()
@@ -564,6 +567,17 @@ class RippleController:
                 logger.info("File watcher disabled for this controller instance")
             else:
                 logger.info(f"Config file monitoring already active — skipping duplicate observer")
+
+    def _read_config_with_hash(self):
+        """Read device.conf as raw text and compute SHA256 hash."""
+        import hashlib
+        try:
+            with open(self.config_file, 'r') as f:
+                raw = f.read()
+            return raw, hashlib.sha256(raw.encode()).hexdigest()
+        except Exception as e:
+            logger.error(f"Error reading config for hash: {e}")
+            return "", ""
 
     def _time_to_seconds(self, time_str):
         """Convert HH:MM:SS format to seconds"""
@@ -1087,9 +1101,12 @@ class RippleController:
             if need_reload_targets:
                 self.load_sensor_targets()
                 logger.info("Sensor targets reloaded")
-            
+
+            # Update raw config text + hash for cloud sync
+            self.current_config_text, self.current_config_hash = self._read_config_with_hash()
+
             logger.info("Specific configuration sections reloaded successfully")
-            
+
         except Exception as e:
             logger.error(f"Error reloading specific sections: {e}")
             # Fall back to full reload if specific reload fails
@@ -1150,7 +1167,10 @@ class RippleController:
                 logger.info(f"Sprinkler controller trigger exception (may be normal): {e}")
             
             logger.info("Immediate controller checks completed")
-            
+
+            # Update raw config text + hash for cloud sync
+            self.current_config_text, self.current_config_hash = self._read_config_with_hash()
+
         except Exception as e:
             logger.error(f"Error reloading configuration: {e}")
 
