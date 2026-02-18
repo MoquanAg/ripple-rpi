@@ -685,7 +685,18 @@ async def get_system_status(username: str = Depends(verify_credentials)):
                 water_level_points = water_metrics['water_level']['measurements']['points']
                 if water_level_points:
                     simplified_status['water_level'] = water_level_points[-1]['fields']['value']
-        
+
+        # Extract soil metrics
+        if 'data' in sensor_data and 'soil_metrics' in sensor_data['data']:
+            soil_metrics = sensor_data['data']['soil_metrics']
+
+            if 'npk' in soil_metrics and 'measurements' in soil_metrics['npk']:
+                npk_points = soil_metrics['npk']['measurements']['points']
+                if npk_points:
+                    simplified_status['nitrogen'] = npk_points[-1]['fields'].get('nitrogen')
+                    simplified_status['phosphorus'] = npk_points[-1]['fields'].get('phosphorus')
+                    simplified_status['potassium'] = npk_points[-1]['fields'].get('potassium')
+
         # Extract target values from config file
         try:
             config = configparser.ConfigParser()

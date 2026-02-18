@@ -34,6 +34,7 @@ from src.sensors.Relay import Relay
 from src.sensors.DO import DO
 from src.sensors.pH import pH
 from src.sensors.ec import EC
+from src.sensors.npk import NPK
 from src.lumina_logger import GlobalLogger
 # Removed old RippleScheduler - now using simplified controllers
 
@@ -609,6 +610,11 @@ class RippleController:
             EC.load_all_sensors()
             time.sleep(0.5)  # Critical delay to prevent bus contention
             
+            # Initialize NPK soil sensors
+            logger.info("[STARTUP] Initializing NPK sensors...")
+            NPK.load_all_sensors()
+            time.sleep(0.5)
+
             # Initialize DO sensors (currently disabled)
             # logger.info("[STARTUP] Initializing DO sensors...")
             # DO.load_all_sensors()
@@ -1761,6 +1767,9 @@ class RippleController:
             time.sleep(0.5)
 
             EC.get_statuses_async()
+            time.sleep(0.5)
+
+            NPK.get_statuses_async()
         except Exception as e:
             logger.error(f"Error updating sensor data: {e}")
             
