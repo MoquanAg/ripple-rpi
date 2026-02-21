@@ -9,36 +9,22 @@ Intelligent fertigation control system for vertical farming. Automates nutrient 
 - lumina-modbus-server (TCP bridge at `~/lumina-modbus-server`, port 8888)
 - APScheduler + SQLite (persistent task scheduling)
 - Watchdog (config file hot-reload)
-- Pydantic 1.x (data validation)
+- Pydantic 1.x (data validation — main codebase; audit_event.py uses Pydantic 2.x)
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                      Ripple Application                     │
-│  ┌──────────┐  ┌──────────┐  ┌──────────────────────────┐  │
-│  │ main.py  │  │server.py │  │  Simplified Controllers  │  │
-│  │Controller│  │ REST API │  │ (sprinkler, nutrient,    │  │
-│  │          │  │ :5000    │  │  pH, mixing, water_level)│  │
-│  └────┬─────┘  └────┬─────┘  └───────────┬──────────────┘  │
-│       │             │                    │                  │
-│       └─────────────┴────────────────────┘                  │
-│                         │                                   │
-│              ┌──────────┴──────────┐                       │
-│              │ LuminaModbusClient  │                       │
-│              │   (TCP Socket)      │                       │
-│              └──────────┬──────────┘                       │
-└─────────────────────────┼───────────────────────────────────┘
-                          │ TCP :8888
-┌─────────────────────────┴───────────────────────────────────┐
-│              lumina-modbus-server (~/lumina-modbus-server)  │
-│                    Modbus RTU Bridge                        │
-└───────────┬─────────────────────────────────┬───────────────┘
-            │ Serial                          │ Serial
-     ┌──────┴──────┐                   ┌──────┴──────┐
-     │  /dev/ttyAMA2   │                   │  /dev/ttyAMA1   │
-     │  Sensors (9600) │                   │ Relays (38400)  │
-     └─────────────┘                   └─────────────┘
+Ripple Application
+    main.py (Controller)
+    server.py (REST API :5000)
+    Simplified Controllers (sprinkler, nutrient, pH, mixing, water_level)
+        |
+    LuminaModbusClient (TCP Socket)
+        |  TCP :8888
+    lumina-modbus-server (~/lumina-modbus-server, Modbus RTU Bridge)
+        |                       |
+    /dev/ttyAMA2 (Serial)   /dev/ttyAMA1 (Serial)
+    Sensors (9600)          Relays (38400)
 ```
 
 ## Project Structure
