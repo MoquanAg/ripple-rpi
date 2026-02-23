@@ -7,7 +7,11 @@
       "Bash(chmod:*)",
       "Bash(git pull:*)",
       "Bash(git stash:*)",
-      "Bash(git stash pop:*)"
+      "Bash(git stash pop:*)",
+      "Bash(GIT_EXTERNAL_DIFF= git diff:*)",
+      "Bash(scp:*)",
+      "Bash(git --no-pager log --no-ext-diff --oneline -5)",
+      "Bash(/opt/homebrew/bin/rg \"last_config_state\" /Users/cqin/dev/luminaos_suite/ripple-rpi -n)"
     ]
   }
 }
