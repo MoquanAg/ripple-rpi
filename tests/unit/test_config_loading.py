@@ -86,6 +86,25 @@ class TestConfigLoading:
         assert target == 1.2
         assert ratio == [1, 1, 0]
 
+    def test_quoted_abc_ratio_parsed_correctly(self, setup_test_environment, monkeypatch):
+        """ABC ratio with quoted values (e.g. '"1:1:0"') should be parsed correctly"""
+        config_file = setup_test_environment["config_dir"] / "device.conf"
+        config = configparser.ConfigParser()
+        config.read(config_file)
+        if "NutrientPump" not in config:
+            config.add_section("NutrientPump")
+        config.set("NutrientPump", "abc_ratio", '"1:1:1", "1:1:0"')
+        with open(config_file, "w") as f:
+            config.write(f)
+
+        import src.nutrient_static as nutrient_module
+        fake_file_path = str(setup_test_environment["config_dir"].parent / "src" / "nutrient_static.py")
+        monkeypatch.setattr(nutrient_module, "__file__", fake_file_path)
+
+        from src.nutrient_static import get_abc_ratio_from_config
+        ratio = get_abc_ratio_from_config()
+        assert ratio == [1, 1, 0]
+
     def test_missing_nutrient_section_returns_defaults(self, setup_test_environment, monkeypatch):
         """Missing config should return safe defaults (zeros)"""
         # Arrange - create minimal config without NutrientPump section

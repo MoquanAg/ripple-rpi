@@ -114,11 +114,11 @@ def get_abc_ratio_from_config():
 
         # Get operational values (second value after comma)
         ratio_str = config.get('NutrientPump', 'abc_ratio')
-        ratio_values = ratio_str.split(',')[1].strip()
+        ratio_values = ratio_str.split(',')[1].strip().strip('"').strip("'")
 
-        # Parse "1:1:0" format
+        # Parse "1:1:0" format (strip quotes/whitespace from each part)
         parts = ratio_values.split(':')
-        return [int(parts[0]), int(parts[1]), int(parts[2])]
+        return [int(parts[0].strip()), int(parts[1].strip()), int(parts[2].strip())]
     except Exception as e:
         logger.error(f"Error reading ABC ratio: {e}")
         return [1, 1, 0]  # Default ratio
