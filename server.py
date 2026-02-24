@@ -12,6 +12,7 @@ from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import secrets
+import struct
 import time
 from datetime import datetime
 import uvicorn
@@ -111,6 +112,14 @@ class DrainRequest(BaseModel):
 class HeartbeatRequest(BaseModel):
     timestamp: Optional[float] = None
     edge_id: Optional[str] = None
+
+class CalibrationPoint(BaseModel):
+    reference: float
+    raw_reading: float
+
+class CalibrationApplyRequest(BaseModel):
+    sensor: str  # "ph" or "ec"
+    points: List[CalibrationPoint]
 
 # Set up logging using GlobalLogger
 logger = GlobalLogger("RippleAPI", log_prefix="ripple_server_").logger
@@ -1403,7 +1412,198 @@ async def scan_sensors(request: ScanRequest = None, username: str = Depends(veri
     }
 
 
+# --- Calibration Endpoints ---
+
+def _get_sensor_instance(sensor_type: str):
+    """Get the first available sensor instance for calibration."""
+    if sensor_type == "ph":
+        instances = pH._instances
+    elif sensor_type == "ec":
+        instances = EC._instances
+    else:
+        raise HTTPException(status_code=400, detail=f"Invalid sensor type: {sensor_type}. Must be 'ph' or 'ec'.")
+    if not instances:
+        raise HTTPException(status_code=404, detail=f"No {sensor_type.upper()} sensor configured.")
+    return next(iter(instances.values()))
+
+def _registers_to_float(regs):
+    """Convert two Modbus registers to float32 (word-swapped big-endian)."""
+    packed = struct.pack('>HH', regs[1], regs[0])
+    return struct.unpack('>f', packed)[0]
+
+@app.get("/api/v1/calibration/live", tags=["Calibration"])
+async def get_calibration_live(sensor: str, username: str = Depends(verify_credentials)):
+    """Read live sensor value directly from Modbus (bypasses cached data)."""
+    try:
+        sensor = sensor.lower()
+        instance = _get_sensor_instance(sensor)
+
+        if sensor == "ph":
+            result = globals.modbus_client.read_holding_registers(
+                port=instance.port,
+                address=0x0000,
+                count=2,
+                slave_addr=instance.address,
+                baudrate=instance.baud_rate,
+                timeout=1.0
+            )
+            if result.isError():
+                raise HTTPException(status_code=502, detail=f"Modbus read failed: {result.error}")
+
+            raw = result.registers[0]
+            ph_value = raw / 100.0
+            temperature = result.registers[1] / 10.0
+
+            return {"value": round(ph_value, 2), "temperature": round(temperature, 1), "raw": raw, "sensor": "ph"}
+
+        else:  # ec
+            result = globals.modbus_client.read_holding_registers(
+                port=instance.port,
+                address=0x0000,
+                count=6,
+                slave_addr=instance.address,
+                baudrate=instance.baud_rate,
+                timeout=2.0
+            )
+            if result.isError():
+                raise HTTPException(status_code=502, detail=f"Modbus read failed: {result.error}")
+
+            ec_value = _registers_to_float(result.registers[0:2])
+            temperature = _registers_to_float(result.registers[4:6])
+
+            return {"value": round(ec_value, 3), "temperature": round(temperature, 1), "raw_registers": result.registers[0:2], "sensor": "ec"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Calibration live read failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/v1/calibration/offset", tags=["Calibration"])
+async def get_calibration_offset(sensor: str, username: str = Depends(verify_credentials)):
+    """Read current calibration offset (pH) or EC constant."""
+    try:
+        sensor = sensor.lower()
+        instance = _get_sensor_instance(sensor)
+
+        if sensor == "ph":
+            result = globals.modbus_client.read_holding_registers(
+                port=instance.port,
+                address=0x0010,
+                count=1,
+                slave_addr=instance.address,
+                baudrate=instance.baud_rate,
+                timeout=1.0
+            )
+            if result.isError():
+                raise HTTPException(status_code=502, detail=f"Modbus read failed: {result.error}")
+
+            raw = result.registers[0]
+            offset = raw if raw < 32768 else raw - 65536
+            offset = offset / 100.0
+
+            return {"sensor": "ph", "current_offset": round(offset, 2)}
+
+        else:  # ec
+            result = globals.modbus_client.read_holding_registers(
+                port=instance.port,
+                address=0x000A,
+                count=2,
+                slave_addr=instance.address,
+                baudrate=instance.baud_rate,
+                timeout=1.0
+            )
+            if result.isError():
+                raise HTTPException(status_code=502, detail=f"Modbus read failed: {result.error}")
+
+            ec_constant = _registers_to_float(result.registers[0:2])
+
+            return {"sensor": "ec", "current_ec_constant": round(ec_constant, 4)}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Calibration offset read failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/v1/calibration/apply", tags=["Calibration"])
+async def apply_calibration(request: CalibrationApplyRequest, username: str = Depends(verify_credentials)):
+    """Calculate and apply sensor calibration."""
+    try:
+        sensor = request.sensor.lower()
+        points = request.points
+
+        if len(points) < 1 or len(points) > 2:
+            raise HTTPException(status_code=400, detail="Must provide 1 or 2 calibration points.")
+
+        instance = _get_sensor_instance(sensor)
+        warning = None
+
+        if sensor == "ph":
+            method = f"{len(points)}-point average" if len(points) == 2 else "1-point"
+            offsets = [p.reference - p.raw_reading for p in points]
+            value = sum(offsets) / len(offsets)
+
+            if len(offsets) == 2 and abs(offsets[0] - offsets[1]) > 0.5:
+                warning = f"Large offset difference ({abs(offsets[0] - offsets[1]):.2f}). Sensor may be degraded."
+
+            instance.write_offset_async(value)
+
+        elif sensor == "ec":
+            method = f"{len(points)}-point ratio" if len(points) == 2 else "1-point ratio"
+            # Read current EC constant
+            result = globals.modbus_client.read_holding_registers(
+                port=instance.port,
+                address=0x000A,
+                count=2,
+                slave_addr=instance.address,
+                baudrate=instance.baud_rate,
+                timeout=1.0
+            )
+            if result.isError():
+                raise HTTPException(status_code=502, detail=f"Failed to read current EC constant: {result.error}")
+
+            current_constant = _registers_to_float(result.registers[0:2])
+
+            valid_points = [p for p in points if p.raw_reading != 0]
+            if not valid_points:
+                raise HTTPException(status_code=400, detail="Raw reading cannot be zero.")
+            if len(valid_points) < len(points):
+                warning = f"Dropped {len(points) - len(valid_points)} point(s) with zero raw reading."
+                method = "1-point ratio"
+
+            ratios = [p.reference / p.raw_reading for p in valid_points]
+
+            avg_ratio = sum(ratios) / len(ratios)
+            value = avg_ratio * current_constant
+
+            instance.write_ec_constant_async(value)
+        else:
+            raise HTTPException(status_code=400, detail="Invalid sensor type.")
+
+        response = {
+            "success": True,
+            "value_applied": round(value, 4),
+            "method": method,
+            "sensor": sensor
+        }
+        if warning:
+            response["warning"] = warning
+
+        if audit:
+            audit.emit("config_change", f"calibration_{sensor}", {
+                "method": method,
+                "value_applied": round(value, 4),
+                "points": [{"reference": p.reference, "raw_reading": p.raw_reading} for p in points]
+            })
+
+        return response
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Calibration apply failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # Run the server if script is executed directly
 if __name__ == "__main__":
     logger.info("Starting Ripple API Server on 0.0.0.0:5000")
-    uvicorn.run("server:app", host="0.0.0.0", port=5000, reload=False) 
+    uvicorn.run("server:app", host="0.0.0.0", port=5000, reload=False)
