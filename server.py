@@ -1414,17 +1414,32 @@ async def scan_sensors(request: ScanRequest = None, username: str = Depends(veri
 
 # --- Calibration Endpoints ---
 
-def _get_sensor_instance(sensor_type: str):
-    """Get the first available sensor instance for calibration."""
-    if sensor_type == "ph":
-        instances = pH._instances
-    elif sensor_type == "ec":
-        instances = EC._instances
-    else:
+def _get_sensor_config(sensor_type: str):
+    """Get sensor Modbus config (port, address, baudrate) from device.conf.
+
+    server.py runs as a separate process from main.py, so pH/EC._instances
+    are never populated here. We parse the config directly instead.
+    """
+    if sensor_type not in ("ph", "ec"):
         raise HTTPException(status_code=400, detail=f"Invalid sensor type: {sensor_type}. Must be 'ph' or 'ec'.")
-    if not instances:
-        raise HTTPException(status_code=404, detail=f"No {sensor_type.upper()} sensor configured.")
-    return next(iter(instances.values()))
+
+    config = globals.DEVICE_CONFIG_FILE
+    prefix = "PH_" if sensor_type == "ph" else "EC_"
+
+    if "SENSORS" not in config:
+        raise HTTPException(status_code=404, detail="No SENSORS section in device.conf.")
+
+    for key, value in config["SENSORS"].items():
+        if key.upper().startswith(prefix):
+            parts = [p.strip().strip('"') for p in value.split(",")]
+            if len(parts) >= 6:
+                return {
+                    "port": parts[3],           # e.g. /dev/ttyAMA1
+                    "address": int(parts[4], 0), # e.g. 0x10 → 16
+                    "baudrate": int(parts[5]),   # e.g. 9600
+                }
+
+    raise HTTPException(status_code=404, detail=f"No {sensor_type.upper()} sensor configured in device.conf.")
 
 def _registers_to_float(regs):
     """Convert two Modbus registers to float32 (word-swapped big-endian)."""
@@ -1436,15 +1451,15 @@ async def get_calibration_live(sensor: str, username: str = Depends(verify_crede
     """Read live sensor value directly from Modbus (bypasses cached data)."""
     try:
         sensor = sensor.lower()
-        instance = _get_sensor_instance(sensor)
+        cfg = _get_sensor_config(sensor)
 
         if sensor == "ph":
             result = globals.modbus_client.read_holding_registers(
-                port=instance.port,
+                port=cfg["port"],
                 address=0x0000,
                 count=2,
-                slave_addr=instance.address,
-                baudrate=instance.baud_rate,
+                slave_addr=cfg["address"],
+                baudrate=cfg["baudrate"],
                 timeout=1.0
             )
             if result.isError():
@@ -1458,11 +1473,11 @@ async def get_calibration_live(sensor: str, username: str = Depends(verify_crede
 
         else:  # ec
             result = globals.modbus_client.read_holding_registers(
-                port=instance.port,
+                port=cfg["port"],
                 address=0x0000,
                 count=6,
-                slave_addr=instance.address,
-                baudrate=instance.baud_rate,
+                slave_addr=cfg["address"],
+                baudrate=cfg["baudrate"],
                 timeout=2.0
             )
             if result.isError():
@@ -1483,15 +1498,15 @@ async def get_calibration_offset(sensor: str, username: str = Depends(verify_cre
     """Read current calibration offset (pH) or EC constant."""
     try:
         sensor = sensor.lower()
-        instance = _get_sensor_instance(sensor)
+        cfg = _get_sensor_config(sensor)
 
         if sensor == "ph":
             result = globals.modbus_client.read_holding_registers(
-                port=instance.port,
+                port=cfg["port"],
                 address=0x0010,
                 count=1,
-                slave_addr=instance.address,
-                baudrate=instance.baud_rate,
+                slave_addr=cfg["address"],
+                baudrate=cfg["baudrate"],
                 timeout=1.0
             )
             if result.isError():
@@ -1505,11 +1520,11 @@ async def get_calibration_offset(sensor: str, username: str = Depends(verify_cre
 
         else:  # ec
             result = globals.modbus_client.read_holding_registers(
-                port=instance.port,
+                port=cfg["port"],
                 address=0x000A,
                 count=2,
-                slave_addr=instance.address,
-                baudrate=instance.baud_rate,
+                slave_addr=cfg["address"],
+                baudrate=cfg["baudrate"],
                 timeout=1.0
             )
             if result.isError():
@@ -1524,6 +1539,50 @@ async def get_calibration_offset(sensor: str, username: str = Depends(verify_cre
         logger.error(f"Calibration offset read failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+def _write_ph_offset(cfg, offset):
+    """Write pH offset via Modbus function 0x06 (Write Single Register) at 0x0010."""
+    offset_value = int(offset * 100)
+    if offset_value < 0:
+        offset_value = offset_value & 0xFFFF  # two's complement for negative
+    command = bytearray([
+        cfg["address"],
+        0x06,           # Write single register
+        0x00, 0x10,     # Register address 0x0010
+        (offset_value >> 8) & 0xFF,
+        offset_value & 0xFF
+    ])
+    globals.modbus_client.send_command(
+        device_type='pH',
+        port=cfg["port"],
+        command=command,
+        baudrate=cfg["baudrate"],
+        response_length=8,
+        timeout=0.5
+    )
+
+def _write_ec_constant(cfg, value):
+    """Write EC constant via Modbus function 0x10 (Write Multiple Registers) at 0x000A."""
+    float_bytes = struct.pack('>f', float(value))
+    # Word-swap: the device expects [low_word, high_word]
+    swapped = bytearray([float_bytes[2], float_bytes[3], float_bytes[0], float_bytes[1]])
+    command = bytearray([
+        cfg["address"],
+        0x10,           # Write Multiple Registers
+        0x00, 0x0A,     # Register address 0x000A
+        0x00, 0x02,     # Number of registers (2)
+        0x04,           # Byte count (4)
+        swapped[0], swapped[1],
+        swapped[2], swapped[3]
+    ])
+    globals.modbus_client.send_command(
+        device_type='EC',
+        port=cfg["port"],
+        command=command,
+        baudrate=cfg["baudrate"],
+        response_length=8,
+        timeout=1.0
+    )
+
 @app.post("/api/v1/calibration/apply", tags=["Calibration"])
 async def apply_calibration(request: CalibrationApplyRequest, username: str = Depends(verify_credentials)):
     """Calculate and apply sensor calibration."""
@@ -1534,7 +1593,7 @@ async def apply_calibration(request: CalibrationApplyRequest, username: str = De
         if len(points) < 1 or len(points) > 2:
             raise HTTPException(status_code=400, detail="Must provide 1 or 2 calibration points.")
 
-        instance = _get_sensor_instance(sensor)
+        cfg = _get_sensor_config(sensor)
         warning = None
 
         if sensor == "ph":
@@ -1545,17 +1604,17 @@ async def apply_calibration(request: CalibrationApplyRequest, username: str = De
             if len(offsets) == 2 and abs(offsets[0] - offsets[1]) > 0.5:
                 warning = f"Large offset difference ({abs(offsets[0] - offsets[1]):.2f}). Sensor may be degraded."
 
-            instance.write_offset_async(value)
+            _write_ph_offset(cfg, value)
 
         elif sensor == "ec":
             method = f"{len(points)}-point ratio" if len(points) == 2 else "1-point ratio"
             # Read current EC constant
             result = globals.modbus_client.read_holding_registers(
-                port=instance.port,
+                port=cfg["port"],
                 address=0x000A,
                 count=2,
-                slave_addr=instance.address,
-                baudrate=instance.baud_rate,
+                slave_addr=cfg["address"],
+                baudrate=cfg["baudrate"],
                 timeout=1.0
             )
             if result.isError():
@@ -1575,7 +1634,7 @@ async def apply_calibration(request: CalibrationApplyRequest, username: str = De
             avg_ratio = sum(ratios) / len(ratios)
             value = avg_ratio * current_constant
 
-            instance.write_ec_constant_async(value)
+            _write_ec_constant(cfg, value)
         else:
             raise HTTPException(status_code=400, detail="Invalid sensor type.")
 
