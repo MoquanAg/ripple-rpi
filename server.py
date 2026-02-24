@@ -1446,6 +1446,50 @@ def _registers_to_float(regs):
     packed = struct.pack('>HH', regs[1], regs[0])
     return struct.unpack('>f', packed)[0]
 
+def _modbus_read_registers(cfg, address, count, timeout=2.0):
+    """Read holding registers via send_command (bypasses read_holding_registers
+    response_length bug). Returns list of register values or raises HTTPException."""
+    import time as _time
+
+    command = bytearray([
+        cfg["address"],
+        0x03,                          # Read Holding Registers
+        (address >> 8) & 0xFF, address & 0xFF,
+        (count >> 8) & 0xFF, count & 0xFF,
+    ])
+    # Correct response: slave(1) + func(1) + byte_count(1) + data(count*2) + crc(2)
+    response_length = 3 + (count * 2) + 2
+
+    command_id = globals.modbus_client.send_command(
+        device_type='CALIBRATION',
+        port=cfg["port"],
+        command=command,
+        baudrate=cfg["baudrate"],
+        response_length=response_length,
+        timeout=timeout
+    )
+
+    # Poll for response (same pattern as read_holding_registers but with correct response_length)
+    start = _time.time()
+    while command_id in globals.modbus_client.pending_commands:
+        if _time.time() - start > timeout:
+            globals.modbus_client.command_responses.pop(command_id, None)
+            raise HTTPException(status_code=502, detail="Modbus read timed out")
+        _time.sleep(0.01)
+
+    resp = globals.modbus_client.command_responses.pop(command_id, None)
+    if not resp or resp.status != 'success' or not resp.data:
+        raise HTTPException(status_code=502, detail="Modbus read failed")
+
+    # Parse response: [slave][func][byte_count][reg_hi][reg_lo]... [crc_hi][crc_lo]
+    data = resp.data
+    byte_count = data[2]
+    registers = []
+    for i in range(count):
+        offset = 3 + i * 2
+        registers.append((data[offset] << 8) | data[offset + 1])
+    return registers
+
 @app.get("/api/v1/calibration/live", tags=["Calibration"])
 async def get_calibration_live(sensor: str, username: str = Depends(verify_credentials)):
     """Read live sensor value directly from Modbus (bypasses cached data)."""
@@ -1454,39 +1498,17 @@ async def get_calibration_live(sensor: str, username: str = Depends(verify_crede
         cfg = _get_sensor_config(sensor)
 
         if sensor == "ph":
-            result = globals.modbus_client.read_holding_registers(
-                port=cfg["port"],
-                address=0x0000,
-                count=2,
-                slave_addr=cfg["address"],
-                baudrate=cfg["baudrate"],
-                timeout=1.0
-            )
-            if result.isError():
-                raise HTTPException(status_code=502, detail=f"Modbus read failed: {result.error}")
-
-            raw = result.registers[0]
+            regs = _modbus_read_registers(cfg, 0x0000, 2)
+            raw = regs[0]
             ph_value = raw / 100.0
-            temperature = result.registers[1] / 10.0
-
+            temperature = regs[1] / 10.0
             return {"value": round(ph_value, 2), "temperature": round(temperature, 1), "raw": raw, "sensor": "ph"}
 
         else:  # ec
-            result = globals.modbus_client.read_holding_registers(
-                port=cfg["port"],
-                address=0x0000,
-                count=6,
-                slave_addr=cfg["address"],
-                baudrate=cfg["baudrate"],
-                timeout=2.0
-            )
-            if result.isError():
-                raise HTTPException(status_code=502, detail=f"Modbus read failed: {result.error}")
-
-            ec_value = _registers_to_float(result.registers[0:2])
-            temperature = _registers_to_float(result.registers[4:6])
-
-            return {"value": round(ec_value, 3), "temperature": round(temperature, 1), "raw_registers": result.registers[0:2], "sensor": "ec"}
+            regs = _modbus_read_registers(cfg, 0x0000, 6)
+            ec_value = _registers_to_float(regs[0:2])
+            temperature = _registers_to_float(regs[4:6])
+            return {"value": round(ec_value, 3), "temperature": round(temperature, 1), "raw_registers": list(regs[0:2]), "sensor": "ec"}
     except HTTPException:
         raise
     except Exception as e:
@@ -1501,37 +1523,15 @@ async def get_calibration_offset(sensor: str, username: str = Depends(verify_cre
         cfg = _get_sensor_config(sensor)
 
         if sensor == "ph":
-            result = globals.modbus_client.read_holding_registers(
-                port=cfg["port"],
-                address=0x0010,
-                count=1,
-                slave_addr=cfg["address"],
-                baudrate=cfg["baudrate"],
-                timeout=1.0
-            )
-            if result.isError():
-                raise HTTPException(status_code=502, detail=f"Modbus read failed: {result.error}")
-
-            raw = result.registers[0]
+            regs = _modbus_read_registers(cfg, 0x0010, 1)
+            raw = regs[0]
             offset = raw if raw < 32768 else raw - 65536
             offset = offset / 100.0
-
             return {"sensor": "ph", "current_offset": round(offset, 2)}
 
         else:  # ec
-            result = globals.modbus_client.read_holding_registers(
-                port=cfg["port"],
-                address=0x000A,
-                count=2,
-                slave_addr=cfg["address"],
-                baudrate=cfg["baudrate"],
-                timeout=1.0
-            )
-            if result.isError():
-                raise HTTPException(status_code=502, detail=f"Modbus read failed: {result.error}")
-
-            ec_constant = _registers_to_float(result.registers[0:2])
-
+            regs = _modbus_read_registers(cfg, 0x000A, 2)
+            ec_constant = _registers_to_float(regs[0:2])
             return {"sensor": "ec", "current_ec_constant": round(ec_constant, 4)}
     except HTTPException:
         raise
@@ -1609,18 +1609,8 @@ async def apply_calibration(request: CalibrationApplyRequest, username: str = De
         elif sensor == "ec":
             method = f"{len(points)}-point ratio" if len(points) == 2 else "1-point ratio"
             # Read current EC constant
-            result = globals.modbus_client.read_holding_registers(
-                port=cfg["port"],
-                address=0x000A,
-                count=2,
-                slave_addr=cfg["address"],
-                baudrate=cfg["baudrate"],
-                timeout=1.0
-            )
-            if result.isError():
-                raise HTTPException(status_code=502, detail=f"Failed to read current EC constant: {result.error}")
-
-            current_constant = _registers_to_float(result.registers[0:2])
+            regs = _modbus_read_registers(cfg, 0x000A, 2)
+            current_constant = _registers_to_float(regs[0:2])
 
             valid_points = [p for p in points if p.raw_reading != 0]
             if not valid_points:
