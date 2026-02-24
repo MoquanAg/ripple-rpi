@@ -1638,7 +1638,7 @@ async def apply_calibration(request: CalibrationApplyRequest, username: str = De
             response["warning"] = warning
 
         if audit:
-            audit.emit("config_change", f"calibration_{sensor}", {
+            audit.emit("config_change", f"calibration_{sensor}", value={
                 "method": method,
                 "value_applied": round(value, 4),
                 "points": [{"reference": p.reference, "raw_reading": p.raw_reading} for p in points]
