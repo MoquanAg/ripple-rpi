@@ -9,7 +9,7 @@ Intelligent fertigation control system for vertical farming. Automates nutrient 
 - lumina-modbus-server (TCP bridge at `~/lumina-modbus-server`, port 8888)
 - APScheduler + SQLite (persistent task scheduling)
 - Watchdog (config file hot-reload)
-- Pydantic 1.x (data validation — main codebase; audit_event.py uses Pydantic 2.x)
+- Pydantic 2.x (data validation)
 
 ## Architecture
 

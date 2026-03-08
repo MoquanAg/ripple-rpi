@@ -492,7 +492,7 @@ def _update_device_conf_locked(cfg: FertigationConfig) -> bool:
     with open('config/device.conf', 'w') as configfile:
         config.write(configfile)
 
-    logger.info(f"Updated device.conf: {cfg.dict(exclude_none=True)}")
+    logger.info(f"Updated device.conf: {cfg.model_dump(exclude_none=True)}")
     return True
 
 @app.get("/api/v1/config", tags=["General"])
