@@ -869,6 +869,7 @@ async def update_action(request: dict, username: str = Depends(verify_credential
         # Process special case for sprinkler with device_id support
         processed_request = request.copy()
         device_id = processed_request.pop('device_id', None)  # Extract device_id if present
+        original_actions = [k for k in processed_request]  # Capture before pops
 
         if 'sprinkler' in processed_request:
             sprinkler_value = processed_request.pop('sprinkler')
@@ -954,9 +955,9 @@ async def update_action(request: dict, username: str = Depends(verify_credential
 
         if audit:
             audit.emit("user_command", "relay_action",
-                       resource=",".join(processed_request.keys()) if processed_request else None,
+                       resource=",".join(original_actions) if original_actions else None,
                        source="user_cloud", user_name=username,
-                       value=processed_request,
+                       value=dict(zip(original_actions, [request.get(k) for k in original_actions])) if original_actions else None,
                        status="success" if not failed_actions else "partial",
                        details=f"Failed: {failed_actions}" if failed_actions else None)
 
