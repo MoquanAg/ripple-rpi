@@ -156,11 +156,12 @@ def update_heartbeat(edge_ip=None):
             _edge_ip = edge_ip
             # Persist edge_ip for cross-process access (audit_sync runs in main.py process)
             try:
-                ip_file = os.path.join(os.path.dirname(__file__), "data", "edge_ip.txt")
+                ip_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "edge_ip.txt")
                 with open(ip_file, "w") as f:
                     f.write(edge_ip)
-            except Exception:
-                pass
+                logger.info(f"Persisted edge_ip={edge_ip} to {ip_file}")
+            except Exception as e:
+                logger.error(f"Failed to persist edge_ip: {e}")
 
 def get_edge_ip():
     with _mode_lock:
@@ -547,6 +548,10 @@ async def system_info(username: str = Depends(verify_credentials)):
 async def receive_heartbeat(request: Request, hb: HeartbeatRequest = HeartbeatRequest(), username: str = Depends(verify_credentials)):
     """Receive heartbeat from Lumina-Edge. Keeps Ripple in passive mode."""
     edge_ip = request.client.host if request.client else None
+    if not edge_ip:
+        # Fallback: extract from X-Forwarded-For or peer address
+        edge_ip = request.headers.get("x-forwarded-for", "").split(",")[0].strip() or None
+        logger.warning(f"Heartbeat: request.client={request.client}, falling back to edge_ip={edge_ip}")
     update_heartbeat(edge_ip=edge_ip)
     if get_mode() != "passive":
         old_mode = get_mode()
