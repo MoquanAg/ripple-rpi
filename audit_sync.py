@@ -12,8 +12,8 @@ Usage:
     start_audit_sync()
 """
 
-import json
 import logging
+import os
 import threading
 import time
 
@@ -27,12 +27,19 @@ EDGE_LOCAL_SERVER_PORT = 9090
 
 
 def _get_edge_url():
-    """Get the Edge local server URL from the heartbeat-captured IP."""
+    """Get the Edge local server URL from the persisted edge IP file.
+
+    server.py (separate process) writes the Edge IP to data/edge_ip.txt
+    whenever a heartbeat arrives. We read it here since we run in main.py's
+    process and can't share in-memory state with server.py.
+    """
     try:
-        from server import get_edge_ip
-        edge_ip = get_edge_ip()
-        if edge_ip:
-            return f"http://{edge_ip}:{EDGE_LOCAL_SERVER_PORT}"
+        ip_file = os.path.join(os.path.dirname(__file__), "data", "edge_ip.txt")
+        if os.path.exists(ip_file):
+            with open(ip_file) as f:
+                edge_ip = f.read().strip()
+            if edge_ip:
+                return f"http://{edge_ip}:{EDGE_LOCAL_SERVER_PORT}"
     except Exception:
         pass
     return None
@@ -63,7 +70,7 @@ def _sync_once():
 
     edge_url = _get_edge_url()
     if not edge_url:
-        logger.debug("Audit sync: no Edge IP available yet, will retry next cycle")
+        logger.warning("Audit sync: no Edge IP available (data/edge_ip.txt missing or empty), will retry next cycle")
         return
 
     logger.info("Syncing %d audit events to Edge at %s", len(events), edge_url)
@@ -87,7 +94,7 @@ def _sync_once():
                            response.status_code, response.text[:200])
 
     except requests.exceptions.ConnectionError:
-        logger.debug("Audit sync: Edge unreachable at %s, will retry", edge_url)
+        logger.warning("Audit sync: Edge unreachable at %s, will retry", edge_url)
     except requests.exceptions.Timeout:
         logger.warning("Audit sync: request to Edge timed out")
     except Exception as e:
@@ -96,6 +103,22 @@ def _sync_once():
 
 def start_audit_sync():
     """Start the background audit sync daemon thread."""
+    # Ensure audit loggers can write to log files. main.py's GlobalLogger only
+    # configures its own named logger; module-level loggers (audit_sync, audit_event)
+    # have no handlers and messages are silently dropped. Attach a handler to root.
+    root = logging.getLogger()
+    if not root.handlers:
+        import glob as _glob
+        log_dir = os.path.join(os.path.dirname(__file__), "log")
+        os.makedirs(log_dir, exist_ok=True)
+        # Find the latest ripple_ log file to share with main logger
+        existing = sorted(_glob.glob(os.path.join(log_dir, "ripple_*.log")))
+        log_path = existing[-1] if existing else os.path.join(log_dir, "ripple_audit.log")
+        fh = logging.FileHandler(log_path)
+        fh.setLevel(logging.INFO)
+        fh.setFormatter(logging.Formatter("%(asctime)s - %(filename)s - %(funcName)s - %(message)s"))
+        root.addHandler(fh)
+
     thread = threading.Thread(target=_sync_loop, name="AuditSyncThread", daemon=True)
     thread.start()
     logger.info("Audit sync thread launched")

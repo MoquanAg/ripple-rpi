@@ -154,6 +154,13 @@ def update_heartbeat(edge_ip=None):
         _last_heartbeat_time = time.time()
         if edge_ip:
             _edge_ip = edge_ip
+            # Persist edge_ip for cross-process access (audit_sync runs in main.py process)
+            try:
+                ip_file = os.path.join(os.path.dirname(__file__), "data", "edge_ip.txt")
+                with open(ip_file, "w") as f:
+                    f.write(edge_ip)
+            except Exception:
+                pass
 
 def get_edge_ip():
     with _mode_lock:

@@ -42,14 +42,20 @@ VALID_EVENT_TYPES = {
 
 
 def _read_device_id() -> str:
-    """Read device ID from system.conf."""
+    """Read device ID from system.conf, falling back to hostname."""
     try:
         conf = configparser.ConfigParser()
         conf_path = os.path.join(BASE_DIR, "system.conf")
-        conf.read(conf_path)
-        return conf.get("SYSTEM", "deviceid", fallback="unknown-ripple")
+        if os.path.exists(conf_path):
+            conf.read(conf_path)
+            device_id = conf.get("SYSTEM", "deviceid", fallback="")
+            if device_id:
+                return device_id
     except Exception:
-        return "unknown-ripple"
+        pass
+    # Ripple devices don't have system.conf — use hostname (e.g. "ripple-dagze-1")
+    import socket
+    return socket.gethostname()
 
 
 class AuditEvent(BaseModel):
