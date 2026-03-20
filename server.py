@@ -69,6 +69,23 @@ class SprinklerConfig(BaseModel):
     sprinkler_on_duration: Optional[str] = None
     sprinkler_wait_duration: Optional[str] = None
 
+class WaterLevelConfig(BaseModel):
+    water_level_control_enabled: Optional[bool] = None
+    water_level_target: Optional[float] = None
+    water_level_deadband: Optional[float] = None
+    water_level_min: Optional[float] = None
+    water_level_max: Optional[float] = None
+    tank_dump_safety_floor: Optional[float] = None
+    tank_dump_max_duration_seconds: Optional[int] = None
+    supply_water_ph_estimate: Optional[float] = None
+    valid_level_min: Optional[float] = None
+    valid_level_max: Optional[float] = None
+
+class MixingConfig(BaseModel):
+    mixing_interval: Optional[str] = None
+    mixing_duration: Optional[str] = None
+    trigger_mixing_duration: Optional[str] = None
+
 class FertigationConfig(BaseModel):
     """Unified fertigation configuration. All fields optional — omitted fields keep current device.conf values."""
     abc_ratio: Optional[str] = None
@@ -1360,6 +1377,188 @@ async def update_sprinkler_config(sprinkler_config: SprinklerConfig, username: s
     except Exception as e:
         logger.error(f"Error updating sprinkler configuration: {e}")
         raise HTTPException(status_code=500, detail=f"Error updating sprinkler configuration: {str(e)}")
+
+@app.get("/api/v1/config/water-level", tags=["WaterLevel"])
+async def get_water_level_config(username: str = Depends(verify_credentials)):
+    """
+    Get current water level configuration (operational values).
+
+    Returns the operational values from the WaterLevel section of device.conf.
+    """
+    try:
+        config = configparser.ConfigParser()
+        config.read('config/device.conf')
+
+        water_level_config = {}
+
+        if config.has_section('WaterLevel'):
+            # Map config keys (lowercase from configparser) to API field names and types
+            field_types = {
+                'water_level_control_enabled': 'bool',
+                'water_level_target': 'float',
+                'water_level_deadband': 'float',
+                'water_level_min': 'float',
+                'water_level_max': 'float',
+                'tank_dump_safety_floor': 'float',
+                'tank_dump_max_duration_seconds': 'int',
+                'supply_water_ph_estimate': 'float',
+                'valid_level_min': 'float',
+                'valid_level_max': 'float',
+            }
+            for key in config.options('WaterLevel'):
+                api_key = key.lower()
+                val = _parse_config_value('WaterLevel', key, config, preferred_index=1)
+                if api_key in field_types:
+                    ft = field_types[api_key]
+                    if ft == 'bool':
+                        # _parse_config_value already converts bools
+                        water_level_config[api_key] = val
+                    elif ft == 'float':
+                        try:
+                            water_level_config[api_key] = float(val) if not isinstance(val, bool) else val
+                        except (ValueError, TypeError):
+                            water_level_config[api_key] = val
+                    elif ft == 'int':
+                        try:
+                            water_level_config[api_key] = int(float(val)) if not isinstance(val, bool) else val
+                        except (ValueError, TypeError):
+                            water_level_config[api_key] = val
+                else:
+                    water_level_config[api_key] = val
+
+        logger.info(f"Retrieved water level configuration: {water_level_config}")
+        return water_level_config
+
+    except Exception as e:
+        logger.error(f"Error getting water level configuration: {e}")
+        raise HTTPException(status_code=500, detail=f"Error getting water level configuration: {str(e)}")
+
+@app.post("/api/v1/config/water-level", tags=["WaterLevel"])
+async def update_water_level_config(water_level_config: WaterLevelConfig, username: str = Depends(verify_credentials)):
+    """
+    Update water level configuration operational values.
+
+    Updates the operational values (second values) in the WaterLevel section of device.conf
+    while preserving the default values (first values).
+    """
+    try:
+        config = configparser.ConfigParser()
+        config.read('config/device.conf')
+
+        applied_changes = {}
+
+        if not config.has_section('WaterLevel'):
+            config.add_section('WaterLevel')
+
+        for api_field, value in water_level_config.model_dump(exclude_unset=True).items():
+            if value is not None:
+                first_value = _safe_get_first_value(config, 'WaterLevel', api_field,
+                                                     default=str(value).lower() if isinstance(value, bool) else str(value))
+
+                if isinstance(value, bool):
+                    new_value = f"{first_value}, {str(value).lower()}"
+                else:
+                    new_value = f"{first_value}, {value}"
+
+                config.set('WaterLevel', api_field, new_value)
+                applied_changes[api_field] = value
+
+                logger.info(f"Updated WaterLevel.{api_field}: {new_value}")
+
+        with open('config/device.conf', 'w') as configfile:
+            config.write(configfile)
+
+        logger.info(f"Successfully updated water level configuration: {applied_changes}")
+
+        if audit and applied_changes:
+            audit.emit("config_change", "water_level_config_update",
+                       resource="water_level", source="user_cloud",
+                       value=applied_changes, user_name=username,
+                       details=f"Updated {len(applied_changes)} water level fields")
+
+        return {
+            "status": "success",
+            "message": "Water level configuration updated successfully",
+            "applied_changes": applied_changes
+        }
+
+    except Exception as e:
+        logger.error(f"Error updating water level configuration: {e}")
+        raise HTTPException(status_code=500, detail=f"Error updating water level configuration: {str(e)}")
+
+@app.get("/api/v1/config/mixing", tags=["Mixing"])
+async def get_mixing_config(username: str = Depends(verify_credentials)):
+    """
+    Get current mixing configuration (operational values).
+
+    Returns the operational values from the Mixing section of device.conf.
+    """
+    try:
+        config = configparser.ConfigParser()
+        config.read('config/device.conf')
+
+        mixing_config = {}
+
+        if config.has_section('Mixing'):
+            for key in config.options('Mixing'):
+                api_key = key.lower()
+                val = _parse_config_value('Mixing', key, config, preferred_index=1)
+                mixing_config[api_key] = val
+
+        logger.info(f"Retrieved mixing configuration: {mixing_config}")
+        return mixing_config
+
+    except Exception as e:
+        logger.error(f"Error getting mixing configuration: {e}")
+        raise HTTPException(status_code=500, detail=f"Error getting mixing configuration: {str(e)}")
+
+@app.post("/api/v1/config/mixing", tags=["Mixing"])
+async def update_mixing_config(mixing_config: MixingConfig, username: str = Depends(verify_credentials)):
+    """
+    Update mixing configuration operational values.
+
+    Updates the operational values (second values) in the Mixing section of device.conf
+    while preserving the default values (first values).
+    """
+    try:
+        config = configparser.ConfigParser()
+        config.read('config/device.conf')
+
+        applied_changes = {}
+
+        if not config.has_section('Mixing'):
+            config.add_section('Mixing')
+
+        for api_field, value in mixing_config.model_dump(exclude_unset=True).items():
+            if value is not None:
+                first_value = _safe_get_first_value(config, 'Mixing', api_field, default=str(value))
+
+                new_value = f"{first_value}, {value}"
+                config.set('Mixing', api_field, new_value)
+                applied_changes[api_field] = value
+
+                logger.info(f"Updated Mixing.{api_field}: {new_value}")
+
+        with open('config/device.conf', 'w') as configfile:
+            config.write(configfile)
+
+        logger.info(f"Successfully updated mixing configuration: {applied_changes}")
+
+        if audit and applied_changes:
+            audit.emit("config_change", "mixing_config_update",
+                       resource="mixing", source="user_cloud",
+                       value=applied_changes, user_name=username,
+                       details=f"Updated {len(applied_changes)} mixing fields")
+
+        return {
+            "status": "success",
+            "message": "Mixing configuration updated successfully",
+            "applied_changes": applied_changes
+        }
+
+    except Exception as e:
+        logger.error(f"Error updating mixing configuration: {e}")
+        raise HTTPException(status_code=500, detail=f"Error updating mixing configuration: {str(e)}")
 
 @app.post("/api/v1/drain", tags=["WaterLevel"])
 async def drain_control(request: DrainRequest, username: str = Depends(verify_credentials)):
