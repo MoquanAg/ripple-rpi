@@ -23,7 +23,7 @@ Ripple Application
         |  TCP :8888
     lumina-modbus-server (~/lumina-modbus-server, Modbus RTU Bridge)
         |                       |
-    /dev/ttyAMA2 (Serial)   /dev/ttyAMA1 (Serial)
+    /dev/ttyAMA1 (Serial)   /dev/ttyAMA2 (Serial)
     Sensors (9600)          Relays (38400)
 ```
 
@@ -136,8 +136,8 @@ Principle: "farmer wants more watering" (on increased, wait decreased) triggers 
 
 | Port | Baud | Purpose |
 |------|------|---------|
-| ttyAMA2 | 9600 | Sensors (pH 0x02, EC 0x03, DO 0x04, WaterLevel 0x05) |
-| ttyAMA1 | 38400 | Relay board (0x01) - supports 4/8/16-channel boards |
+| ttyAMA1 | 9600 | Sensors (pH 0x10, EC 0x20, WaterLevel 0x30, DO 0x40) |
+| ttyAMA2 | 38400 | Relay board (0x01 or 0x70) - supports 4/8/16-channel boards |
 
 ### Relay Board Support
 
